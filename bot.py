@@ -1509,7 +1509,9 @@ async def download_media(
     if choice == "video_best":
 
         format_option = (
-            "bestvideo+bestaudio/best"
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo+bestaudio/"
+            "best"
         )
 
         quality_name = "Maximum available quality"
