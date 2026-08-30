@@ -1755,6 +1755,17 @@ async def download_media(
 
         if process.returncode != 0:
 
+            print()
+            print("===== DOWNLOAD FAILED =====")
+            print(f"URL: {url}")
+            print(f"yt-dlp return code: {process.returncode}")
+            print("===== STDOUT =====")
+            print(stdout_text[-5000:])
+            print("===== STDERR =====")
+            print(stderr_text[-5000:])
+            print("============================")
+            print()
+
             await query.edit_message_text(
                 TEXTS[language]["download_error"]
             )
