@@ -5,6 +5,8 @@ import sqlite3
 import tempfile
 import shutil
 import html
+import re
+from urllib.request import Request, urlopen
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -1425,6 +1427,279 @@ async def show_audio_menu(
     )
 
 
+
+# ============================================================
+# استخراج مصادر الفيديو العامة من صفحات المواقع
+# ============================================================
+
+async def extract_direct_media_urls(page_url):
+    """
+    محاولة اكتشاف روابط الفيديو المباشرة من صفحات المواقع
+    التي لا يملك yt-dlp لها extractor مخصصًا.
+    """
+
+    def fetch_page():
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 15) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/139.0 Mobile Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        request = Request(
+            page_url,
+            headers=headers
+        )
+
+        with urlopen(
+            request,
+            timeout=30
+        ) as response:
+
+            charset = response.headers.get_content_charset() or "utf-8"
+
+            return response.read().decode(
+                charset,
+                errors="ignore"
+            )
+
+    try:
+
+        page = await asyncio.to_thread(
+            fetch_page
+        )
+
+    except Exception as e:
+
+        print()
+        print("===== DIRECT SOURCE ERROR =====")
+        print(repr(e))
+        print("===============================")
+        print()
+
+        return []
+
+    # فك ترميز HTML وبعض صيغ JavaScript
+    page = html.unescape(page)
+
+    page = (
+        page
+        .replace("\\/", "/")
+        .replace("\\u0026", "&")
+        .replace("\\u003d", "=")
+        .replace("\\u003F", "?")
+        .replace("\\u003f", "?")
+    )
+
+    candidates = []
+
+    # --------------------------------------------------------
+    # M3U8 / HLS
+    # --------------------------------------------------------
+
+    m3u8_patterns = [
+        r'https?://[^"\'\s<>\\]+\.m3u8(?:\?[^"\'\s<>\\]*)?',
+        r'["\']([^"\']+\.m3u8(?:\?[^"\']*)?)["\']',
+    ]
+
+    # --------------------------------------------------------
+    # MP4
+    # --------------------------------------------------------
+
+    mp4_patterns = [
+        r'https?://[^"\'\s<>\\]+\.mp4(?:\?[^"\'\s<>\\]*)?',
+        r'["\']([^"\']+\.mp4(?:\?[^"\']*)?)["\']',
+    ]
+
+    for pattern in m3u8_patterns + mp4_patterns:
+
+        for match in re.findall(
+            pattern,
+            page,
+            flags=re.IGNORECASE
+        ):
+
+            if isinstance(match, tuple):
+                match = next(
+                    (x for x in match if x),
+                    ""
+                )
+
+            if not match:
+                continue
+
+            match = html.unescape(match)
+
+            if match.startswith("//"):
+                match = "https:" + match
+
+            elif match.startswith("/"):
+                parsed = urlparse(page_url)
+
+                match = (
+                    f"{parsed.scheme}://"
+                    f"{parsed.netloc}"
+                    f"{match}"
+                )
+
+            elif not match.startswith(("http://", "https://")):
+                continue
+
+            if match not in candidates:
+                candidates.append(match)
+
+    # إعطاء الأولوية لـ HLS
+    candidates.sort(
+        key=lambda x: (
+            0 if ".m3u8" in x.lower() else 1,
+            len(x)
+        )
+    )
+
+    print()
+    print("===== DIRECT SOURCES =====")
+
+    if candidates:
+
+        for source in candidates[:20]:
+            print(source)
+
+    else:
+
+        print("No direct video source found.")
+
+    print("==========================")
+    print()
+
+    return candidates[:20]
+
+
+async def download_with_fallback(
+    url,
+    temp_dir,
+    output_template,
+    format_option
+):
+    """
+    محاولة تنزيل الرابط بعد فشل yt-dlp الأساسي.
+    """
+
+    candidates = await extract_direct_media_urls(
+        url
+    )
+
+    if not candidates:
+        return None, None, None
+
+    for direct_url in candidates:
+
+        fallback_output = os.path.join(
+            temp_dir,
+            "fallback_%(id)s.%(ext)s"
+        )
+
+        command = [
+            "python",
+            "-m",
+            "yt_dlp",
+            "--no-playlist",
+            "-f",
+            format_option,
+            "--retries",
+            "5",
+            "--fragment-retries",
+            "5",
+            "--socket-timeout",
+            "60",
+            "--concurrent-fragments",
+            "2",
+            "--merge-output-format",
+            "mp4",
+            "--no-warnings",
+            "-o",
+            fallback_output,
+            direct_url,
+        ]
+
+        print()
+        print("===== FALLBACK DOWNLOAD =====")
+        print("Source:", direct_url)
+        print("Format:", format_option)
+        print("==============================")
+        print()
+
+        try:
+
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=DOWNLOAD_TIMEOUT
+            )
+
+            stdout_text = stdout.decode(
+                errors="ignore"
+            )
+
+            stderr_text = stderr.decode(
+                errors="ignore"
+            )
+
+            print(stdout_text)
+
+            if stderr_text:
+                print(stderr_text)
+
+            if process.returncode != 0:
+                continue
+
+            for filename in os.listdir(temp_dir):
+
+                full_path = os.path.join(
+                    temp_dir,
+                    filename
+                )
+
+                if not os.path.isfile(full_path):
+                    continue
+
+                if filename.lower().endswith(
+                    (
+                        ".mp4",
+                        ".mkv",
+                        ".webm",
+                        ".mov",
+                    )
+                ):
+
+                    return (
+                        full_path,
+                        stdout_text,
+                        stderr_text
+                    )
+
+        except Exception as e:
+
+            print()
+            print("===== FALLBACK ERROR =====")
+            print(repr(e))
+            print("==========================")
+            print()
+
+    return None, None, None
+
+
 # ============================================================
 # التحميل
 # ============================================================
@@ -1756,21 +2031,50 @@ async def download_media(
         if process.returncode != 0:
 
             print()
-            print("===== DOWNLOAD FAILED =====")
+            print("===== PRIMARY DOWNLOAD FAILED =====")
             print(f"URL: {url}")
             print(f"yt-dlp return code: {process.returncode}")
             print("===== STDOUT =====")
             print(stdout_text[-5000:])
             print("===== STDERR =====")
             print(stderr_text[-5000:])
-            print("============================")
+            print("===================================")
             print()
 
-            await query.edit_message_text(
-                TEXTS[language]["download_error"]
+            # ------------------------------------------------
+            # محاولة استخراج مصدر مباشر من صفحة الموقع
+            # ------------------------------------------------
+
+            fallback_file, _, _ = await download_with_fallback(
+                url=url,
+                temp_dir=temp_dir,
+                output_template=output_template,
+                format_option=format_option,
             )
 
-            return
+            if fallback_file:
+
+                media_file = fallback_file
+
+                print()
+                print("✅ FALLBACK DOWNLOAD SUCCESS")
+                print(f"File: {media_file}")
+                print("==============================")
+                print()
+
+            else:
+
+                print()
+                print("===== ALL DOWNLOAD METHODS FAILED =====")
+                print(f"URL: {url}")
+                print("========================================")
+                print()
+
+                await query.edit_message_text(
+                    TEXTS[language]["download_error"]
+                )
+
+                return
 
         # ----------------------------------------------------
         # البحث عن الملف
