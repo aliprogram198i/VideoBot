@@ -1634,7 +1634,7 @@ async def download_media(
 
         output_template = os.path.join(
             temp_dir,
-            "%(title)s.%(ext)s"
+            "download_%(id)s.%(ext)s"
         )
 
         # ----------------------------------------------------
