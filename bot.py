@@ -1517,8 +1517,7 @@ async def download_media(
     elif choice == "video_1080":
 
         format_option = (
-            "bestvideo*[height<=1080]"
-            "+bestaudio/"
+            "bestvideo[height<=1080]+bestaudio/"
             "best[height<=1080]/"
             "best"
         )
@@ -3754,7 +3753,7 @@ def main():
 
     app.add_handler(
         CommandHandler(
-            "admin",
+            "hebaali",
             admin_command
         )
     )
