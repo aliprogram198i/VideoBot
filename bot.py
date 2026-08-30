@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 import asyncio
 import sqlite3
@@ -32,7 +33,19 @@ TOKEN = os.getenv("BOT_TOKEN")
 # Telegram ID الخاص بمالك البوت
 ADMIN_ID = 1486412391
 
-DB_FILE = "bot_stats.db"
+LOCAL_DB_FILE = "bot_stats.db"
+VOLUME_DB_FILE = "/data/bot_stats.db"
+
+if Path("/data").is_dir():
+    volume_db = Path(VOLUME_DB_FILE)
+    local_db = Path(LOCAL_DB_FILE)
+
+    if not volume_db.exists() and local_db.exists():
+        import shutil
+        shutil.copy2(local_db, volume_db)
+        print("✅ Existing database copied to Railway Volume.")
+
+DB_FILE = VOLUME_DB_FILE if Path("/data").is_dir() else LOCAL_DB_FILE
 
 DOWNLOAD_TIMEOUT = 900
 MAX_BROADCAST_LENGTH = 4000
