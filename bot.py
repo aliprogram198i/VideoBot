@@ -38,33 +38,12 @@ ADMIN_ID = 1486412391
 LOCAL_DB_FILE = "bot_stats.db"
 
 # Railway Volume: /app/data
-# Termux/local: current project directory
-if os.getenv("RAILWAY_ENVIRONMENT"):
-    VOLUME_DB_FILE = "/app/data/bot_stats.db"
-else:
-    VOLUME_DB_FILE = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "bot_stats.db"
-    )
-
 # ============================================================
 # قاعدة البيانات
 # ============================================================
 
 if os.getenv("RAILWAY_ENVIRONMENT"):
-    volume_dir = Path("/app/data")
-    volume_dir.mkdir(parents=True, exist_ok=True)
-
-    volume_db = volume_dir / "bot_stats.db"
-    local_db = Path(LOCAL_DB_FILE)
-
-    if not volume_db.exists() and local_db.exists():
-        import shutil
-        shutil.copy2(local_db, volume_db)
-        print("✅ Existing database copied to Railway Volume.")
-
-    DB_FILE = str(volume_db)
-
+    DB_FILE = "/app/data/bot_stats.db"
 else:
     DB_FILE = LOCAL_DB_FILE
 
