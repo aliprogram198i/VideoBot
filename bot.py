@@ -36,7 +36,16 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1486412391
 
 LOCAL_DB_FILE = "bot_stats.db"
-VOLUME_DB_FILE = "/data/data/com.termux/files/home/VideoBot/bot_stats.db"
+
+# Railway Volume: /app/data
+# Termux/local: current project directory
+if os.getenv("RAILWAY_ENVIRONMENT"):
+    VOLUME_DB_FILE = "/data/bot_stats.db"
+else:
+    VOLUME_DB_FILE = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "bot_stats.db"
+    )
 
 if Path("/data").is_dir():
     volume_db = Path(VOLUME_DB_FILE)
