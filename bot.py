@@ -42,8 +42,10 @@ LOCAL_DB_FILE = "bot_stats.db"
 # قاعدة البيانات
 # ============================================================
 
-if os.getenv("RAILWAY_ENVIRONMENT"):
-    DB_FILE = "/app/data/bot_stats.db"
+VOLUME_DIR = Path("/app/data")
+
+if VOLUME_DIR.is_dir():
+    DB_FILE = str(VOLUME_DIR / "bot_stats.db")
 else:
     DB_FILE = LOCAL_DB_FILE
 
