@@ -2105,6 +2105,18 @@ async def download_media(
 
             "--no-playlist",
 
+            "--extractor-args",
+            "youtube:player_client=android,web",
+
+            "--sleep-requests",
+            "1",
+
+            "--sleep-interval",
+            "1",
+
+            "--max-sleep-interval",
+            "3",
+
             "-f",
             format_option,
 
