@@ -1768,7 +1768,7 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
 # ضغط الفيديو الكبير تلقائيًا
 # ============================================================
 
-MAX_TELEGRAM_VIDEO_MB = 45
+MAX_TELEGRAM_VIDEO_MB = 49
 MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
 
 async def get_video_size_mb(media_file):
@@ -1803,7 +1803,7 @@ async def compress_video_if_needed(
     - استخدام محاولات إضافية تلقائيًا عند الحاجة.
     """
 
-    SAFE_MB = 42
+    SAFE_MB = MAX_TELEGRAM_VIDEO_MB
     SAFE_BYTES = SAFE_MB * 1024 * 1024
 
     try:
