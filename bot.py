@@ -1641,6 +1641,114 @@ async def extract_direct_media_urls(page_url):
     return candidates[:20]
 
 
+# ============================================================
+# ضغط الفيديو الكبير تلقائيًا
+# ============================================================
+
+MAX_TELEGRAM_VIDEO_MB = 45
+MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
+
+async def compress_video_if_needed(media_file, temp_dir):
+    try:
+        file_size = os.path.getsize(media_file)
+
+        if file_size <= MAX_TELEGRAM_VIDEO_BYTES:
+            print(f"Video size: {file_size / 1024 / 1024:.2f} MB")
+            print("Compression not required.")
+            return media_file
+
+        print()
+        print("===== LARGE VIDEO =====")
+        print(f"Original size: {file_size / 1024 / 1024:.2f} MB")
+        print("=======================")
+
+        compressed_file = os.path.join(
+            temp_dir,
+            "compressed_video.mp4"
+        )
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            media_file,
+            "-vf",
+            "scale=min(854,iw):-2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "28",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-movflags",
+            "+faststart",
+            compressed_file,
+        ]
+
+        print("===== FFMPEG COMPRESSION =====")
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=DOWNLOAD_TIMEOUT
+        )
+
+        stdout_text = stdout.decode(errors="ignore")
+        stderr_text = stderr.decode(errors="ignore")
+
+        if stdout_text:
+            print(stdout_text)
+
+        if stderr_text:
+            print(stderr_text)
+
+        if process.returncode != 0:
+            print("FFmpeg compression failed.")
+            return media_file
+
+        if not os.path.exists(compressed_file):
+            print("Compressed file was not created.")
+            return media_file
+
+        compressed_size = os.path.getsize(
+            compressed_file
+        )
+
+        print()
+        print("===== COMPRESSION COMPLETE =====")
+        print(f"Original: {file_size / 1024 / 1024:.2f} MB")
+        print(f"Compressed: {compressed_size / 1024 / 1024:.2f} MB")
+        print("================================")
+
+        if compressed_size <= 0 or compressed_size >= file_size:
+            try:
+                os.remove(compressed_file)
+            except Exception:
+                pass
+            return media_file
+
+        return compressed_file
+
+    except asyncio.TimeoutError:
+        print("FFmpeg compression timed out.")
+        return media_file
+
+    except Exception as e:
+        print("===== COMPRESSION ERROR =====")
+        print(repr(e))
+        print("=============================")
+        return media_file
+
+
 async def download_with_fallback(
     url,
     temp_dir,
@@ -2234,6 +2342,11 @@ async def download_media(
                 )
 
         else:
+
+            media_file = await compress_video_if_needed(
+                media_file,
+                temp_dir,
+            )
 
             with open(
                 media_file,
