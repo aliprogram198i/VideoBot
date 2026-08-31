@@ -1764,10 +1764,10 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
 MAX_TELEGRAM_VIDEO_MB = 45
 MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
 
-async def compress_video_if_needed(media_file, temp_dir):
+async def compress_video_if_needed(media_file, temp_dir, query=None, language="ar"):
     """
-    ضغط الفيديوهات الكبيرة تلقائيًا حتى تصبح مناسبة للإرسال عبر Telegram.
-    يتم خفض الدقة والـ bitrate تدريجيًا حتى يصبح الحجم أقل من 45MB.
+    ضغط الفيديو تلقائيًا إذا تجاوز 45 MB.
+    يحسب bitrate مناسبًا حسب مدة الفيديو بدل المحاولات العشوائية.
     """
 
     MAX_MB = 45
@@ -1775,183 +1775,363 @@ async def compress_video_if_needed(media_file, temp_dir):
 
     try:
         if not os.path.isfile(media_file):
-            print()
-            print("===== COMPRESSION ERROR =====")
-            print(f"❌ Input file does not exist: {media_file}")
-            print("=============================")
+            print("❌ Compression input file not found")
             return media_file
 
         original_size = os.path.getsize(media_file)
 
         print()
         print("===== VIDEO SIZE CHECK =====")
-        print(f"Input file: {media_file}")
         print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
-        print(f"Telegram limit target: {MAX_MB} MB")
         print("============================")
 
-        # الفيديو صغير بما يكفي
+        # الفيديو أصغر من الحد، لا حاجة للضغط
         if original_size <= MAX_BYTES:
             print("✅ Compression not required.")
             return media_file
 
-        # التأكد من وجود ffmpeg
-        ffmpeg_path = shutil.which("ffmpeg")
+        # --------------------------------------------------------
+        # --------------------------------------------------------
+        # إشعار المستخدم بأن الفيديو كبير وسيتم ضغطه
+        # --------------------------------------------------------
+        if query is not None:
+            try:
+                compression_message = {
+                    "ar": (
+                        "⏳ لحظات من فضلك...\n\n"
+                        "📦 تم تحميل الفيديو بنجاح، لكن حجمه كبير قليلًا.\n\n"
+                        "⚙️ جاري الآن ضغط الفيديو وتحسين حجمه ليصبح مناسبًا للإرسال عبر تيليجرام.\n\n"
+                        "🎯 قد تستغرق هذه العملية بعض الوقت حسب مدة الفيديو وحجمه.\n\n"
+                        "📤 بعد انتهاء المعالجة سيتم إرسال الفيديو إليك تلقائيًا.\n\n"
+                        "❤️ شكرًا لصبرك، لا حاجة لإعادة إرسال الرابط."
+                    ),
+                    "en": (
+                        "⏳ Please wait a moment...\n\n"
+                        "📦 The video has been downloaded successfully, but it is a little too large.\n\n"
+                        "⚙️ The server is now compressing and optimizing the video so it can be sent through Telegram.\n\n"
+                        "🎯 This may take some time depending on the video length and size.\n\n"
+                        "📤 The video will be sent to you automatically when processing is complete.\n\n"
+                        "❤️ Thank you for your patience. There is no need to resend the link."
+                    ),
+                }
 
-        if not ffmpeg_path:
-            print("❌ ffmpeg غير موجود.")
+                message = compression_message.get(
+                    language,
+                    compression_message["ar"]
+                )
+
+                await query.edit_message_text(message)
+
+            except Exception as notify_error:
+                print("⚠️ Could not update compression message:")
+                print(repr(notify_error))
+
+        if not shutil.which("ffmpeg"):
+            print("❌ ffmpeg غير موجود")
             return media_file
+
+        if not shutil.which("ffprobe"):
+            print("❌ ffprobe غير موجود")
+            return media_file
+
+        # --------------------------------------------------------
+        # الحصول على مدة الفيديو
+        # --------------------------------------------------------
+
+        probe_command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            media_file,
+        ]
+
+        probe = await asyncio.create_subprocess_exec(
+            *probe_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        probe_stdout, probe_stderr = await asyncio.wait_for(
+            probe.communicate(),
+            timeout=120,
+        )
+
+        if probe.returncode != 0:
+            print("❌ Could not read video duration")
+            print(probe_stderr.decode(errors="ignore")[-2000:])
+            return media_file
+
+        try:
+            duration = float(probe_stdout.decode().strip())
+        except Exception:
+            duration = 0
+
+        if duration <= 0:
+            print("❌ Invalid video duration")
+            return media_file
+
+        print(f"Duration: {duration:.2f} seconds")
+        print(f"Duration: {duration / 60:.2f} minutes")
+
+        # --------------------------------------------------------
+        # حساب bitrate آمن للوصول إلى أقل من 45 MB
+        #
+        # نستخدم 40 MB كهدف فعلي حتى يكون هناك هامش أمان.
+        # --------------------------------------------------------
+
+        target_bytes = 40 * 1024 * 1024
+
+        # إجمالي bitrate بالبت/ثانية
+        total_bitrate = int(
+            (target_bytes * 8) / duration
+        )
+
+        # الصوت
+        audio_bitrate = 48_000
+
+        # الفيديو = الإجمالي - الصوت
+        video_bitrate = total_bitrate - audio_bitrate
+
+        # حدود آمنة
+        video_bitrate = max(80_000, video_bitrate)
+        video_bitrate = min(2_000_000, video_bitrate)
+
+        # تحويل إلى kbps
+        video_kbps = video_bitrate // 1000
+        audio_kbps = audio_bitrate // 1000
+
+        print()
+        print("===== SMART COMPRESSION =====")
+        print(f"Target size: {target_bytes / 1024 / 1024:.2f} MB")
+        print(f"Video bitrate: {video_kbps}k")
+        print(f"Audio bitrate: {audio_kbps}k")
+        print("==============================")
 
         output_file = os.path.join(
             temp_dir,
             "compressed_video.mp4"
         )
 
-        # بروفايلات حقيقية:
-        # label, height, video bitrate, audio bitrate
-        settings = [
-            ("480p", 480, "700k", "96k"),
-            ("360p", 360, "500k", "80k"),
-            ("240p", 240, "350k", "64k"),
+        if os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+            except Exception:
+                pass
+
+        # --------------------------------------------------------
+        # تحديد الدقة حسب bitrate
+        # --------------------------------------------------------
+
+        if video_kbps >= 900:
+            scale_filter = "scale='min(854,iw)':-2"
+        elif video_kbps >= 500:
+            scale_filter = "scale='min(640,iw)':-2"
+        elif video_kbps >= 250:
+            scale_filter = "scale='min(480,iw)':-2"
+        else:
+            scale_filter = "scale='min(360,iw)':-2"
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            media_file,
+
+            "-vf",
+            scale_filter,
+
+            "-c:v",
+            "libx264",
+
+            "-preset",
+            "veryfast",
+
+            "-b:v",
+            f"{video_kbps}k",
+
+            "-maxrate",
+            f"{video_kbps}k",
+
+            "-bufsize",
+            f"{max(video_kbps * 2, 160)}k",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            f"{audio_kbps}k",
+
+            "-ac",
+            "2",
+
+            "-movflags",
+            "+faststart",
+
+            output_file,
         ]
 
-        for label, height, video_bitrate, audio_bitrate in settings:
+        print()
+        print("===== COMPRESSING VIDEO =====")
+        print("Starting FFmpeg...")
+        print("==============================")
 
-            if os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                except Exception:
-                    pass
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
-            print()
-            print("===== COMPRESSING VIDEO =====")
-            print(f"Profile: {label}")
-            print(f"Target height: {height}px")
-            print(f"Video bitrate: {video_bitrate}")
-            print(f"Audio bitrate: {audio_bitrate}")
-            print("==============================")
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=DOWNLOAD_TIMEOUT,
+        )
 
-            command = [
-                ffmpeg_path,
-                "-y",
+        if process.returncode != 0:
+            print("❌ FFmpeg compression failed")
+            print(stderr.decode(errors="ignore")[-5000:])
+            return media_file
 
-                "-i",
-                media_file,
+        if not os.path.isfile(output_file):
+            print("❌ Compressed file was not created")
+            return media_file
 
-                # تصغير الارتفاع فعليًا مع الحفاظ على نسبة العرض
-                "-vf",
-                f"scale=-2:{height}",
-
-                "-c:v",
-                "libx264",
-
-                "-preset",
-                "veryfast",
-
-                "-b:v",
-                video_bitrate,
-
-                "-maxrate",
-                video_bitrate,
-
-                "-bufsize",
-                "2M",
-
-                "-c:a",
-                "aac",
-
-                "-b:a",
-                audio_bitrate,
-
-                "-movflags",
-                "+faststart",
-
-                "-threads",
-                "2",
-
-                output_file,
-            ]
-
-            print()
-            print("===== FFMPEG COMMAND =====")
-            print(" ".join(command))
-            print("==========================")
-
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=DOWNLOAD_TIMEOUT
-                )
-
-            except asyncio.TimeoutError:
-                print("❌ FFmpeg compression timeout.")
-
-                try:
-                    process.kill()
-                    await process.wait()
-                except Exception:
-                    pass
-
-                continue
-
-            stderr_text = stderr.decode(errors="ignore")
-
-            if process.returncode != 0:
-                print()
-                print("===== FFMPEG ERROR =====")
-                print(f"Return code: {process.returncode}")
-                print(stderr_text[-5000:])
-                print("========================")
-                continue
-
-            if not os.path.isfile(output_file):
-                print("❌ FFmpeg finished but output file was not created.")
-                continue
-
-            compressed_size = os.path.getsize(output_file)
-
-            print()
-            print("===== COMPRESSION RESULT =====")
-            print(f"Profile: {label}")
-            print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
-            print(f"New size: {compressed_size / 1024 / 1024:.2f} MB")
-            print(f"Reduction: {(1 - compressed_size / original_size) * 100:.1f}%")
-            print("==============================")
-
-            if compressed_size <= MAX_BYTES:
-                print("✅ Video compressed successfully.")
-                print(f"✅ Final file: {output_file}")
-                print(f"✅ Final size: {compressed_size / 1024 / 1024:.2f} MB")
-                return output_file
-
-            print(
-                f"⚠️ {label} still too large "
-                f"({compressed_size / 1024 / 1024:.2f} MB). "
-                "Trying next profile..."
-            )
+        compressed_size = os.path.getsize(output_file)
 
         print()
-        print("===== COMPRESSION FAILED =====")
-        print("❌ Could not compress video below 45 MB.")
-        print(f"Original file: {original_size / 1024 / 1024:.2f} MB")
-        print("===============================")
+        print("===== COMPRESSION RESULT =====")
+        print(
+            f"New size: "
+            f"{compressed_size / 1024 / 1024:.2f} MB"
+        )
+        print("==============================")
 
+        # --------------------------------------------------------
+        # نجاح الضغط
+        # --------------------------------------------------------
+
+        if compressed_size <= MAX_BYTES:
+            print("✅ Video compressed successfully.")
+            return output_file
+
+        # --------------------------------------------------------
+        # إذا بقي أكبر من 45 MB:
+        # محاولة ثانية أكثر ضغطًا
+        # --------------------------------------------------------
+
+        print("⚠️ First compression is still above 45 MB.")
+        print("Starting emergency compression...")
+
+        emergency_file = os.path.join(
+            temp_dir,
+            "compressed_video_final.mp4"
+        )
+
+        if os.path.exists(emergency_file):
+            try:
+                os.remove(emergency_file)
+            except Exception:
+                pass
+
+        emergency_video_kbps = max(
+            60,
+            int(video_kbps * 0.70)
+        )
+
+        emergency_audio_kbps = 32
+
+        emergency_command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            output_file,
+
+            "-vf",
+            "scale='min(360,iw)':-2",
+
+            "-c:v",
+            "libx264",
+
+            "-preset",
+            "veryfast",
+
+            "-b:v",
+            f"{emergency_video_kbps}k",
+
+            "-maxrate",
+            f"{emergency_video_kbps}k",
+
+            "-bufsize",
+            f"{max(emergency_video_kbps * 2, 120)}k",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            f"{emergency_audio_kbps}k",
+
+            "-ac",
+            "2",
+
+            "-movflags",
+            "+faststart",
+
+            emergency_file,
+        ]
+
+        process2 = await asyncio.create_subprocess_exec(
+            *emergency_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout2, stderr2 = await asyncio.wait_for(
+            process2.communicate(),
+            timeout=DOWNLOAD_TIMEOUT,
+        )
+
+        if process2.returncode != 0:
+            print("❌ Emergency compression failed")
+            print(stderr2.decode(errors="ignore")[-5000:])
+            return media_file
+
+        if not os.path.isfile(emergency_file):
+            print("❌ Emergency compressed file not found")
+            return media_file
+
+        emergency_size = os.path.getsize(emergency_file)
+
+        print()
+        print("===== EMERGENCY COMPRESSION RESULT =====")
+        print(
+            f"Final size: "
+            f"{emergency_size / 1024 / 1024:.2f} MB"
+        )
+        print("=========================================")
+
+        if emergency_size <= MAX_BYTES:
+            print("✅ Emergency compression successful.")
+            return emergency_file
+
+        print("❌ Could not compress video below 45 MB.")
+        return media_file
+
+    except asyncio.TimeoutError:
+        print()
+        print("===== COMPRESSION TIMEOUT =====")
+        print("❌ FFmpeg compression timed out.")
+        print("===============================")
         return media_file
 
     except Exception as e:
         print()
         print("===== COMPRESSION ERROR =====")
-        print(f"Type: {type(e).__name__}")
-        print(f"Error: {repr(e)}")
+        print(repr(e))
         print("=============================")
         return media_file
-
 
 async def download_with_fallback(
     url,
@@ -2312,29 +2492,17 @@ async def download_media(
             "--extractor-args",
             "youtube:player_client=android,web",
 
-            "--sleep-requests",
-            "1",
-
-            "--sleep-interval",
-            "1",
-
-            "--max-sleep-interval",
-            "3",
-
             "-f",
             format_option,
 
             "--retries",
-            "5",
+            "3",
 
             "--fragment-retries",
-            "5",
+            "3",
 
             "--socket-timeout",
             "60",
-
-            "--concurrent-fragments",
-            "2",
 
             "--newline",
 
@@ -2595,7 +2763,20 @@ async def download_media(
             media_file = await compress_video_if_needed(
                 media_file,
                 temp_dir,
+                query=query,
+                language=language,
             )
+
+            # ----------------------------------------------------
+            # بعد انتهاء الضغط: عرض رسالة رفع الفيديو
+            # ----------------------------------------------------
+            try:
+                await query.edit_message_text(
+                    TEXTS[language]["uploading"]
+                )
+            except Exception as upload_message_error:
+                print("⚠️ Could not update upload message:")
+                print(repr(upload_message_error))
 
             with open(
                 media_file,
@@ -2702,21 +2883,17 @@ async def download_media(
 # ============================================================
 
 def admin_keyboard():
-
     return InlineKeyboardMarkup([
-
         [
             InlineKeyboardButton(
                 "📊 الإحصائيات",
                 callback_data="admin_stats"
             ),
-
             InlineKeyboardButton(
                 "👥 المستخدمون",
                 callback_data="admin_users_0"
             ),
         ],
-
         [
             InlineKeyboardButton(
                 "📢 إرسال إعلان",
@@ -2729,7 +2906,12 @@ def admin_keyboard():
                 callback_data="admin_delete_broadcasts"
             )
         ],
-
+        [
+            InlineKeyboardButton(
+                "🧹 تفريغ ذاكرة التخزين",
+                callback_data="admin_storage"
+            )
+        ],
     ])
 
 
@@ -4207,6 +4389,181 @@ async def process_admin_search(
 # لوحة الإدارة الرئيسية
 # ============================================================
 
+# ============================================================
+# 🧹 إدارة ذاكرة التخزين المؤقت
+# ============================================================
+
+async def admin_storage_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ نعم، نظّف الآن",
+                callback_data="admin_storage_confirm"
+            ),
+            InlineKeyboardButton(
+                "❌ إلغاء",
+                callback_data="admin_storage_cancel"
+            ),
+        ]
+    ])
+
+    await query.edit_message_text(
+        "🧹 تفريغ ذاكرة التخزين\n\n"
+        "سيتم حذف الملفات المؤقتة التي أنشأها البوت فقط.\n\n"
+        "🗑️ سيتم تنظيف ملفات التحميل والضغط المؤقتة.\n"
+        "🔒 قاعدة البيانات وملفات البوت لن تتأثر.\n\n"
+        "هل تريد المتابعة؟",
+        reply_markup=keyboard
+    )
+
+
+async def admin_storage_confirm_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await query.edit_message_text(
+        "⏳ جاري تنظيف ذاكرة التخزين...\n\n"
+        "🧹 يتم الآن حذف الملفات المؤقتة، يرجى الانتظار."
+    )
+
+    tmp_dir = Path("/tmp")
+
+    deleted_files = 0
+    deleted_dirs = 0
+    freed_bytes = 0
+
+    try:
+        if tmp_dir.exists():
+            for item in tmp_dir.iterdir():
+
+                if not item.is_dir():
+                    continue
+
+                if not item.name.startswith("videobot_"):
+                    continue
+
+                try:
+                    for file_path in item.rglob("*"):
+                        try:
+                            if file_path.is_file():
+                                freed_bytes += file_path.stat().st_size
+                                deleted_files += 1
+                        except Exception:
+                            pass
+
+                    shutil.rmtree(
+                        item,
+                        ignore_errors=True
+                    )
+
+                    deleted_dirs += 1
+
+                except Exception as e:
+                    print("⚠️ Storage cleanup error:")
+                    print(repr(e))
+
+        freed_mb = freed_bytes / 1024 / 1024
+        freed_gb = freed_bytes / 1024 / 1024 / 1024
+
+        if freed_gb >= 1:
+            size_text = f"{freed_gb:.2f} GB"
+        else:
+            size_text = f"{freed_mb:.2f} MB"
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔄 تنظيف مرة أخرى",
+                    callback_data="admin_storage"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 لوحة الإدارة",
+                    callback_data="admin_home"
+                )
+            ]
+        ])
+
+        await query.edit_message_text(
+            "✅ تم تنظيف ذاكرة التخزين بنجاح!\n\n"
+            f"🗑️ الملفات المحذوفة: {deleted_files}\n"
+            f"📁 مجلدات العمليات المحذوفة: {deleted_dirs}\n"
+            f"💾 المساحة المحررة: {size_text}\n\n"
+            "🔒 قاعدة البيانات وملفات البوت لم تتأثر.",
+            reply_markup=keyboard
+        )
+
+        print()
+        print("===== ADMIN STORAGE CLEANUP =====")
+        print(f"Deleted files: {deleted_files}")
+        print(f"Deleted directories: {deleted_dirs}")
+        print(f"Freed space: {size_text}")
+        print("=================================")
+        print()
+
+    except Exception as e:
+
+        print()
+        print("===== STORAGE CLEANUP ERROR =====")
+        print(repr(e))
+        print("=================================")
+        print()
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔄 المحاولة مرة أخرى",
+                    callback_data="admin_storage"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 لوحة الإدارة",
+                    callback_data="admin_home"
+                )
+            ]
+        ])
+
+        await query.edit_message_text(
+            "❌ حدث خطأ أثناء تنظيف ذاكرة التخزين.\n\n"
+            "يمكنك المحاولة مرة أخرى.",
+            reply_markup=keyboard
+        )
+
+
+async def admin_storage_cancel_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer("تم إلغاء العملية.")
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await query.edit_message_text(
+        "🛠️ لوحة إدارة بوت التحميل\n\n"
+        "اختر القسم الذي تريد إدارته:",
+        reply_markup=admin_keyboard()
+    )
+
+
 async def admin_home_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -4763,6 +5120,27 @@ def main():
         CallbackQueryHandler(
             delete_broadcasts_callback,
             pattern=r"^admin_delete_broadcasts$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_storage_callback,
+            pattern=r"^admin_storage$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_storage_confirm_callback,
+            pattern=r"^admin_storage_confirm$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_storage_cancel_callback,
+            pattern=r"^admin_storage_cancel$"
         )
     )
 
