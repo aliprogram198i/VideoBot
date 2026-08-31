@@ -1421,6 +1421,13 @@ async def show_video_menu(
 
         [
             InlineKeyboardButton(
+                "🗜️ ضغط الفيديو",
+                callback_data="video_compress"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
                 TEXTS[language]["back"],
                 callback_data="main_menu"
             )
@@ -1764,7 +1771,29 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
 MAX_TELEGRAM_VIDEO_MB = 45
 MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
 
-async def compress_video_if_needed(media_file, temp_dir, query=None, language="ar"):
+async def get_video_size_mb(media_file):
+    """
+    إرجاع حجم الفيديو بالميغابايت.
+    """
+    try:
+        if not os.path.isfile(media_file):
+            return 0.0
+
+        return os.path.getsize(media_file) / 1024 / 1024
+
+    except Exception as e:
+        print("❌ Could not read video size:")
+        print(repr(e))
+        return 0.0
+
+
+async def compress_video_if_needed(
+    media_file,
+    temp_dir,
+    query=None,
+    language="ar",
+    compression_percent=50,
+):
     """
     ضغط الفيديو تلقائيًا إذا تجاوز 45 MB.
     يحسب bitrate مناسبًا حسب مدة الفيديو بدل المحاولات العشوائية.
@@ -1878,12 +1907,38 @@ async def compress_video_if_needed(media_file, temp_dir, query=None, language="a
         print(f"Duration: {duration / 60:.2f} minutes")
 
         # --------------------------------------------------------
-        # حساب bitrate آمن للوصول إلى أقل من 45 MB
-        #
-        # نستخدم 40 MB كهدف فعلي حتى يكون هناك هامش أمان.
+        # نسبة الضغط التي اختارها المستخدم
         # --------------------------------------------------------
 
-        target_bytes = 40 * 1024 * 1024
+        try:
+            compression_percent = int(compression_percent)
+        except Exception:
+            compression_percent = 50
+
+        compression_percent = max(
+            10,
+            min(50, compression_percent)
+        )
+
+        # --------------------------------------------------------
+        # حساب الحجم المستهدف حسب نسبة الضغط
+        # --------------------------------------------------------
+
+        original_target_bytes = int(
+            original_size * (100 - compression_percent) / 100
+        )
+
+        # لا نسمح بتجاوز حد تيليجرام
+        target_bytes = min(
+            original_target_bytes,
+            40 * 1024 * 1024
+        )
+
+        # حد أدنى منطقي للحجم المستهدف
+        target_bytes = max(
+            target_bytes,
+            5 * 1024 * 1024
+        )
 
         # إجمالي bitrate بالبت/ثانية
         total_bitrate = int(
@@ -1903,6 +1958,15 @@ async def compress_video_if_needed(media_file, temp_dir, query=None, language="a
         # تحويل إلى kbps
         video_kbps = video_bitrate // 1000
         audio_kbps = audio_bitrate // 1000
+
+        print()
+        print("===== USER COMPRESSION =====")
+        print(f"Compression percent: {compression_percent}%")
+        print(
+            f"Target size: "
+            f"{target_bytes / 1024 / 1024:.2f} MB"
+        )
+        print("=============================")
 
         print()
         print("===== SMART COMPRESSION =====")
@@ -2304,6 +2368,80 @@ async def download_media(
         await show_video_menu(
             query,
             language
+        )
+
+        return
+
+    if choice in (
+        "compress_10",
+        "compress_20",
+        "compress_30",
+        "compress_40",
+        "compress_50",
+    ):
+
+        compression_percent = int(
+            choice.replace("compress_", "")
+        )
+
+        context.user_data["compression_percent"] = (
+            compression_percent
+        )
+
+        await query.edit_message_text(
+            f"🗜️ تم اختيار ضغط بنسبة {compression_percent}%\n\n"
+            "⏳ سيتم الآن تحميل الفيديو ثم ضغطه بالنسبة التي اخترتها."
+        )
+
+        # نبدأ التحميل بأعلى جودة متاحة
+        choice = "video_best"
+
+    if choice == "video_compress":
+
+        compression_keyboard = [
+
+            [
+                InlineKeyboardButton(
+                    "🟢 ضغط خفيف 10%",
+                    callback_data="compress_10"
+                ),
+                InlineKeyboardButton(
+                    "🟡 ضغط متوسط 20%",
+                    callback_data="compress_20"
+                ),
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "🟠 ضغط قوي 30%",
+                    callback_data="compress_30"
+                ),
+                InlineKeyboardButton(
+                    "🔴 ضغط أقوى 40%",
+                    callback_data="compress_40"
+                ),
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "🔴 ضغط قوي جدًا 50%",
+                    callback_data="compress_50"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    "🔙 رجوع",
+                    callback_data="video_menu"
+                )
+            ],
+        ]
+
+        await query.edit_message_text(
+            "🗜️ اختر نسبة ضغط الفيديو:",
+            reply_markup=InlineKeyboardMarkup(
+                compression_keyboard
+            )
         )
 
         return
@@ -2760,11 +2898,17 @@ async def download_media(
 
         else:
 
+            compression_percent = context.user_data.get(
+                "compression_percent",
+                50
+            )
+
             media_file = await compress_video_if_needed(
                 media_file,
                 temp_dir,
                 query=query,
                 language=language,
+                compression_percent=compression_percent,
             )
 
             # ----------------------------------------------------
