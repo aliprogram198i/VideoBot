@@ -12,4 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py .
 
-CMD ["python", "bot.py"]
+RUN echo "=== DOCKER BUILD OK ===" && python --version && ls -lh /app/bot.py
+
+CMD ["python", "-u", "bot.py"]
