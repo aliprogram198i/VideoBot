@@ -1677,32 +1677,39 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
         )
 
         print()
-        print("===== YOINKU FALLBACK =====")
+        print("===== YOINKU API =====")
         print("Format:", download_format)
-        print("===========================")
+        print("Requesting download URL...")
+        print("======================")
 
         request = Request(
             api_url,
             headers={
                 "x-api-key": api_key,
+                "Accept": "application/json",
                 "User-Agent": "VideoBot/1.0",
             },
         )
 
         def get_data():
-            with urlopen(request, timeout=60) as response:
-                return json.loads(
-                    response.read().decode("utf-8")
-                )
+            with urlopen(request, timeout=120) as response:
+                body = response.read().decode("utf-8")
+                return json.loads(body)
 
         data = await asyncio.to_thread(get_data)
 
+        print("Yoinku response received.")
+
         if not data.get("ok") or not data.get("url"):
             print("❌ Yoinku لم يعطِ رابط تحميل")
-            print(data)
+            print("Response:", data)
             return None
 
         direct_url = data["url"]
+        filename = data.get("filename")
+
+        print("✅ Yoinku أعطى رابط التحميل")
+        print("Filename:", filename or "unknown")
 
         extension = ".mp3" if is_audio else ".mp4"
 
@@ -1710,6 +1717,8 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
             temp_dir,
             "yoinku_download" + extension
         )
+
+        print("Downloading file from Yoinku storage...")
 
         def download_file():
             request2 = Request(
@@ -1719,20 +1728,10 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
                 },
             )
 
-            with urlopen(
-                request2,
-                timeout=300
-            ) as response:
-
-                with open(
-                    output_file,
-                    "wb"
-                ) as output:
-
+            with urlopen(request2, timeout=600) as response:
+                with open(output_file, "wb") as output:
                     while True:
-                        chunk = response.read(
-                            1024 * 1024
-                        )
+                        chunk = response.read(1024 * 1024)
 
                         if not chunk:
                             break
@@ -1748,13 +1747,13 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
             print("❌ ملف Yoinku فارغ أو غير موجود")
             return None
 
-        print("✅ YOINKU DOWNLOAD SUCCESS")
+        size_mb = os.path.getsize(output_file) / 1024 / 1024
+
+        print()
+        print("===== YOINKU DOWNLOAD SUCCESS =====")
         print("File:", output_file)
-        print(
-            "Size:",
-            f"{os.path.getsize(output_file) / 1024 / 1024:.2f} MB"
-        )
-        print("============================")
+        print(f"Size: {size_mb:.2f} MB")
+        print("====================================")
 
         return output_file
 
@@ -1764,7 +1763,6 @@ async def download_with_yoinku(url, temp_dir, is_audio=False):
         print(repr(e))
         print("========================")
         return None
-
 
 # ============================================================
 # ضغط الفيديو الكبير تلقائيًا
