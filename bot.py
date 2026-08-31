@@ -2493,6 +2493,17 @@ async def download_media(
             TEXTS[language]["uploading"]
         )
 
+        print()
+        print("===== FINAL FILE BEFORE TELEGRAM =====")
+        print(f"File: {media_file}")
+        if os.path.isfile(media_file):
+            final_size = os.path.getsize(media_file)
+            print(f"Final size: {final_size / 1024 / 1024:.2f} MB")
+        else:
+            print("❌ الملف غير موجود")
+        print("=======================================")
+        print()
+
         if is_audio:
 
             with open(
