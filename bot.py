@@ -47,8 +47,15 @@ else:
         "bot_stats.db"
     )
 
-if Path("/data").is_dir():
-    volume_db = Path(VOLUME_DB_FILE)
+# ============================================================
+# قاعدة البيانات
+# ============================================================
+
+if os.getenv("RAILWAY_ENVIRONMENT"):
+    volume_dir = Path("/app/data")
+    volume_dir.mkdir(parents=True, exist_ok=True)
+
+    volume_db = volume_dir / "bot_stats.db"
     local_db = Path(LOCAL_DB_FILE)
 
     if not volume_db.exists() and local_db.exists():
@@ -56,7 +63,12 @@ if Path("/data").is_dir():
         shutil.copy2(local_db, volume_db)
         print("✅ Existing database copied to Railway Volume.")
 
-DB_FILE = VOLUME_DB_FILE if Path("/data").is_dir() else LOCAL_DB_FILE
+    DB_FILE = str(volume_db)
+
+else:
+    DB_FILE = LOCAL_DB_FILE
+
+print(f"🗄️ Database path: {DB_FILE}")
 
 DOWNLOAD_TIMEOUT = 900
 MAX_BROADCAST_LENGTH = 4000
