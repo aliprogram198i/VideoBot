@@ -1795,33 +1795,37 @@ async def compress_video_if_needed(
     compression_percent=50,
 ):
     """
-    ضغط الفيديو تلقائيًا إذا تجاوز 45 MB.
-    يحسب bitrate مناسبًا حسب مدة الفيديو بدل المحاولات العشوائية.
+    ضغط الفيديو بشكل ذكي مع عدة محاولات.
+
+    الهدف:
+    - إبقاء الملف النهائي تحت 42 MB بهامش أمان.
+    - عدم إعادة الملف الأصلي الكبير إذا فشلت عملية الضغط.
+    - استخدام محاولات إضافية تلقائيًا عند الحاجة.
     """
 
-    MAX_MB = 45
-    MAX_BYTES = MAX_MB * 1024 * 1024
+    SAFE_MB = 42
+    SAFE_BYTES = SAFE_MB * 1024 * 1024
 
     try:
         if not os.path.isfile(media_file):
             print("❌ Compression input file not found")
-            return media_file
+            return None
 
         original_size = os.path.getsize(media_file)
 
         print()
         print("===== VIDEO SIZE CHECK =====")
         print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
+        print(f"Safe target: {SAFE_MB} MB")
         print("============================")
 
-        # الفيديو أصغر من الحد، لا حاجة للضغط
-        if original_size <= MAX_BYTES:
+        # الفيديو أصغر من الحد الآمن
+        if original_size <= SAFE_BYTES:
             print("✅ Compression not required.")
             return media_file
 
         # --------------------------------------------------------
-        # --------------------------------------------------------
-        # إشعار المستخدم بأن الفيديو كبير وسيتم ضغطه
+        # إشعار المستخدم
         # --------------------------------------------------------
         if query is not None:
             try:
@@ -1836,10 +1840,10 @@ async def compress_video_if_needed(
                     ),
                     "en": (
                         "⏳ Please wait a moment...\n\n"
-                        "📦 The video has been downloaded successfully, but it is a little too large.\n\n"
-                        "⚙️ The server is now compressing and optimizing the video so it can be sent through Telegram.\n\n"
+                        "📦 The video has been downloaded successfully, but it is too large.\n\n"
+                        "⚙️ The server is compressing and optimizing the video for Telegram.\n\n"
                         "🎯 This may take some time depending on the video length and size.\n\n"
-                        "📤 The video will be sent to you automatically when processing is complete.\n\n"
+                        "📤 The video will be sent automatically when processing is complete.\n\n"
                         "❤️ Thank you for your patience. There is no need to resend the link."
                     ),
                 }
@@ -1857,16 +1861,15 @@ async def compress_video_if_needed(
 
         if not shutil.which("ffmpeg"):
             print("❌ ffmpeg غير موجود")
-            return media_file
+            return None
 
         if not shutil.which("ffprobe"):
             print("❌ ffprobe غير موجود")
-            return media_file
+            return None
 
         # --------------------------------------------------------
-        # الحصول على مدة الفيديو
+        # قراءة مدة الفيديو
         # --------------------------------------------------------
-
         probe_command = [
             "ffprobe",
             "-v",
@@ -1892,7 +1895,7 @@ async def compress_video_if_needed(
         if probe.returncode != 0:
             print("❌ Could not read video duration")
             print(probe_stderr.decode(errors="ignore")[-2000:])
-            return media_file
+            return None
 
         try:
             duration = float(probe_stdout.decode().strip())
@@ -1901,15 +1904,14 @@ async def compress_video_if_needed(
 
         if duration <= 0:
             print("❌ Invalid video duration")
-            return media_file
+            return None
 
         print(f"Duration: {duration:.2f} seconds")
         print(f"Duration: {duration / 60:.2f} minutes")
 
         # --------------------------------------------------------
-        # نسبة الضغط التي اختارها المستخدم
+        # نسبة الضغط
         # --------------------------------------------------------
-
         try:
             compression_percent = int(compression_percent)
         except Exception:
@@ -1921,281 +1923,336 @@ async def compress_video_if_needed(
         )
 
         # --------------------------------------------------------
-        # حساب الحجم المستهدف حسب نسبة الضغط
+        # الحجم المستهدف
         # --------------------------------------------------------
-
-        original_target_bytes = int(
+        requested_target = int(
             original_size * (100 - compression_percent) / 100
         )
 
-        # لا نسمح بتجاوز حد تيليجرام
         target_bytes = min(
-            original_target_bytes,
-            40 * 1024 * 1024
+            requested_target,
+            SAFE_BYTES
         )
 
-        # حد أدنى منطقي للحجم المستهدف
         target_bytes = max(
             target_bytes,
             5 * 1024 * 1024
         )
 
-        # إجمالي bitrate بالبت/ثانية
+        print()
+        print("===== SMART COMPRESSION =====")
+        print(f"Compression percent: {compression_percent}%")
+        print(f"Target size: {target_bytes / 1024 / 1024:.2f} MB")
+        print("==============================")
+
+        # --------------------------------------------------------
+        # دالة تنفيذ ضغط واحدة
+        # --------------------------------------------------------
+        async def run_ffmpeg(
+            input_file,
+            output_file,
+            video_kbps,
+            audio_kbps,
+            scale_width,
+            preset="veryfast",
+        ):
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except Exception:
+                    pass
+
+            scale_filter = f"scale='min({scale_width},iw)':-2"
+
+            command = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_file,
+
+                "-vf",
+                scale_filter,
+
+                "-c:v",
+                "libx264",
+
+                "-preset",
+                preset,
+
+                "-b:v",
+                f"{video_kbps}k",
+
+                "-maxrate",
+                f"{video_kbps}k",
+
+                "-bufsize",
+                f"{max(video_kbps * 2, 120)}k",
+
+                "-c:a",
+                "aac",
+
+                "-b:a",
+                f"{audio_kbps}k",
+
+                "-ac",
+                "2",
+
+                "-movflags",
+                "+faststart",
+
+                output_file,
+            ]
+
+            print()
+            print("===== FFMPEG COMPRESSION =====")
+            print(f"Video bitrate: {video_kbps}k")
+            print(f"Audio bitrate: {audio_kbps}k")
+            print(f"Resolution: {scale_width}px")
+            print("===============================")
+
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=DOWNLOAD_TIMEOUT,
+            )
+
+            if process.returncode != 0:
+                print("❌ FFmpeg failed")
+                print(stderr.decode(errors="ignore")[-5000:])
+                return False
+
+            if not os.path.isfile(output_file):
+                print("❌ FFmpeg output file was not created")
+                return False
+
+            return True
+
+        # --------------------------------------------------------
+        # حساب bitrate
+        # --------------------------------------------------------
+        audio_bitrate = 48_000
+
         total_bitrate = int(
             (target_bytes * 8) / duration
         )
 
-        # الصوت
-        audio_bitrate = 48_000
-
-        # الفيديو = الإجمالي - الصوت
         video_bitrate = total_bitrate - audio_bitrate
 
-        # حدود آمنة
-        video_bitrate = max(80_000, video_bitrate)
-        video_bitrate = min(2_000_000, video_bitrate)
-
-        # تحويل إلى kbps
-        video_kbps = video_bitrate // 1000
-        audio_kbps = audio_bitrate // 1000
-
-        print()
-        print("===== USER COMPRESSION =====")
-        print(f"Compression percent: {compression_percent}%")
-        print(
-            f"Target size: "
-            f"{target_bytes / 1024 / 1024:.2f} MB"
+        video_bitrate = max(
+            80_000,
+            video_bitrate
         )
-        print("=============================")
 
-        print()
-        print("===== SMART COMPRESSION =====")
-        print(f"Target size: {target_bytes / 1024 / 1024:.2f} MB")
-        print(f"Video bitrate: {video_kbps}k")
-        print(f"Audio bitrate: {audio_kbps}k")
-        print("==============================")
+        video_bitrate = min(
+            2_000_000,
+            video_bitrate
+        )
+
+        video_kbps = max(
+            80,
+            video_bitrate // 1000
+        )
+
+        audio_kbps = 48
+
+        if video_kbps >= 900:
+            scale_width = 854
+        elif video_kbps >= 500:
+            scale_width = 640
+        elif video_kbps >= 250:
+            scale_width = 480
+        else:
+            scale_width = 360
 
         output_file = os.path.join(
             temp_dir,
             "compressed_video.mp4"
         )
 
-        if os.path.exists(output_file):
-            try:
-                os.remove(output_file)
-            except Exception:
-                pass
-
         # --------------------------------------------------------
-        # تحديد الدقة حسب bitrate
+        # المحاولة الأولى
         # --------------------------------------------------------
-
-        if video_kbps >= 900:
-            scale_filter = "scale='min(854,iw)':-2"
-        elif video_kbps >= 500:
-            scale_filter = "scale='min(640,iw)':-2"
-        elif video_kbps >= 250:
-            scale_filter = "scale='min(480,iw)':-2"
-        else:
-            scale_filter = "scale='min(360,iw)':-2"
-
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
+        success = await run_ffmpeg(
             media_file,
-
-            "-vf",
-            scale_filter,
-
-            "-c:v",
-            "libx264",
-
-            "-preset",
-            "veryfast",
-
-            "-b:v",
-            f"{video_kbps}k",
-
-            "-maxrate",
-            f"{video_kbps}k",
-
-            "-bufsize",
-            f"{max(video_kbps * 2, 160)}k",
-
-            "-c:a",
-            "aac",
-
-            "-b:a",
-            f"{audio_kbps}k",
-
-            "-ac",
-            "2",
-
-            "-movflags",
-            "+faststart",
-
             output_file,
+            video_kbps,
+            audio_kbps,
+            scale_width,
+        )
+
+        if success:
+            size = os.path.getsize(output_file)
+
+            print()
+            print("===== COMPRESSION RESULT =====")
+            print(f"New size: {size / 1024 / 1024:.2f} MB")
+            print("==============================")
+
+            if size <= SAFE_BYTES:
+                print("✅ First compression successful.")
+                return output_file
+
+        # --------------------------------------------------------
+        # محاولات إضافية
+        # --------------------------------------------------------
+        attempts = [
+            {
+                "name": "SECOND",
+                "factor": 0.78,
+                "audio": 40,
+                "scale": 640,
+            },
+            {
+                "name": "THIRD",
+                "factor": 0.62,
+                "audio": 32,
+                "scale": 480,
+            },
+            {
+                "name": "FINAL",
+                "factor": 0.48,
+                "audio": 24,
+                "scale": 360,
+            },
         ]
 
+        previous_file = output_file
+
+        for index, attempt in enumerate(attempts, start=2):
+
+            emergency_file = os.path.join(
+                temp_dir,
+                f"compressed_video_attempt_{index}.mp4"
+            )
+
+            attempt_video_kbps = max(
+                60,
+                int(video_kbps * attempt["factor"])
+            )
+
+            print()
+            print(f"===== {attempt['name']} COMPRESSION =====")
+            print(f"Video bitrate: {attempt_video_kbps}k")
+            print(f"Audio bitrate: {attempt['audio']}k")
+            print(f"Resolution: {attempt['scale']}px")
+            print("================================")
+
+            success = await run_ffmpeg(
+                previous_file,
+                emergency_file,
+                attempt_video_kbps,
+                attempt["audio"],
+                attempt["scale"],
+            )
+
+            if not success:
+                continue
+
+            current_size = os.path.getsize(emergency_file)
+
+            print()
+            print(f"===== ATTEMPT {index} RESULT =====")
+            print(
+                f"Size: "
+                f"{current_size / 1024 / 1024:.2f} MB"
+            )
+            print("================================")
+
+            if current_size <= SAFE_BYTES:
+                print(
+                    f"✅ Compression attempt {index} "
+                    f"successful."
+                )
+                return emergency_file
+
+            previous_file = emergency_file
+
+        # --------------------------------------------------------
+        # محاولة أخيرة ديناميكية حسب الحجم الفعلي
+        # --------------------------------------------------------
+        if os.path.isfile(previous_file):
+
+            current_size = os.path.getsize(previous_file)
+
+            print()
+            print("===== DYNAMIC FINAL COMPRESSION =====")
+            print(
+                f"Current size: "
+                f"{current_size / 1024 / 1024:.2f} MB"
+            )
+
+            ratio = SAFE_BYTES / current_size
+
+            final_video_kbps = max(
+                50,
+                int(video_kbps * ratio * 0.85)
+            )
+
+            final_file = os.path.join(
+                temp_dir,
+                "compressed_video_final.mp4"
+            )
+
+            success = await run_ffmpeg(
+                previous_file,
+                final_file,
+                final_video_kbps,
+                24,
+                320,
+                "faster",
+            )
+
+            if success and os.path.isfile(final_file):
+
+                final_size = os.path.getsize(final_file)
+
+                print()
+                print("===== FINAL COMPRESSION RESULT =====")
+                print(
+                    f"Final size: "
+                    f"{final_size / 1024 / 1024:.2f} MB"
+                )
+                print("====================================")
+
+                if final_size <= SAFE_BYTES:
+                    print("✅ Final compression successful.")
+                    return final_file
+
+        # --------------------------------------------------------
+        # فشل كامل
+        # --------------------------------------------------------
         print()
-        print("===== COMPRESSING VIDEO =====")
-        print("Starting FFmpeg...")
+        print("===== COMPRESSION FAILED =====")
+        print(
+            f"❌ Could not produce a file below "
+            f"{SAFE_MB} MB."
+        )
+        print(
+            "❌ Original large file will NOT be returned."
+        )
         print("==============================")
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=DOWNLOAD_TIMEOUT,
-        )
-
-        if process.returncode != 0:
-            print("❌ FFmpeg compression failed")
-            print(stderr.decode(errors="ignore")[-5000:])
-            return media_file
-
-        if not os.path.isfile(output_file):
-            print("❌ Compressed file was not created")
-            return media_file
-
-        compressed_size = os.path.getsize(output_file)
-
-        print()
-        print("===== COMPRESSION RESULT =====")
-        print(
-            f"New size: "
-            f"{compressed_size / 1024 / 1024:.2f} MB"
-        )
-        print("==============================")
-
-        # --------------------------------------------------------
-        # نجاح الضغط
-        # --------------------------------------------------------
-
-        if compressed_size <= MAX_BYTES:
-            print("✅ Video compressed successfully.")
-            return output_file
-
-        # --------------------------------------------------------
-        # إذا بقي أكبر من 45 MB:
-        # محاولة ثانية أكثر ضغطًا
-        # --------------------------------------------------------
-
-        print("⚠️ First compression is still above 45 MB.")
-        print("Starting emergency compression...")
-
-        emergency_file = os.path.join(
-            temp_dir,
-            "compressed_video_final.mp4"
-        )
-
-        if os.path.exists(emergency_file):
-            try:
-                os.remove(emergency_file)
-            except Exception:
-                pass
-
-        emergency_video_kbps = max(
-            60,
-            int(video_kbps * 0.70)
-        )
-
-        emergency_audio_kbps = 32
-
-        emergency_command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            output_file,
-
-            "-vf",
-            "scale='min(360,iw)':-2",
-
-            "-c:v",
-            "libx264",
-
-            "-preset",
-            "veryfast",
-
-            "-b:v",
-            f"{emergency_video_kbps}k",
-
-            "-maxrate",
-            f"{emergency_video_kbps}k",
-
-            "-bufsize",
-            f"{max(emergency_video_kbps * 2, 120)}k",
-
-            "-c:a",
-            "aac",
-
-            "-b:a",
-            f"{emergency_audio_kbps}k",
-
-            "-ac",
-            "2",
-
-            "-movflags",
-            "+faststart",
-
-            emergency_file,
-        ]
-
-        process2 = await asyncio.create_subprocess_exec(
-            *emergency_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout2, stderr2 = await asyncio.wait_for(
-            process2.communicate(),
-            timeout=DOWNLOAD_TIMEOUT,
-        )
-
-        if process2.returncode != 0:
-            print("❌ Emergency compression failed")
-            print(stderr2.decode(errors="ignore")[-5000:])
-            return media_file
-
-        if not os.path.isfile(emergency_file):
-            print("❌ Emergency compressed file not found")
-            return media_file
-
-        emergency_size = os.path.getsize(emergency_file)
-
-        print()
-        print("===== EMERGENCY COMPRESSION RESULT =====")
-        print(
-            f"Final size: "
-            f"{emergency_size / 1024 / 1024:.2f} MB"
-        )
-        print("=========================================")
-
-        if emergency_size <= MAX_BYTES:
-            print("✅ Emergency compression successful.")
-            return emergency_file
-
-        print("❌ Could not compress video below 45 MB.")
-        return media_file
+        return None
 
     except asyncio.TimeoutError:
         print()
         print("===== COMPRESSION TIMEOUT =====")
         print("❌ FFmpeg compression timed out.")
         print("===============================")
-        return media_file
+        return None
 
     except Exception as e:
         print()
         print("===== COMPRESSION ERROR =====")
         print(repr(e))
         print("=============================")
-        return media_file
+        return None
+
 
 async def download_with_fallback(
     url,
