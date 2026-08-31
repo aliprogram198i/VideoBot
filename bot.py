@@ -1767,26 +1767,39 @@ MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
 async def compress_video_if_needed(media_file, temp_dir):
     """
     ضغط الفيديوهات الكبيرة تلقائيًا حتى تصبح مناسبة للإرسال عبر Telegram.
-    الفيديوهات الصغيرة لا يتم ضغطها.
+    يتم خفض الدقة والـ bitrate تدريجيًا حتى يصبح الحجم أقل من 45MB.
     """
 
     MAX_MB = 45
     MAX_BYTES = MAX_MB * 1024 * 1024
 
     try:
+        if not os.path.isfile(media_file):
+            print()
+            print("===== COMPRESSION ERROR =====")
+            print(f"❌ Input file does not exist: {media_file}")
+            print("=============================")
+            return media_file
+
         original_size = os.path.getsize(media_file)
 
         print()
         print("===== VIDEO SIZE CHECK =====")
+        print(f"Input file: {media_file}")
         print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
+        print(f"Telegram limit target: {MAX_MB} MB")
         print("============================")
 
+        # الفيديو صغير بما يكفي
         if original_size <= MAX_BYTES:
             print("✅ Compression not required.")
             return media_file
 
-        if not shutil.which("ffmpeg"):
-            print("❌ ffmpeg غير موجود")
+        # التأكد من وجود ffmpeg
+        ffmpeg_path = shutil.which("ffmpeg")
+
+        if not ffmpeg_path:
+            print("❌ ffmpeg غير موجود.")
             return media_file
 
         output_file = os.path.join(
@@ -1794,14 +1807,15 @@ async def compress_video_if_needed(media_file, temp_dir):
             "compressed_video.mp4"
         )
 
-        # محاولات متدرجة للجودة حتى نصل إلى حجم مناسب
+        # بروفايلات حقيقية:
+        # label, height, video bitrate, audio bitrate
         settings = [
-            ("480p", "900k", "96k"),
-            ("360p", "650k", "80k"),
-            ("360p-low", "450k", "64k"),
+            ("480p", 480, "700k", "96k"),
+            ("360p", 360, "500k", "80k"),
+            ("240p", 240, "350k", "64k"),
         ]
 
-        for label, video_bitrate, audio_bitrate in settings:
+        for label, height, video_bitrate, audio_bitrate in settings:
 
             if os.path.exists(output_file):
                 try:
@@ -1812,18 +1826,21 @@ async def compress_video_if_needed(media_file, temp_dir):
             print()
             print("===== COMPRESSING VIDEO =====")
             print(f"Profile: {label}")
+            print(f"Target height: {height}px")
             print(f"Video bitrate: {video_bitrate}")
             print(f"Audio bitrate: {audio_bitrate}")
             print("==============================")
 
             command = [
-                "ffmpeg",
+                ffmpeg_path,
                 "-y",
+
                 "-i",
                 media_file,
 
+                # تصغير الارتفاع فعليًا مع الحفاظ على نسبة العرض
                 "-vf",
-                "scale='min(854,iw)':-2",
+                f"scale=-2:{height}",
 
                 "-c:v",
                 "libx264",
@@ -1849,8 +1866,16 @@ async def compress_video_if_needed(media_file, temp_dir):
                 "-movflags",
                 "+faststart",
 
+                "-threads",
+                "2",
+
                 output_file,
             ]
+
+            print()
+            print("===== FFMPEG COMMAND =====")
+            print(" ".join(command))
+            print("==========================")
 
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -1858,39 +1883,75 @@ async def compress_video_if_needed(media_file, temp_dir):
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=DOWNLOAD_TIMEOUT
-            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=DOWNLOAD_TIMEOUT
+                )
+
+            except asyncio.TimeoutError:
+                print("❌ FFmpeg compression timeout.")
+
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception:
+                    pass
+
+                continue
+
+            stderr_text = stderr.decode(errors="ignore")
 
             if process.returncode != 0:
-                print("❌ FFmpeg compression failed")
-                print(stderr.decode(errors="ignore")[-3000:])
+                print()
+                print("===== FFMPEG ERROR =====")
+                print(f"Return code: {process.returncode}")
+                print(stderr_text[-5000:])
+                print("========================")
                 continue
 
             if not os.path.isfile(output_file):
+                print("❌ FFmpeg finished but output file was not created.")
                 continue
 
             compressed_size = os.path.getsize(output_file)
 
             print()
             print("===== COMPRESSION RESULT =====")
+            print(f"Profile: {label}")
+            print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
             print(f"New size: {compressed_size / 1024 / 1024:.2f} MB")
+            print(f"Reduction: {(1 - compressed_size / original_size) * 100:.1f}%")
             print("==============================")
 
             if compressed_size <= MAX_BYTES:
                 print("✅ Video compressed successfully.")
+                print(f"✅ Final file: {output_file}")
+                print(f"✅ Final size: {compressed_size / 1024 / 1024:.2f} MB")
                 return output_file
 
+            print(
+                f"⚠️ {label} still too large "
+                f"({compressed_size / 1024 / 1024:.2f} MB). "
+                "Trying next profile..."
+            )
+
+        print()
+        print("===== COMPRESSION FAILED =====")
         print("❌ Could not compress video below 45 MB.")
+        print(f"Original file: {original_size / 1024 / 1024:.2f} MB")
+        print("===============================")
+
         return media_file
 
     except Exception as e:
         print()
         print("===== COMPRESSION ERROR =====")
-        print(repr(e))
+        print(f"Type: {type(e).__name__}")
+        print(f"Error: {repr(e)}")
         print("=============================")
         return media_file
+
 
 async def download_with_fallback(
     url,
