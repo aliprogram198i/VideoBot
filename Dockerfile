@@ -14,4 +14,4 @@ COPY bot.py .
 
 RUN echo "=== DOCKER BUILD OK ===" && python --version && ls -lh /app/bot.py
 
-CMD ["python", "-u", "bot.py"]
+CMD ["sh", "-c", "echo '=== CONTAINER STARTED ==='; echo '=== CHECKING FILES ==='; pwd; ls -la /app; echo '=== STARTING BOT ==='; python -u bot.py"]
