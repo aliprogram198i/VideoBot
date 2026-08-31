@@ -1642,6 +1642,122 @@ async def extract_direct_media_urls(page_url):
 
 
 # ============================================================
+# Yoinku API - fallback
+# ============================================================
+
+async def download_with_yoinku(url, temp_dir, is_audio=False):
+    try:
+        api_key = os.getenv("YOINKU_API_KEY")
+
+        if not api_key:
+            print("❌ YOINKU_API_KEY غير موجود")
+            return None
+
+        import urllib.parse
+        import json
+        from urllib.request import Request, urlopen
+
+        download_format = "a-320" if is_audio else "v-720"
+
+        api_url = (
+            "https://yoinku.com/api/v1/download?"
+            + urllib.parse.urlencode({
+                "url": url,
+                "format": download_format,
+            })
+        )
+
+        print()
+        print("===== YOINKU FALLBACK =====")
+        print("Format:", download_format)
+        print("===========================")
+
+        request = Request(
+            api_url,
+            headers={
+                "x-api-key": api_key,
+                "User-Agent": "VideoBot/1.0",
+            },
+        )
+
+        def get_data():
+            with urlopen(request, timeout=60) as response:
+                return json.loads(
+                    response.read().decode("utf-8")
+                )
+
+        data = await asyncio.to_thread(get_data)
+
+        if not data.get("ok") or not data.get("url"):
+            print("❌ Yoinku لم يعطِ رابط تحميل")
+            print(data)
+            return None
+
+        direct_url = data["url"]
+
+        extension = ".mp3" if is_audio else ".mp4"
+
+        output_file = os.path.join(
+            temp_dir,
+            "yoinku_download" + extension
+        )
+
+        def download_file():
+            request2 = Request(
+                direct_url,
+                headers={
+                    "User-Agent": "VideoBot/1.0",
+                },
+            )
+
+            with urlopen(
+                request2,
+                timeout=300
+            ) as response:
+
+                with open(
+                    output_file,
+                    "wb"
+                ) as output:
+
+                    while True:
+                        chunk = response.read(
+                            1024 * 1024
+                        )
+
+                        if not chunk:
+                            break
+
+                        output.write(chunk)
+
+        await asyncio.to_thread(download_file)
+
+        if (
+            not os.path.exists(output_file)
+            or os.path.getsize(output_file) <= 0
+        ):
+            print("❌ ملف Yoinku فارغ أو غير موجود")
+            return None
+
+        print("✅ YOINKU DOWNLOAD SUCCESS")
+        print("File:", output_file)
+        print(
+            "Size:",
+            f"{os.path.getsize(output_file) / 1024 / 1024:.2f} MB"
+        )
+        print("============================")
+
+        return output_file
+
+    except Exception as e:
+        print()
+        print("===== YOINKU ERROR =====")
+        print(repr(e))
+        print("========================")
+        return None
+
+
+# ============================================================
 # ضغط الفيديو الكبير تلقائيًا
 # ============================================================
 
@@ -2244,17 +2360,39 @@ async def download_media(
 
             else:
 
-                print()
-                print("===== ALL DOWNLOAD METHODS FAILED =====")
-                print(f"URL: {url}")
-                print("========================================")
-                print()
+                # ------------------------------------------------
+                # Yoinku fallback
+                # ------------------------------------------------
 
-                await query.edit_message_text(
-                    TEXTS[language]["download_error"]
+                yoinku_file = await download_with_yoinku(
+                    url=url,
+                    temp_dir=temp_dir,
+                    is_audio=is_audio,
                 )
 
-                return
+                if yoinku_file:
+
+                    media_file = yoinku_file
+
+                    print()
+                    print("===== YOINKU FALLBACK SUCCESS =====")
+                    print(f"File: {media_file}")
+                    print("===================================")
+                    print()
+
+                else:
+
+                    print()
+                    print("===== ALL DOWNLOAD METHODS FAILED =====")
+                    print(f"URL: {url}")
+                    print("========================================")
+                    print()
+
+                    await query.edit_message_text(
+                        TEXTS[language]["download_error"]
+                    )
+
+                    return
 
         # ----------------------------------------------------
         # البحث عن الملف
