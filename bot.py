@@ -2320,6 +2320,86 @@ async def download_with_fallback(
 # التحميل
 # ============================================================
 
+
+# ============================================================
+# قائمة اختيار نسبة ضغط الفيديو بعد معرفة حجمه
+# ============================================================
+
+async def show_compression_menu(
+    query,
+    language,
+    file_size_mb
+):
+    compression_keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "🟢 ضغط خفيف 10%",
+                callback_data="compress_10"
+            ),
+            InlineKeyboardButton(
+                "🟡 ضغط متوسط 20%",
+                callback_data="compress_20"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🟠 ضغط قوي 30%",
+                callback_data="compress_30"
+            ),
+            InlineKeyboardButton(
+                "🔴 ضغط أقوى 40%",
+                callback_data="compress_40"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔴 ضغط قوي جدًا 50%",
+                callback_data="compress_50"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "❌ إلغاء",
+                callback_data="video_menu"
+            )
+        ],
+    ]
+
+    if language == "en":
+        message = (
+            f"📦 Video size: {file_size_mb:.2f} MB\n\n"
+            "🗜️ Choose the compression level:\n\n"
+            "🟢 10% — Light compression\n"
+            "🟡 20% — Medium compression\n"
+            "🟠 30% — Strong compression\n"
+            "🔴 40% — Stronger compression\n"
+            "🔴 50% — Very strong compression\n\n"
+            "⚙️ The selected compression will be applied next."
+        )
+    else:
+        message = (
+            f"📦 حجم الفيديو: {file_size_mb:.2f} MB\n\n"
+            "🗜️ اختر نسبة ضغط الفيديو:\n\n"
+            "🟢 10% — ضغط خفيف\n"
+            "🟡 20% — ضغط متوسط\n"
+            "🟠 30% — ضغط قوي\n"
+            "🔴 40% — ضغط أقوى\n"
+            "🔴 50% — ضغط قوي جدًا\n\n"
+            "⚙️ بعد اختيار النسبة سيبدأ ضغط الفيديو."
+        )
+
+    await query.edit_message_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(
+            compression_keyboard
+        )
+    )
+
+
 async def download_media(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -2360,41 +2440,8 @@ async def download_media(
     choice = query.data
 
     # --------------------------------------------------------
-    # القوائم
+    # اختيار نسبة ضغط الفيديو
     # --------------------------------------------------------
-
-    if choice == "video_menu":
-
-        await show_video_menu(
-            query,
-            language
-        )
-
-        return
-
-    if choice in (
-        "compress_10",
-        "compress_20",
-        "compress_30",
-        "compress_40",
-        "compress_50",
-    ):
-
-        compression_percent = int(
-            choice.replace("compress_", "")
-        )
-
-        context.user_data["compression_percent"] = (
-            compression_percent
-        )
-
-        await query.edit_message_text(
-            f"🗜️ تم اختيار ضغط بنسبة {compression_percent}%\n\n"
-            "⏳ سيتم الآن تحميل الفيديو ثم ضغطه بالنسبة التي اخترتها."
-        )
-
-        # نبدأ التحميل بأعلى جودة متاحة
-        choice = "video_best"
 
     if choice == "video_compress":
 
@@ -2442,6 +2489,154 @@ async def download_media(
             reply_markup=InlineKeyboardMarkup(
                 compression_keyboard
             )
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # اختيار نسبة الضغط
+    # --------------------------------------------------------
+
+    # --------------------------------------------------------
+    # اختيار نسبة الضغط
+    # --------------------------------------------------------
+
+    if choice in (
+        "compress_10",
+        "compress_20",
+        "compress_30",
+        "compress_40",
+        "compress_50",
+    ):
+
+        compression_percent = int(
+            choice.replace("compress_", "")
+        )
+
+        media_file = context.user_data.get(
+            "compression_file"
+        )
+
+        temp_dir = context.user_data.get(
+            "compression_temp_dir"
+        )
+
+        quality_name = context.user_data.get(
+            "compression_quality",
+            "Maximum available quality"
+        )
+
+        if not media_file or not os.path.isfile(media_file):
+
+            await query.edit_message_text(
+                TEXTS[language]["file_error"]
+            )
+
+            return
+
+        if not temp_dir or not os.path.isdir(temp_dir):
+
+            temp_dir = os.path.dirname(media_file)
+
+        context.user_data["compression_percent"] = (
+            compression_percent
+        )
+
+        await query.edit_message_text(
+            f"🗜️ تم اختيار ضغط بنسبة {compression_percent}%\n\n"
+            "⚙️ جاري ضغط الفيديو الآن...\n"
+            "⏳ يرجى الانتظار حتى انتهاء المعالجة."
+        )
+
+        print()
+        print("===== USER SELECTED COMPRESSION =====")
+        print(f"Compression: {compression_percent}%")
+        print(f"Input file: {media_file}")
+        print("======================================")
+        print()
+
+        media_file = await compress_video_if_needed(
+            media_file,
+            temp_dir,
+            query=query,
+            language=language,
+            compression_percent=compression_percent,
+        )
+
+        if not media_file or not os.path.isfile(media_file):
+
+            await query.edit_message_text(
+                TEXTS[language]["file_error"]
+            )
+
+            return
+
+        final_size = os.path.getsize(media_file)
+
+        print()
+        print("===== COMPRESSED FILE READY =====")
+        print(f"File: {media_file}")
+        print(
+            f"Size: "
+            f"{final_size / 1024 / 1024:.2f} MB"
+        )
+        print("=================================")
+        print()
+
+        try:
+
+            await query.edit_message_text(
+                TEXTS[language]["uploading"]
+            )
+
+        except Exception as upload_error:
+
+            print("⚠️ Could not update upload message:")
+            print(repr(upload_error))
+
+        with open(
+            media_file,
+            "rb"
+        ) as video:
+
+            await context.bot.send_video(
+
+                chat_id=update.effective_chat.id,
+
+                video=video,
+
+                caption=(
+                    TEXTS[language]["video_done"]
+                    .format(
+                        quality=quality_name,
+                        username=(
+                            f"@{user.username}"
+                            if user.username
+                            else (
+                                user.first_name
+                                or "صديقي"
+                            )
+                        )
+                    )
+                ),
+
+                read_timeout=600,
+                write_timeout=600,
+                connect_timeout=60,
+                pool_timeout=60,
+            )
+
+        return
+
+    # --------------------------------------------------------
+    # القوائم
+    # --------------------------------------------------------
+
+    if choice == "video_menu":
+
+        await show_video_menu(
+            query,
+            language
         )
 
         return
@@ -2844,25 +3039,27 @@ async def download_media(
             return
 
         # ----------------------------------------------------
-        # إرسال الملف
+        # الصوت يتم إرساله مباشرة
         # ----------------------------------------------------
 
-        await query.edit_message_text(
-            TEXTS[language]["uploading"]
-        )
-
-        print()
-        print("===== FINAL FILE BEFORE TELEGRAM =====")
-        print(f"File: {media_file}")
-        if os.path.isfile(media_file):
-            final_size = os.path.getsize(media_file)
-            print(f"Final size: {final_size / 1024 / 1024:.2f} MB")
-        else:
-            print("❌ الملف غير موجود")
-        print("=======================================")
-        print()
-
         if is_audio:
+
+            await query.edit_message_text(
+                TEXTS[language]["uploading"]
+            )
+
+            print()
+            print("===== FINAL AUDIO FILE =====")
+            print(f"File: {media_file}")
+            if os.path.isfile(media_file):
+                final_size = os.path.getsize(media_file)
+                print(
+                    f"Audio size: "
+                    f"{final_size / 1024 / 1024:.2f} MB"
+                )
+            print("============================")
+            print()
+
 
             with open(
                 media_file,
@@ -2898,18 +3095,103 @@ async def download_media(
 
         else:
 
-            compression_percent = context.user_data.get(
-                "compression_percent",
-                50
+            # ----------------------------------------------------
+            # معرفة حجم الفيديو قبل الضغط
+            # ----------------------------------------------------
+
+            if not os.path.isfile(media_file):
+
+                await query.edit_message_text(
+                    TEXTS[language]["file_error"]
+                )
+
+                return
+
+            video_size_bytes = os.path.getsize(
+                media_file
             )
 
-            media_file = await compress_video_if_needed(
-                media_file,
-                temp_dir,
-                query=query,
-                language=language,
-                compression_percent=compression_percent,
+            video_size_mb = (
+                video_size_bytes
+                / 1024
+                / 1024
             )
+
+            print()
+            print("===== VIDEO READY =====")
+            print(f"File: {media_file}")
+            print(
+                f"Video size: "
+                f"{video_size_mb:.2f} MB"
+            )
+            print("=======================")
+            print()
+
+            # ----------------------------------------------------
+            # إذا كان الفيديو ضمن الحد، نرسله مباشرة
+            # ----------------------------------------------------
+
+            if video_size_bytes <= MAX_TELEGRAM_VIDEO_BYTES:
+
+                await query.edit_message_text(
+                    TEXTS[language]["uploading"]
+                )
+
+                with open(
+                    media_file,
+                    "rb"
+                ) as video:
+
+                    await context.bot.send_video(
+                        chat_id=update.effective_chat.id,
+                        video=video,
+                        caption=(
+                            TEXTS[language]["video_done"]
+                            .format(
+                                quality=quality_name,
+                                username=(
+                                    f"@{user.username}"
+                                    if user.username
+                                    else (
+                                        user.first_name
+                                        or "صديقي"
+                                    )
+                                )
+                            )
+                        ),
+                        read_timeout=600,
+                        write_timeout=600,
+                        connect_timeout=60,
+                        pool_timeout=60,
+                    )
+
+                return
+
+            # ----------------------------------------------------
+            # الفيديو أكبر من الحد
+            # لا نضغط تلقائيًا
+            # نعرض الحجم ونطلب من المستخدم اختيار النسبة
+            # ----------------------------------------------------
+
+            context.user_data["compression_file"] = (
+                media_file
+            )
+
+            context.user_data["compression_temp_dir"] = (
+                temp_dir
+            )
+
+            context.user_data["compression_quality"] = (
+                quality_name
+            )
+
+            await show_compression_menu(
+                query,
+                language,
+                video_size_mb
+            )
+
+            return
 
             # ----------------------------------------------------
             # بعد انتهاء الضغط: عرض رسالة رفع الفيديو
