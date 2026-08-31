@@ -1774,105 +1774,132 @@ MAX_TELEGRAM_VIDEO_MB = 45
 MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
 
 async def compress_video_if_needed(media_file, temp_dir):
-    try:
-        file_size = os.path.getsize(media_file)
+    """
+    ضغط الفيديوهات الكبيرة تلقائيًا حتى تصبح مناسبة للإرسال عبر Telegram.
+    الفيديوهات الصغيرة لا يتم ضغطها.
+    """
 
-        if file_size <= MAX_TELEGRAM_VIDEO_BYTES:
-            print(f"Video size: {file_size / 1024 / 1024:.2f} MB")
-            print("Compression not required.")
-            return media_file
+    MAX_MB = 45
+    MAX_BYTES = MAX_MB * 1024 * 1024
+
+    try:
+        original_size = os.path.getsize(media_file)
 
         print()
-        print("===== LARGE VIDEO =====")
-        print(f"Original size: {file_size / 1024 / 1024:.2f} MB")
-        print("=======================")
+        print("===== VIDEO SIZE CHECK =====")
+        print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
+        print("============================")
 
-        compressed_file = os.path.join(
+        if original_size <= MAX_BYTES:
+            print("✅ Compression not required.")
+            return media_file
+
+        if not shutil.which("ffmpeg"):
+            print("❌ ffmpeg غير موجود")
+            return media_file
+
+        output_file = os.path.join(
             temp_dir,
             "compressed_video.mp4"
         )
 
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            media_file,
-            "-vf",
-            "scale=min(854,iw):-2",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "28",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "96k",
-            "-movflags",
-            "+faststart",
-            compressed_file,
+        # محاولات متدرجة للجودة حتى نصل إلى حجم مناسب
+        settings = [
+            ("480p", "900k", "96k"),
+            ("360p", "650k", "80k"),
+            ("360p-low", "450k", "64k"),
         ]
 
-        print("===== FFMPEG COMPRESSION =====")
+        for label, video_bitrate, audio_bitrate in settings:
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except Exception:
+                    pass
 
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=DOWNLOAD_TIMEOUT
-        )
+            print()
+            print("===== COMPRESSING VIDEO =====")
+            print(f"Profile: {label}")
+            print(f"Video bitrate: {video_bitrate}")
+            print(f"Audio bitrate: {audio_bitrate}")
+            print("==============================")
 
-        stdout_text = stdout.decode(errors="ignore")
-        stderr_text = stderr.decode(errors="ignore")
+            command = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                media_file,
 
-        if stdout_text:
-            print(stdout_text)
+                "-vf",
+                "scale='min(854,iw)':-2",
 
-        if stderr_text:
-            print(stderr_text)
+                "-c:v",
+                "libx264",
 
-        if process.returncode != 0:
-            print("FFmpeg compression failed.")
-            return media_file
+                "-preset",
+                "veryfast",
 
-        if not os.path.exists(compressed_file):
-            print("Compressed file was not created.")
-            return media_file
+                "-b:v",
+                video_bitrate,
 
-        compressed_size = os.path.getsize(
-            compressed_file
-        )
+                "-maxrate",
+                video_bitrate,
 
-        print()
-        print("===== COMPRESSION COMPLETE =====")
-        print(f"Original: {file_size / 1024 / 1024:.2f} MB")
-        print(f"Compressed: {compressed_size / 1024 / 1024:.2f} MB")
-        print("================================")
+                "-bufsize",
+                "2M",
 
-        if compressed_size <= 0 or compressed_size >= file_size:
-            try:
-                os.remove(compressed_file)
-            except Exception:
-                pass
-            return media_file
+                "-c:a",
+                "aac",
 
-        return compressed_file
+                "-b:a",
+                audio_bitrate,
 
-    except asyncio.TimeoutError:
-        print("FFmpeg compression timed out.")
+                "-movflags",
+                "+faststart",
+
+                output_file,
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=DOWNLOAD_TIMEOUT
+            )
+
+            if process.returncode != 0:
+                print("❌ FFmpeg compression failed")
+                print(stderr.decode(errors="ignore")[-3000:])
+                continue
+
+            if not os.path.isfile(output_file):
+                continue
+
+            compressed_size = os.path.getsize(output_file)
+
+            print()
+            print("===== COMPRESSION RESULT =====")
+            print(f"New size: {compressed_size / 1024 / 1024:.2f} MB")
+            print("==============================")
+
+            if compressed_size <= MAX_BYTES:
+                print("✅ Video compressed successfully.")
+                return output_file
+
+        print("❌ Could not compress video below 45 MB.")
         return media_file
 
     except Exception as e:
+        print()
         print("===== COMPRESSION ERROR =====")
         print(repr(e))
         print("=============================")
         return media_file
-
 
 async def download_with_fallback(
     url,
