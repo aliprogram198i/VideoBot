@@ -36,7 +36,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1486412391
 
 LOCAL_DB_FILE = "bot_stats.db"
-VOLUME_DB_FILE = "/data/bot_stats.db"
+VOLUME_DB_FILE = "/data/data/com.termux/files/home/VideoBot/bot_stats.db"
 
 if Path("/data").is_dir():
     volume_db = Path(VOLUME_DB_FILE)
@@ -149,16 +149,28 @@ TEXTS = {
             "📤 جاري إرسال الملف إليك...",
 
         "video_done":
-            "🎬 تم تحميل الفيديو بنجاح!\n"
-            "🎚 الجودة: {quality}\n\n"
-            "❤️ لا تنسَ مشاركة رابط البوت مع أصدقائك.\n"
-            "🔗 ساعدنا في الوصول إلى المزيد من الأشخاص!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎬 <b>تم تحميل الفيديو بنجاح!</b>\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 <b>مرحباً {username}</b> 🤍\n\n"
+            "🎚 <b>الجودة:</b> {quality}\n"
+            "📥 <b>الحالة:</b> جاهز للإرسال ✅\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🙏 شكراً لاستخدامك <b>بوت الحسيان</b>\n"
+            "❤️ نتمنى أن تستمتع بالخدمة\n\n"
+            "🔗 شارك البوت مع أصدقائك ليستفيد الجميع 🌍",
 
         "audio_done":
-            "🎵 تم تحميل الصوت بنجاح!\n"
-            "🎚 الجودة: {quality}\n\n"
-            "❤️ لا تنسَ مشاركة رابط البوت مع أصدقائك.\n"
-            "🔗 شارك البوت ليستفيد منه أصدقاؤك أيضاً!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎵 <b>تم تحميل الصوت بنجاح!</b>\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 <b>مرحباً {username}</b> 🤍\n\n"
+            "🎚 <b>الجودة:</b> {quality}\n"
+            "📥 <b>الحالة:</b> جاهز للإرسال ✅\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🙏 شكراً لاستخدامك <b>بوت الحسيان</b>\n"
+            "❤️ نتمنى أن تستمتع بالخدمة\n\n"
+            "🔗 شارك البوت مع أصدقائك ليستفيد الجميع 🌍",
 
         "download_error":
             "❌ تعذر تحميل هذا الرابط.\n\n"
@@ -761,6 +773,20 @@ def init_db():
         )
     """)
 
+    # --------------------------------------------------------
+    # جدول رسائل الإعلانات المرسلة
+    # --------------------------------------------------------
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS broadcast_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            broadcast_id INTEGER,
+            user_id INTEGER,
+            message_id INTEGER,
+            created_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -1123,7 +1149,41 @@ async def start(
     if not user:
         return
 
+    # تسجيل المستخدم ومعرفة هل هو مستخدم جديد
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (user.id,)
+    )
+    existing_user = cur.fetchone()
+    conn.close()
+
     register_user(user)
+
+    # إشعار مالك البوت عند دخول مستخدم جديد لأول مرة
+    if existing_user is None and user.id != ADMIN_ID:
+        username = f"@{user.username}" if user.username else "بدون معرف"
+        full_name = " ".join(
+            part for part in [user.first_name, user.last_name]
+            if part
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "🆕 <b>مستخدم جديد!</b> 🎉\n"
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    f"👤 <b>الاسم:</b> {html.escape(full_name or 'غير معروف')}\n"
+                    f"🔗 <b>المعرف:</b> {html.escape(username)}\n"
+                    f"🆔 <b>ID:</b> <code>{user.id}</code>\n\n"
+                    "🤖 <b>انضم مستخدم جديد إلى البوت.</b>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            print(f"⚠️ New user notification error: {e}")
 
     if is_banned(user.id):
 
@@ -2155,7 +2215,15 @@ async def download_media(
                     caption=(
                         TEXTS[language]["audio_done"]
                         .format(
-                            quality=quality_name
+                            quality=quality_name,
+                            username=(
+                                f"@{user.username}"
+                                if user.username
+                                else (
+                                    user.first_name
+                                    or "صديقي"
+                                )
+                            )
                         )
                     ),
 
@@ -2181,7 +2249,15 @@ async def download_media(
                     caption=(
                         TEXTS[language]["video_done"]
                         .format(
-                            quality=quality_name
+                            quality=quality_name,
+                            username=(
+                                f"@{user.username}"
+                                if user.username
+                                else (
+                                    user.first_name
+                                    or "صديقي"
+                                )
+                            )
                         )
                     ),
 
@@ -2283,6 +2359,12 @@ def admin_keyboard():
             InlineKeyboardButton(
                 "📢 إرسال إعلان",
                 callback_data="admin_broadcast"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🗑️ مسح الإعلانات المرسلة",
+                callback_data="admin_delete_broadcasts"
             )
         ],
 
@@ -3374,10 +3456,32 @@ async def process_broadcast(
 
         try:
 
-            await context.bot.send_message(
+            sent_message = await context.bot.send_message(
                 chat_id=row["user_id"],
                 text=message,
             )
+
+            # حفظ رقم الرسالة حتى يستطيع الأدمن حذف الإعلان لاحقاً
+            conn_save = get_db()
+            cur_save = conn_save.cursor()
+
+            cur_save.execute("""
+                INSERT INTO broadcast_messages (
+                    broadcast_id,
+                    user_id,
+                    message_id,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?)
+            """, (
+                None,
+                row["user_id"],
+                sent_message.message_id,
+                datetime.now().isoformat(),
+            ))
+
+            conn_save.commit()
+            conn_save.close()
 
             sent += 1
 
@@ -3422,6 +3526,102 @@ async def process_broadcast(
         f"📨 تم الإرسال: {sent}\n"
         f"❌ فشل الإرسال: {failed}\n"
         f"👥 الإجمالي: {len(users)}"
+    )
+
+
+# ============================================================
+# مسح الإعلانات المرسلة
+# ============================================================
+
+async def delete_broadcasts_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, user_id, message_id
+        FROM broadcast_messages
+        ORDER BY id ASC
+    """)
+
+    messages = cur.fetchall()
+    conn.close()
+
+    if not messages:
+        await query.edit_message_text(
+            "🗑️ لا توجد إعلانات محفوظة للحذف.\n\n"
+            "الإعلانات الجديدة التي سترسلها بعد تفعيل هذه الميزة "
+            "سيتم حفظها ويمكن حذفها لاحقاً."
+        )
+        return
+
+    deleted = 0
+    failed = 0
+
+    status_message = await query.edit_message_text(
+        "🗑️ جاري حذف الإعلانات المرسلة...\n\n"
+        f"📨 الرسائل المسجلة: {len(messages)}\n"
+        "⏳ يرجى الانتظار..."
+    )
+
+    for row in messages:
+        try:
+            await context.bot.delete_message(
+                chat_id=row["user_id"],
+                message_id=row["message_id"],
+            )
+
+            deleted += 1
+
+        except Exception as e:
+            failed += 1
+
+            print(
+                f"Broadcast delete error "
+                f"{row['user_id']} / "
+                f"{row['message_id']}: {e}"
+            )
+
+        await asyncio.sleep(0.05)
+
+    # حذف السجلات بعد انتهاء العملية
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        DELETE FROM broadcast_messages
+    """)
+
+    conn.commit()
+    conn.close()
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🔙 لوحة الإدارة",
+                callback_data="admin_home"
+            )
+        ]
+    ])
+
+    await status_message.edit_text(
+        "✅ تم الانتهاء من مسح الإعلانات.\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"🗑️ تم حذفها: {deleted}\n"
+        f"⚠️ تعذر حذفها: {failed}\n"
+        f"📨 الإجمالي: {len(messages)}\n\n"
+        "💡 الإعلانات الجديدة سيتم حفظها تلقائياً "
+        "لتتمكن من حذفها لاحقاً.",
+        reply_markup=keyboard
     )
 
 
@@ -4033,6 +4233,8 @@ def main():
         write_timeout=900,
 
         pool_timeout=60,
+
+        http_version="1.1",
     )
 
     app = (
@@ -4192,6 +4394,13 @@ def main():
         CallbackQueryHandler(
             admin_broadcast_callback,
             pattern=r"^admin_broadcast$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            delete_broadcasts_callback,
+            pattern=r"^admin_delete_broadcasts$"
         )
     )
 
