@@ -3754,14 +3754,20 @@ async def admin_ai_test_callback(
     except Exception as e:
 
         logger.exception(
-            "Gemini test failed"
+            "Gemini test failed: %s",
+            str(e)
         )
+
+        error_text = str(e)
+        if len(error_text) > 1200:
+            error_text = error_text[:1200] + "..."
 
         await query.edit_message_text(
             "🤖 اختبار Gemini\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             "❌ فشل الاتصال بـ Gemini.\n\n"
-            f"الخطأ: {type(e).__name__}",
+            f"نوع الخطأ: {type(e).__name__}\n"
+            f"تفاصيل الخطأ:\n{html.escape(error_text)}",
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
