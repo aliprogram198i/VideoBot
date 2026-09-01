@@ -3316,7 +3316,13 @@ def admin_keyboard():
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                "📊 الإحصائيات",
+                "📊 لوحة المعلومات",
+                callback_data="admin_dashboard_30"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📈 الإحصائيات",
                 callback_data="admin_stats"
             ),
             InlineKeyboardButton(
@@ -5001,14 +5007,16 @@ async def admin_home_callback(
 
     await query.edit_message_text(
 
-        "🛠️ لوحة إدارة بوت التحميل\n\n"
+        "🛠️ لوحة إدارة الحسيان\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        "📊 الإحصائيات\n"
+        "📊 لوحة المعلومات والتحليلات\n"
         "👥 إدارة المستخدمين\n"
+        "📥 سجل التحميلات\n"
         "📢 الإعلانات\n"
-        "🔎 البحث عن المستخدمين\n\n"
+        "💾 التخزين والنظام\n\n"
 
-        "اختر القسم:",
+        "اختر القسم الذي تريد إدارته:",
 
         reply_markup=admin_keyboard()
     )
@@ -5575,6 +5583,38 @@ def main():
     )
 
     # ========================================================
+    # لوحة الإدارة المتقدمة
+    # ========================================================
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_dashboard_callback,
+            pattern=r"^admin_dashboard_(1|7|30)$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_recent_downloads_callback,
+            pattern=r"^admin_recent_downloads$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_top_users_callback,
+            pattern=r"^admin_top_users$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_top_websites_callback,
+            pattern=r"^admin_top_websites$"
+        )
+    )
+
+    # ========================================================
     # التحميل
     # ========================================================
 
@@ -5653,6 +5693,616 @@ def main():
 
     app.run_polling(
         drop_pending_updates=True
+    )
+
+
+
+# ============================================================
+# لوحة الإدارة المتقدمة - الحسيان
+# ============================================================
+
+def get_admin_dashboard_data(days=30):
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    now = datetime.now()
+    start = now.timestamp() - (days * 86400)
+
+    # إجمالي المستخدمين
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM users
+    """)
+    total_users = cur.fetchone()["count"]
+
+    # المستخدمون المحظورون
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM users
+        WHERE is_banned = 1
+    """)
+    banned_users = cur.fetchone()["count"]
+
+    # المستخدمون النشطون خلال الفترة
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM users
+        WHERE last_seen IS NOT NULL
+        AND last_seen >= ?
+    """, (
+        datetime.fromtimestamp(start).isoformat(),
+    ))
+    active_users = cur.fetchone()["count"]
+
+    # إجمالي التحميلات خلال الفترة
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM downloads
+        WHERE created_at >= ?
+    """, (
+        datetime.fromtimestamp(start).isoformat(),
+    ))
+    period_downloads = cur.fetchone()["count"]
+
+    # الفيديو
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM downloads
+        WHERE media_type = 'video'
+        AND created_at >= ?
+    """, (
+        datetime.fromtimestamp(start).isoformat(),
+    ))
+    period_videos = cur.fetchone()["count"]
+
+    # الصوت
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM downloads
+        WHERE media_type = 'audio'
+        AND created_at >= ?
+    """, (
+        datetime.fromtimestamp(start).isoformat(),
+    ))
+    period_audio = cur.fetchone()["count"]
+
+    # أكثر المواقع
+    cur.execute("""
+        SELECT website, COUNT(*) AS count
+        FROM downloads
+        WHERE created_at >= ?
+        GROUP BY website
+        ORDER BY count DESC
+        LIMIT 10
+    """, (
+        datetime.fromtimestamp(start).isoformat(),
+    ))
+    websites = cur.fetchall()
+
+    # أكثر المستخدمين تحميلًا
+    cur.execute("""
+        SELECT
+            d.user_id,
+            d.username,
+            COUNT(*) AS count
+        FROM downloads d
+        WHERE d.created_at >= ?
+        GROUP BY d.user_id, d.username
+        ORDER BY count DESC
+        LIMIT 10
+    """, (
+        datetime.fromtimestamp(start).isoformat(),
+    ))
+    top_users = cur.fetchall()
+
+    # آخر التحميلات
+    cur.execute("""
+        SELECT
+            id,
+            user_id,
+            username,
+            website,
+            media_type,
+            quality,
+            created_at
+        FROM downloads
+        ORDER BY id DESC
+        LIMIT 10
+    """)
+    recent_downloads = cur.fetchall()
+
+    # اللغات
+    cur.execute("""
+        SELECT language, COUNT(*) AS count
+        FROM users
+        GROUP BY language
+        ORDER BY count DESC
+    """)
+    languages = cur.fetchall()
+
+    # الحجم التقريبي لقاعدة البيانات
+    try:
+        db_size = Path(DB_FILE).stat().st_size
+    except Exception:
+        db_size = 0
+
+    conn.close()
+
+    return {
+        "total_users": total_users,
+        "banned_users": banned_users,
+        "active_users": active_users,
+        "period_downloads": period_downloads,
+        "period_videos": period_videos,
+        "period_audio": period_audio,
+        "websites": websites,
+        "top_users": top_users,
+        "recent_downloads": recent_downloads,
+        "languages": languages,
+        "db_size": db_size,
+        "days": days,
+    }
+
+
+def format_bytes_admin(size):
+
+    try:
+        size = float(size)
+    except Exception:
+        return "0 B"
+
+    units = [
+        "B",
+        "KB",
+        "MB",
+        "GB",
+        "TB",
+    ]
+
+    for unit in units:
+
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+
+        size /= 1024
+
+    return f"{size:.2f} PB"
+
+
+def admin_dashboard_text(data):
+
+    days = data["days"]
+
+    period_name = {
+        1: "اليوم",
+        7: "آخر 7 أيام",
+        30: "آخر 30 يومًا",
+    }.get(
+        days,
+        f"آخر {days} يوم"
+    )
+
+    text = (
+        "📊 لوحة معلومات الحسيان\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        f"👥 إجمالي المستخدمين: "
+        f"{data['total_users']}\n"
+
+        f"🟢 النشطون ({period_name}): "
+        f"{data['active_users']}\n"
+
+        f"🚫 المحظورون: "
+        f"{data['banned_users']}\n\n"
+
+        f"📥 التحميلات ({period_name}): "
+        f"{data['period_downloads']}\n"
+
+        f"🎥 الفيديوهات: "
+        f"{data['period_videos']}\n"
+
+        f"🎵 الصوتيات: "
+        f"{data['period_audio']}\n\n"
+
+        f"💾 حجم قاعدة البيانات: "
+        f"{format_bytes_admin(data['db_size'])}\n\n"
+    )
+
+    text += "🌐 أكثر المنصات:\n"
+
+    if data["websites"]:
+
+        for row in data["websites"][:5]:
+
+            website = (
+                row["website"]
+                or "غير معروف"
+            )
+
+            text += (
+                f"• {html.escape(str(website))}: "
+                f"{row['count']}\n"
+            )
+
+    else:
+
+        text += "• لا توجد بيانات\n"
+
+    text += "\n🏆 أكثر المستخدمين تحميلًا:\n"
+
+    if data["top_users"]:
+
+        for index, row in enumerate(
+            data["top_users"][:5],
+            1
+        ):
+
+            username = (
+                f"@{row['username']}"
+                if row["username"]
+                else f"ID {row['user_id']}"
+            )
+
+            text += (
+                f"{index}. "
+                f"{html.escape(str(username))} "
+                f"— {row['count']} تحميل\n"
+            )
+
+    else:
+
+        text += "• لا توجد بيانات\n"
+
+    return text
+
+
+def admin_dashboard_keyboard(days=30):
+
+    return InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "📅 اليوم",
+                callback_data="admin_dashboard_1"
+            ),
+            InlineKeyboardButton(
+                "📅 7 أيام",
+                callback_data="admin_dashboard_7"
+            ),
+            InlineKeyboardButton(
+                "📅 30 يوم",
+                callback_data="admin_dashboard_30"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📥 سجل التحميلات",
+                callback_data="admin_recent_downloads"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🏆 أكثر المستخدمين",
+                callback_data="admin_top_users"
+            ),
+            InlineKeyboardButton(
+                "🌐 المنصات",
+                callback_data="admin_top_websites"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "💾 التخزين",
+                callback_data="admin_storage"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "👥 المستخدمون",
+                callback_data="admin_users_0"
+            ),
+            InlineKeyboardButton(
+                "📢 الإعلانات",
+                callback_data="admin_broadcast"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔄 تحديث",
+                callback_data=f"admin_dashboard_{days}"
+            ),
+            InlineKeyboardButton(
+                "🔙 الرئيسية",
+                callback_data="admin_home"
+            ),
+        ],
+
+    ])
+
+
+async def admin_dashboard_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        days = int(
+            query.data.replace(
+                "admin_dashboard_",
+                ""
+            )
+        )
+
+    except ValueError:
+
+        days = 30
+
+    if days not in (1, 7, 30):
+        days = 30
+
+    data = get_admin_dashboard_data(days)
+
+    await query.edit_message_text(
+        admin_dashboard_text(data),
+        reply_markup=admin_dashboard_keyboard(days)
+    )
+
+
+async def admin_recent_downloads_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            user_id,
+            username,
+            website,
+            media_type,
+            quality,
+            created_at
+        FROM downloads
+        ORDER BY id DESC
+        LIMIT 20
+    """)
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    text = (
+        "📥 آخر التحميلات\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    if not rows:
+
+        text += "لا توجد تحميلات حتى الآن."
+
+    else:
+
+        for row in rows:
+
+            username = (
+                f"@{row['username']}"
+                if row["username"]
+                else f"ID {row['user_id']}"
+            )
+
+            media = (
+                "🎥"
+                if row["media_type"] == "video"
+                else "🎵"
+            )
+
+            website = (
+                row["website"]
+                or "غير معروف"
+            )
+
+            quality = (
+                row["quality"]
+                or "-"
+            )
+
+            created = (
+                row["created_at"]
+                or "-"
+            )
+
+            text += (
+                f"{media} "
+                f"{html.escape(str(username))}\n"
+                f"🌐 {html.escape(str(website))}\n"
+                f"⚙️ {html.escape(str(quality))}\n"
+                f"🕐 {html.escape(str(created))}\n"
+                "──────────────\n"
+            )
+
+    keyboard = InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "📊 لوحة المعلومات",
+                callback_data="admin_dashboard_30"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 لوحة الإدارة",
+                callback_data="admin_home"
+            )
+        ],
+
+    ])
+
+    await query.edit_message_text(
+        text,
+        reply_markup=keyboard
+    )
+
+
+async def admin_top_users_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = get_admin_dashboard_data(30)
+
+    text = (
+        "🏆 أكثر المستخدمين تحميلًا\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    if not data["top_users"]:
+
+        text += "لا توجد بيانات."
+
+    else:
+
+        for index, row in enumerate(
+            data["top_users"],
+            1
+        ):
+
+            username = (
+                f"@{row['username']}"
+                if row["username"]
+                else f"ID {row['user_id']}"
+            )
+
+            text += (
+                f"{index}. "
+                f"{html.escape(str(username))}\n"
+                f"   📥 {row['count']} تحميل\n\n"
+            )
+
+    keyboard = InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "📊 لوحة المعلومات",
+                callback_data="admin_dashboard_30"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "👥 المستخدمون",
+                callback_data="admin_users_0"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 لوحة الإدارة",
+                callback_data="admin_home"
+            )
+        ],
+
+    ])
+
+    await query.edit_message_text(
+        text,
+        reply_markup=keyboard
+    )
+
+
+async def admin_top_websites_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = get_admin_dashboard_data(30)
+
+    text = (
+        "🌐 أكثر المنصات استخدامًا\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    if not data["websites"]:
+
+        text += "لا توجد بيانات."
+
+    else:
+
+        for index, row in enumerate(
+            data["websites"],
+            1
+        ):
+
+            website = (
+                row["website"]
+                or "غير معروف"
+            )
+
+            text += (
+                f"{index}. "
+                f"{html.escape(str(website))}"
+                f" — {row['count']} تحميل\n"
+            )
+
+    keyboard = InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "📊 لوحة المعلومات",
+                callback_data="admin_dashboard_30"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 لوحة الإدارة",
+                callback_data="admin_home"
+            )
+        ],
+
+    ])
+
+    await query.edit_message_text(
+        text,
+        reply_markup=keyboard
     )
 
 
