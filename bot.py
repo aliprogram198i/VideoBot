@@ -28,6 +28,11 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+try:
+    from google import genai
+except ImportError:
+    genai = None
+
 
 # ============================================================
 # إعدادات البوت
@@ -64,6 +69,51 @@ MIN_FREE_SPACE_BYTES = 256 * 1024 * 1024
 MAX_BROADCAST_LENGTH = 4000
 
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# Gemini AI
+# ============================================================
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+gemini_client = None
+
+if GEMINI_API_KEY and genai is not None:
+    try:
+        gemini_client = genai.Client(
+            api_key=GEMINI_API_KEY
+        )
+        print("🤖 Gemini AI: ENABLED")
+    except Exception as e:
+        gemini_client = None
+        logger.warning(
+            "Gemini initialization failed: %s",
+            type(e).__name__
+        )
+else:
+    print("🤖 Gemini AI: DISABLED")
+
+
+async def gemini_generate(prompt):
+    """
+    إرسال طلب إلى Gemini بدون تعطيل event loop الخاص بالبوت.
+    مفتاح API لا يظهر في السجلات.
+    """
+
+    if gemini_client is None:
+        raise RuntimeError(
+            "Gemini AI is not configured"
+        )
+
+    def generate():
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        return response.text or ""
+
+    return await asyncio.to_thread(generate)
 
 
 def redact_url(value):
@@ -3338,6 +3388,12 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton(
+                "🤖 الذكاء الاصطناعي",
+                callback_data="admin_ai"
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 "🗑️ مسح الإعلانات المرسلة",
                 callback_data="admin_delete_broadcasts"
             )
@@ -3582,6 +3638,610 @@ async def show_admin_stats(query):
     await query.edit_message_text(
         text,
         reply_markup=keyboard
+    )
+
+
+
+# ============================================================
+# الذكاء الاصطناعي - لوحة الإدارة
+# ============================================================
+
+async def admin_ai_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "📊 تحليل الإحصائيات",
+                callback_data="ai_stats"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🧪 اختبار Gemini",
+                callback_data="ai_test"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📈 تقرير أداء البوت",
+                callback_data="ai_report"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "👥 تحليل المستخدمين",
+                callback_data="ai_users"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🌐 تحليل المنصات",
+                callback_data="ai_websites"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 لوحة الإدارة",
+                callback_data="admin_home"
+            )
+        ],
+    ])
+
+    await query.edit_message_text(
+        "🤖 الذكاء الاصطناعي\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "اختر الخدمة التي تريد تنفيذها:",
+        reply_markup=keyboard
+    )
+
+
+
+async def admin_ai_test_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await query.edit_message_text(
+        "🤖 جاري اختبار اتصال Gemini..."
+    )
+
+    try:
+
+        result = await gemini_generate(
+            "أجب بكلمة واحدة فقط: متصل"
+        )
+
+        result = result.strip()
+
+        await query.edit_message_text(
+            "🤖 اختبار Gemini\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "✅ الاتصال ناجح\n\n"
+            f"الرد: {result}",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 الذكاء الاصطناعي",
+                        callback_data="admin_ai"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🏠 لوحة الإدارة",
+                        callback_data="admin_home"
+                    )
+                ],
+            ])
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Gemini test failed"
+        )
+
+        await query.edit_message_text(
+            "🤖 اختبار Gemini\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "❌ فشل الاتصال بـ Gemini.\n\n"
+            f"الخطأ: {type(e).__name__}",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 إعادة الاختبار",
+                        callback_data="ai_test"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 الذكاء الاصطناعي",
+                        callback_data="admin_ai"
+                    )
+                ],
+            ])
+        )
+
+
+
+# ============================================================
+# تحليلات Gemini - لوحة الإدارة
+# ============================================================
+
+def ai_admin_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🔄 إعادة التحليل",
+                callback_data="admin_ai_refresh"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 الذكاء الاصطناعي",
+                callback_data="admin_ai"
+            ),
+            InlineKeyboardButton(
+                "🏠 الرئيسية",
+                callback_data="admin_home"
+            )
+        ],
+    ])
+
+
+def get_ai_statistics_data():
+    data = get_statistics()
+
+    websites = [
+        {
+            "website": row["website"],
+            "count": row["count"]
+        }
+        for row in data["websites"]
+    ]
+
+    languages = [
+        {
+            "language": row["language"],
+            "count": row["count"]
+        }
+        for row in data["languages"]
+    ]
+
+    genders = [
+        {
+            "gender": row["gender"],
+            "count": row["count"]
+        }
+        for row in data["genders"]
+    ]
+
+    return {
+        "users": data["users"],
+        "banned": data["banned"],
+        "downloads": data["downloads"],
+        "videos": data["videos"],
+        "audio": data["audio"],
+        "phones": data["phones"],
+        "locations": data["locations"],
+        "websites": websites,
+        "languages": languages,
+        "genders": genders,
+    }
+
+
+def get_ai_users_data():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN is_banned = 1 THEN 1 ELSE 0 END) AS banned,
+            SUM(CASE WHEN downloads > 0 THEN 1 ELSE 0 END) AS active,
+            AVG(downloads) AS average_downloads,
+            MAX(downloads) AS max_downloads
+        FROM users
+    """)
+
+    summary = cur.fetchone()
+
+    cur.execute("""
+        SELECT
+            language,
+            COUNT(*) AS count
+        FROM users
+        GROUP BY language
+        ORDER BY count DESC
+    """)
+
+    languages = [
+        {
+            "language": row["language"],
+            "count": row["count"]
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute("""
+        SELECT
+            user_id,
+            username,
+            first_name,
+            downloads
+        FROM users
+        ORDER BY downloads DESC
+        LIMIT 10
+    """)
+
+    top_users = [
+        {
+            "user_id": row["user_id"],
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+            "downloads": row["downloads"] or 0
+        }
+        for row in cur.fetchall()
+    ]
+
+    conn.close()
+
+    return {
+        "total": summary["total"] or 0,
+        "banned": summary["banned"] or 0,
+        "active": summary["active"] or 0,
+        "average_downloads": round(
+            summary["average_downloads"] or 0,
+            2
+        ),
+        "max_downloads": summary["max_downloads"] or 0,
+        "languages": languages,
+        "top_users": top_users,
+    }
+
+
+def get_ai_websites_data():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            website,
+            COUNT(*) AS count
+        FROM downloads
+        GROUP BY website
+        ORDER BY count DESC
+    """)
+
+    rows = cur.fetchall()
+
+    total = sum(
+        row["count"]
+        for row in rows
+    )
+
+    websites = []
+
+    for row in rows:
+        count = row["count"]
+
+        websites.append({
+            "website": row["website"],
+            "downloads": count,
+            "percentage": round(
+                (count / total * 100)
+                if total else 0,
+                2
+            )
+        })
+
+    conn.close()
+
+    return {
+        "total_downloads": total,
+        "websites": websites,
+    }
+
+
+def get_ai_report_data():
+    conn = get_db()
+    cur = conn.cursor()
+
+    data = get_admin_dashboard_data(30)
+
+    cur.execute("""
+        SELECT
+            website,
+            COUNT(*) AS count
+        FROM downloads
+        WHERE created_at >= ?
+        GROUP BY website
+        ORDER BY count DESC
+        LIMIT 10
+    """, (
+        datetime.fromtimestamp(
+            datetime.now().timestamp() - (30 * 86400)
+        ).isoformat(),
+    ))
+
+    websites = [
+        {
+            "website": row["website"],
+            "count": row["count"]
+        }
+        for row in cur.fetchall()
+    ]
+
+    conn.close()
+
+    return {
+        "period_days": 30,
+        "total_users": data["total_users"],
+        "banned_users": data["banned_users"],
+        "active_users": data["active_users"],
+        "period_downloads": data["period_downloads"],
+        "period_videos": data["period_videos"],
+        "period_audio": data["period_audio"],
+        "websites": websites,
+    }
+
+
+async def run_admin_ai_analysis(
+    query,
+    title,
+    prompt
+):
+    await query.edit_message_text(
+        "🤖 Gemini AI\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "⏳ جاري تحليل البيانات...\n"
+        "يرجى الانتظار."
+    )
+
+    try:
+        result = await gemini_generate(prompt)
+
+        result = result.strip()
+
+        if not result:
+            result = "لم يُرجع Gemini نتيجة."
+
+        # Telegram message limit protection
+        if len(result) > 3900:
+            result = result[:3900] + "\n\n… تم اختصار التقرير."
+
+        await query.edit_message_text(
+            f"{title}\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"{result}",
+            reply_markup=ai_admin_keyboard()
+        )
+
+    except Exception as e:
+        logger.exception(
+            "Gemini admin analysis failed"
+        )
+
+        await query.edit_message_text(
+            "🤖 Gemini AI\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "❌ تعذر تنفيذ التحليل.\n\n"
+            f"الخطأ: {type(e).__name__}",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 إعادة المحاولة",
+                        callback_data="ai_retry"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 الذكاء الاصطناعي",
+                        callback_data="admin_ai"
+                    )
+                ],
+            ])
+        )
+
+
+async def admin_ai_stats_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = get_ai_statistics_data()
+
+    prompt = f"""
+أنت محلل بيانات ومدير تقني لبوت تيليجرام لتحميل الوسائط.
+
+حلل بيانات البوت التالية:
+
+{data}
+
+اكتب تقريراً عربياً واضحاً ومختصراً يتضمن:
+1. ملخص الحالة الحالية.
+2. أهم الأرقام.
+3. مستوى نشاط المستخدمين.
+4. أكثر أنواع الاستخدام.
+5. أهم الملاحظات أو المشاكل المحتملة.
+6. 3 توصيات عملية لتحسين البوت.
+
+لا تخترع أي أرقام غير موجودة في البيانات.
+لا تذكر مفتاح API أو أي معلومات سرية.
+"""
+
+    await run_admin_ai_analysis(
+        query,
+        "📊 تحليل الإحصائيات",
+        prompt
+    )
+
+
+async def admin_ai_report_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = get_ai_report_data()
+
+    prompt = f"""
+أنت مستشار تقني متخصص في تحليل أداء بوتات Telegram.
+
+هذه بيانات البوت خلال آخر 30 يوماً:
+
+{data}
+
+أنشئ تقرير أداء احترافي باللغة العربية يتضمن:
+- تقييم عام للأداء.
+- نشاط المستخدمين.
+- أداء التحميلات.
+- مقارنة الفيديو والصوت.
+- المنصات الأكثر استخداماً.
+- نقاط القوة.
+- نقاط الضعف المحتملة.
+- 5 توصيات عملية قابلة للتنفيذ.
+
+اعتمد فقط على البيانات المعطاة ولا تخترع أرقاماً.
+"""
+
+    await run_admin_ai_analysis(
+        query,
+        "📈 تقرير أداء البوت",
+        prompt
+    )
+
+
+async def admin_ai_users_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = get_ai_users_data()
+
+    prompt = f"""
+أنت محلل بيانات لبوت Telegram.
+
+حلل بيانات المستخدمين التالية:
+
+{data}
+
+أعطني تحليلاً عربياً يتضمن:
+- حجم قاعدة المستخدمين.
+- نسبة النشاط.
+- نسبة المحظورين.
+- متوسط التحميلات.
+- المستخدمون الأكثر نشاطاً.
+- توزيع اللغات.
+- ملاحظات إدارية مفيدة.
+- 3 اقتراحات لزيادة استخدام البوت.
+
+لا تحاول تحديد هوية الأشخاص ولا تستنتج معلومات شخصية غير موجودة.
+لا تخترع أرقاماً.
+"""
+
+    await run_admin_ai_analysis(
+        query,
+        "👥 تحليل المستخدمين",
+        prompt
+    )
+
+
+async def admin_ai_websites_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = get_ai_websites_data()
+
+    prompt = f"""
+أنت محلل استخدام لمنصة تحميل Telegram.
+
+حلل بيانات المنصات التالية:
+
+{data}
+
+اكتب تحليلاً عربياً يتضمن:
+- ترتيب المنصات حسب الاستخدام.
+- نسبة كل منصة.
+- المنصات المسيطرة.
+- ملاحظات عن تنوع مصادر التحميل.
+- اقتراحات تقنية لتحسين دعم المنصات الأكثر استخداماً.
+
+لا تخترع أي بيانات غير موجودة.
+"""
+
+    await run_admin_ai_analysis(
+        query,
+        "🌐 تحليل المنصات",
+        prompt
+    )
+
+
+async def admin_ai_refresh_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await admin_ai_callback(
+        update,
+        context
+    )
+
+
+async def admin_ai_retry_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await admin_ai_callback(
+        update,
+        context
     )
 
 
@@ -5483,6 +6143,63 @@ def main():
             pattern=r"^admin_stats$"
         )
     )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_callback,
+            pattern=r"^admin_ai$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_test_callback,
+            pattern=r"^ai_test$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_stats_callback,
+            pattern=r"^ai_stats$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_report_callback,
+            pattern=r"^ai_report$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_users_callback,
+            pattern=r"^ai_users$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_websites_callback,
+            pattern=r"^ai_websites$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_refresh_callback,
+            pattern=r"^admin_ai_refresh$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_retry_callback,
+            pattern=r"^ai_retry$"
+        )
+    )
+
 
     app.add_handler(
         CallbackQueryHandler(
