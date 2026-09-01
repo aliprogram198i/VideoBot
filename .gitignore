@@ -5,3 +5,6 @@ __pycache__/
 bot_stats.db
 *.db
 *.log
+
+# Local backup files
+bot.py.before_*
