@@ -5581,7 +5581,7 @@ async def admin_ai_errors_callback(
     try:
         data = get_ai_errors_data(30)
 
-        if data["total_errors"] == 0:
+        if data["total_error_records"] == 0:
             await query.edit_message_text(
                 "🐞 تقرير أخطاء البوت\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
