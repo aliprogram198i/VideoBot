@@ -2651,37 +2651,106 @@ async def download_media(
             print("⚠️ Could not update upload message:")
             print(repr(upload_error))
 
-        with open(
-            media_file,
-            "rb"
-        ) as video:
+        try:
 
-            await context.bot.send_video(
+            with open(
+                media_file,
+                "rb"
+            ) as video:
 
-                chat_id=update.effective_chat.id,
+                await context.bot.send_video(
 
-                video=video,
+                    chat_id=update.effective_chat.id,
 
-                caption=(
-                    TEXTS[language]["video_done"]
-                    .format(
-                        quality=quality_name,
-                        username=(
-                            f"@{user.username}"
-                            if user.username
-                            else (
-                                user.first_name
-                                or "صديقي"
+                    video=video,
+
+                    caption=(
+                        TEXTS[language]["video_done"]
+                        .format(
+                            quality=quality_name,
+                            username=(
+                                f"@{user.username}"
+                                if user.username
+                                else (
+                                    user.first_name
+                                    or "صديقي"
+                                )
                             )
                         )
-                    )
-                ),
+                    ),
 
-                read_timeout=600,
-                write_timeout=600,
-                connect_timeout=60,
-                pool_timeout=60,
-            )
+                    supports_streaming=True,
+
+                    read_timeout=600,
+                    write_timeout=600,
+                    connect_timeout=60,
+                    pool_timeout=60,
+                )
+
+        except Exception as send_error:
+
+            print()
+            print("===== COMPRESSED VIDEO SEND ERROR =====")
+            print(repr(send_error))
+            print("========================================")
+            print()
+
+            try:
+                await query.edit_message_text(
+                    TEXTS[language]["general_error"]
+                )
+            except Exception:
+                pass
+
+            return
+
+        # ----------------------------------------------------
+        # حفظ عملية التحميل
+        # ----------------------------------------------------
+
+        save_download(
+            user=user,
+            url=url,
+            website=detect_website(url),
+            media_type="video",
+            quality=quality_name,
+        )
+
+        # ----------------------------------------------------
+        # تنظيف بيانات الضغط والملفات المؤقتة
+        # ----------------------------------------------------
+
+        context.user_data.pop(
+            "compression_file",
+            None
+        )
+
+        context.user_data.pop(
+            "compression_temp_dir",
+            None
+        )
+
+        context.user_data.pop(
+            "compression_quality",
+            None
+        )
+
+        context.user_data.pop(
+            "compression_percent",
+            None
+        )
+
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
+
+        shutil.rmtree(
+            temp_dir,
+            ignore_errors=True
+        )
+
+        print("✅ Compressed video sent and temp files cleaned.")
 
         return
 
@@ -3242,6 +3311,10 @@ async def download_media(
                 quality_name
             )
 
+            # إبقاء مجلد التحميل موجودًا حتى يختار المستخدم
+            # نسبة الضغط ويكتمل الضغط في callback لاحق.
+            keep_for_compression = True
+
             await show_compression_menu(
                 query,
                 language,
@@ -3355,10 +3428,13 @@ async def download_media(
 
     finally:
 
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
+        # لا تحذف الملفات إذا كان المستخدم سيختار
+        # نسبة الضغط من قائمة الضغط.
+        if not keep_for_compression:
+            shutil.rmtree(
+                temp_dir,
+                ignore_errors=True
+            )
 
 
 # ============================================================
