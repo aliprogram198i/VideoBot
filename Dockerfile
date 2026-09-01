@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --uid 10001 videobot
 
 WORKDIR /app
 
@@ -10,10 +11,11 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py .
+COPY --chown=videobot:videobot bot.py .
 
-RUN echo "=== DOCKER BUILD OK ===" \
-    && python --version \
-    && ls -lh /app/bot.py
+RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 
-CMD ["sh", "-c", "echo '=== CONTAINER STARTED ==='; echo '=== CHECKING FILES ==='; pwd; ls -la /app; echo '=== STARTING BOT ==='; python -u bot.py"]
+ENV TMPDIR=/app/tmp
+USER videobot
+
+CMD ["python", "-u", "bot.py"]

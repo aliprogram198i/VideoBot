@@ -6,9 +6,12 @@ import tempfile
 import shutil
 import html
 import re
-from urllib.request import Request, urlopen
+import ipaddress
+import logging
+import socket
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from telegram import (
     Update,
@@ -52,7 +55,109 @@ else:
 print(f"🗄️ Database path: {DB_FILE}")
 
 DOWNLOAD_TIMEOUT = 900
+PROCESS_SHUTDOWN_TIMEOUT = 10
+MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_VIDEO_DOWNLOAD_BYTES = 500 * 1024 * 1024
+MAX_AUDIO_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_YOINKU_RESPONSE_BYTES = 1 * 1024 * 1024
+MIN_FREE_SPACE_BYTES = 256 * 1024 * 1024
 MAX_BROADCAST_LENGTH = 4000
+
+logger = logging.getLogger(__name__)
+
+
+def redact_url(value):
+    """Return a log-safe URL without credentials, query values, or fragments."""
+    try:
+        parsed = urlparse(value)
+        host = parsed.hostname or ""
+        return urlunparse((parsed.scheme, host, parsed.path, "", "<redacted>" if parsed.query else "", ""))
+    except Exception:
+        return "<invalid-url>"
+
+
+def validate_public_http_url(value, resolver=socket.getaddrinfo):
+    """Reject URLs that could target local or otherwise non-public services."""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only absolute HTTP(S) URLs are allowed")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs with embedded credentials are not allowed")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        raise ValueError("Local hosts are not allowed")
+    try:
+        addresses = resolver(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as exc:
+        raise ValueError("Host could not be resolved") from exc
+    if not addresses:
+        raise ValueError("Host could not be resolved")
+    for address in addresses:
+        ip = ipaddress.ip_address(address[4][0])
+        if not ip.is_global:
+            raise ValueError("Non-public network addresses are not allowed")
+    return parsed
+
+
+class SafeRedirectHandler(HTTPRedirectHandler):
+    """Validate every redirect destination before urllib follows it."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_public_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def safe_urlopen(request, *, timeout, max_bytes, expected_content_types=None):
+    """Open an external URL with SSRF and response-size protections."""
+    target = request.full_url if isinstance(request, Request) else request
+    validate_public_http_url(target)
+    response = build_opener(SafeRedirectHandler()).open(request, timeout=timeout)
+    content_length = response.headers.get("Content-Length")
+    if content_length and int(content_length) > max_bytes:
+        response.close()
+        raise ValueError("Response exceeds configured size limit")
+    content_type = response.headers.get_content_type()
+    if expected_content_types and content_type not in expected_content_types:
+        response.close()
+        raise ValueError("Unexpected response content type")
+    return response
+
+
+def read_limited(response, max_bytes):
+    chunks = []
+    total = 0
+    while True:
+        chunk = response.read(64 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError("Response exceeds configured size limit")
+        chunks.append(chunk)
+
+
+def final_output_from_yt_dlp(stdout_text, temp_dir, extensions):
+    """Use yt-dlp's explicit after_move output, never directory iteration."""
+    base = os.path.realpath(temp_dir) + os.sep
+    for line in reversed(stdout_text.splitlines()):
+        candidate = line.strip()
+        if candidate.lower().endswith(extensions) and os.path.realpath(candidate).startswith(base) and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+async def communicate_with_cleanup(process, timeout):
+    """Wait for a child process and reliably reap it on timeout/cancellation."""
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        if process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=PROCESS_SHUTDOWN_TIMEOUT)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        raise
 
 
 # ============================================================
@@ -585,6 +690,8 @@ def get_db():
     )
 
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
 
     return conn
 
@@ -1000,22 +1107,15 @@ def set_banned(user_id, value):
 # ============================================================
 
 def delete_user(user_id):
-
+    """Delete only this user's collected data in one transaction."""
     conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute(
-        "DELETE FROM downloads WHERE user_id = ?",
-        (user_id,)
-    )
-
-    cur.execute(
-        "DELETE FROM users WHERE user_id = ?",
-        (user_id,)
-    )
-
-    conn.commit()
-    conn.close()
+    try:
+        with conn:
+            conn.execute("DELETE FROM downloads WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM broadcast_messages WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+    finally:
+        conn.close()
 
 
 # ============================================================
@@ -1312,14 +1412,10 @@ async def handle_message(
 
     url = text.strip()
 
-    if not url.startswith(
-        ("http://", "https://")
-    ):
-
-        await update.message.reply_text(
-            TEXTS[language]["invalid_url"]
-        )
-
+    try:
+        validate_public_http_url(url)
+    except ValueError:
+        await update.message.reply_text(TEXTS[language]["invalid_url"])
         return
 
     context.user_data["video_url"] = url
@@ -1527,17 +1623,14 @@ async def extract_direct_media_urls(page_url):
             headers=headers
         )
 
-        with urlopen(
+        with safe_urlopen(
             request,
-            timeout=30
+            timeout=30,
+            max_bytes=MAX_HTML_BYTES,
+            expected_content_types={"text/html", "application/xhtml+xml"},
         ) as response:
-
             charset = response.headers.get_content_charset() or "utf-8"
-
-            return response.read().decode(
-                charset,
-                errors="ignore"
-            )
+            return read_limited(response, MAX_HTML_BYTES).decode(charset, errors="ignore")
 
     try:
 
@@ -1632,22 +1725,14 @@ async def extract_direct_media_urls(page_url):
         )
     )
 
-    print()
-    print("===== DIRECT SOURCES =====")
-
-    if candidates:
-
-        for source in candidates[:20]:
-            print(source)
-
-    else:
-
-        print("No direct video source found.")
-
-    print("==========================")
-    print()
-
-    return candidates[:20]
+    public_candidates = []
+    for candidate in candidates:
+        try:
+            validate_public_http_url(candidate)
+            public_candidates.append(candidate)
+        except ValueError:
+            logger.warning("Rejected non-public direct media URL: %s", redact_url(candidate))
+    return public_candidates[:20]
 
 
 # ============================================================
@@ -1655,114 +1740,63 @@ async def extract_direct_media_urls(page_url):
 # ============================================================
 
 async def download_with_yoinku(url, temp_dir, is_audio=False):
-    try:
-        api_key = os.getenv("YOINKU_API_KEY")
+    """Use Yoinku as a bounded fallback without logging credentials or signed URLs."""
+    api_key = os.getenv("YOINKU_API_KEY")
+    if not api_key:
+        logger.warning("YOINKU_API_KEY is not configured")
+        return None
 
-        if not api_key:
-            print("❌ YOINKU_API_KEY غير موجود")
-            return None
+    import json
+    import urllib.parse
 
-        import urllib.parse
-        import json
-        from urllib.request import Request, urlopen
+    limit = MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES
+    if shutil.disk_usage(temp_dir).free < min(limit, MIN_FREE_SPACE_BYTES):
+        logger.warning("Insufficient free space for Yoinku download")
+        return None
+    api_url = "https://yoinku.com/api/v1/download?" + urllib.parse.urlencode({
+        "url": url,
+        "format": "a-320" if is_audio else "v-720",
+    })
+    output_file = os.path.join(temp_dir, "yoinku_download" + (".mp3" if is_audio else ".mp4"))
 
-        download_format = "a-320" if is_audio else "v-720"
-
-        api_url = (
-            "https://yoinku.com/api/v1/download?"
-            + urllib.parse.urlencode({
-                "url": url,
-                "format": download_format,
-            })
-        )
-
-        print()
-        print("===== YOINKU API =====")
-        print("Format:", download_format)
-        print("Requesting download URL...")
-        print("======================")
-
-        request = Request(
-            api_url,
-            headers={
-                "x-api-key": api_key,
-                "Accept": "application/json",
-                "User-Agent": "VideoBot/1.0",
-            },
-        )
-
-        def get_data():
-            with urlopen(request, timeout=120) as response:
-                body = response.read().decode("utf-8")
-                return json.loads(body)
-
-        data = await asyncio.to_thread(get_data)
-
-        print("Yoinku response received.")
-
-        if not data.get("ok") or not data.get("url"):
-            print("❌ Yoinku لم يعطِ رابط تحميل")
-            print("Response:", data)
-            return None
-
-        direct_url = data["url"]
-        filename = data.get("filename")
-
-        print("✅ Yoinku أعطى رابط التحميل")
-        print("Filename:", filename or "unknown")
-
-        extension = ".mp3" if is_audio else ".mp4"
-
-        output_file = os.path.join(
-            temp_dir,
-            "yoinku_download" + extension
-        )
-
-        print("Downloading file from Yoinku storage...")
-
-        def download_file():
-            request2 = Request(
-                direct_url,
-                headers={
-                    "User-Agent": "VideoBot/1.0",
-                },
-            )
-
-            with urlopen(request2, timeout=600) as response:
-                with open(output_file, "wb") as output:
-                    while True:
-                        chunk = response.read(1024 * 1024)
-
-                        if not chunk:
-                            break
-
-                        output.write(chunk)
-
-        await asyncio.to_thread(download_file)
-
-        if (
-            not os.path.exists(output_file)
-            or os.path.getsize(output_file) <= 0
-        ):
-            print("❌ ملف Yoinku فارغ أو غير موجود")
-            return None
-
-        size_mb = os.path.getsize(output_file) / 1024 / 1024
-
-        print()
-        print("===== YOINKU DOWNLOAD SUCCESS =====")
-        print("File:", output_file)
-        print(f"Size: {size_mb:.2f} MB")
-        print("====================================")
-
+    def fetch():
+        request = Request(api_url, headers={"x-api-key": api_key, "Accept": "application/json", "User-Agent": "VideoBot/1.0"})
+        with safe_urlopen(request, timeout=30, max_bytes=MAX_YOINKU_RESPONSE_BYTES, expected_content_types={"application/json"}) as response:
+            data = json.loads(read_limited(response, MAX_YOINKU_RESPONSE_BYTES).decode("utf-8"))
+        direct_url = data.get("url") if isinstance(data, dict) and data.get("ok") else None
+        if not direct_url:
+            raise ValueError("Yoinku response did not contain a download URL")
+        validate_public_http_url(direct_url)
+        request = Request(direct_url, headers={"User-Agent": "VideoBot/1.0"})
+        try:
+            with safe_urlopen(request, timeout=60, max_bytes=limit) as response, open(output_file, "wb") as output:
+                total = 0
+                while chunk := response.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > limit:
+                        raise ValueError("Yoinku file exceeds configured size limit")
+                    output.write(chunk)
+        except Exception:
+            try:
+                os.remove(output_file)
+            except FileNotFoundError:
+                pass
+            raise
+        if not os.path.isfile(output_file) or os.path.getsize(output_file) == 0:
+            raise ValueError("Yoinku returned an empty file")
         return output_file
 
-    except Exception as e:
-        print()
-        print("===== YOINKU ERROR =====")
-        print(repr(e))
-        print("========================")
-        return None
+    for attempt in range(3):
+        try:
+            return await asyncio.to_thread(fetch)
+        except (OSError, TimeoutError) as exc:
+            logger.warning("Yoinku temporary failure on attempt %d: %s", attempt + 1, type(exc).__name__)
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        except Exception as exc:
+            logger.warning("Yoinku fallback failed: %s", type(exc).__name__)
+            break
+    return None
 
 # ============================================================
 # ضغط الفيديو الكبير تلقائيًا
@@ -1887,10 +1921,7 @@ async def compress_video_if_needed(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        probe_stdout, probe_stderr = await asyncio.wait_for(
-            probe.communicate(),
-            timeout=120,
-        )
+        probe_stdout, probe_stderr = await communicate_with_cleanup(probe, 120)
 
         if probe.returncode != 0:
             print("❌ Could not read video duration")
@@ -2016,10 +2047,7 @@ async def compress_video_if_needed(
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=DOWNLOAD_TIMEOUT,
-            )
+            stdout, stderr = await communicate_with_cleanup(process, DOWNLOAD_TIMEOUT)
 
             if process.returncode != 0:
                 print("❌ FFmpeg failed")
@@ -2254,122 +2282,38 @@ async def compress_video_if_needed(
         return None
 
 
-async def download_with_fallback(
-    url,
-    temp_dir,
-    output_template,
-    format_option
-):
-    """
-    محاولة تنزيل الرابط بعد فشل yt-dlp الأساسي.
-    """
-
-    candidates = await extract_direct_media_urls(
-        url
-    )
-
-    if not candidates:
-        return None, None, None
-
+async def download_with_fallback(url, temp_dir, output_template, format_option, is_audio=False):
+    """Download a validated direct candidate and return yt-dlp's final path."""
+    candidates = await extract_direct_media_urls(url)
+    extensions = (".mp3", ".m4a", ".opus", ".aac", ".wav") if is_audio else (".mp4", ".mkv", ".webm", ".mov")
+    max_size = MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES
     for direct_url in candidates:
-
-        fallback_output = os.path.join(
-            temp_dir,
-            "fallback_%(id)s.%(ext)s"
-        )
-
         command = [
-            "python",
-            "-m",
-            "yt_dlp",
-            "--no-playlist",
-            "-f",
-            format_option,
-            "--retries",
-            "5",
-            "--fragment-retries",
-            "5",
-            "--socket-timeout",
-            "60",
-            "--concurrent-fragments",
-            "2",
-            "--merge-output-format",
-            "mp4",
-            "--no-warnings",
-            "-o",
-            fallback_output,
-            direct_url,
+            "python", "-m", "yt_dlp", "--no-playlist", "-f", format_option,
+            "--retries", "5", "--fragment-retries", "5", "--socket-timeout", "60",
+            "--concurrent-fragments", "2", "--max-filesize", str(max_size),
+            "--print", "after_move:filepath", "--no-warnings", "-o",
+            os.path.join(temp_dir, "fallback_%(id)s.%(ext)s"),
         ]
-
-        print()
-        print("===== FALLBACK DOWNLOAD =====")
-        print("Source:", direct_url)
-        print("Format:", format_option)
-        print("==============================")
-        print()
-
+        if is_audio:
+            command.extend(["-x", "--audio-format", "mp3"])
+        else:
+            command.extend(["--merge-output-format", "mp4"])
+        command.append(direct_url)
         try:
-
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=DOWNLOAD_TIMEOUT
-            )
-
-            stdout_text = stdout.decode(
-                errors="ignore"
-            )
-
-            stderr_text = stderr.decode(
-                errors="ignore"
-            )
-
-            print(stdout_text)
-
-            if stderr_text:
-                print(stderr_text)
-
-            if process.returncode != 0:
-                continue
-
-            for filename in os.listdir(temp_dir):
-
-                full_path = os.path.join(
-                    temp_dir,
-                    filename
-                )
-
-                if not os.path.isfile(full_path):
-                    continue
-
-                if filename.lower().endswith(
-                    (
-                        ".mp4",
-                        ".mkv",
-                        ".webm",
-                        ".mov",
-                    )
-                ):
-
-                    return (
-                        full_path,
-                        stdout_text,
-                        stderr_text
-                    )
-
-        except Exception as e:
-
-            print()
-            print("===== FALLBACK ERROR =====")
-            print(repr(e))
-            print("==========================")
-            print()
-
+            process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await communicate_with_cleanup(process, DOWNLOAD_TIMEOUT)
+            stdout_text = stdout.decode(errors="ignore")
+            stderr_text = stderr.decode(errors="ignore")
+            if process.returncode == 0:
+                final_path = final_output_from_yt_dlp(stdout_text, temp_dir, extensions)
+                if final_path:
+                    return final_path, stdout_text, stderr_text
+            logger.warning("Direct fallback failed for %s", redact_url(direct_url))
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            raise
+        except Exception as exc:
+            logger.warning("Direct fallback error: %s", type(exc).__name__)
     return None, None, None
 
 
@@ -2912,9 +2856,9 @@ async def download_media(
         )
     )
 
-    temp_dir = tempfile.mkdtemp(
-        prefix="videobot_"
-    )
+    temp_dir = tempfile.mkdtemp(prefix="videobot_")
+    # Always initialize before entering try: finally must be safe on every path.
+    keep_for_compression = False
 
     try:
 
@@ -2967,6 +2911,12 @@ async def download_media(
 
             "--no-warnings",
 
+            "--max-filesize",
+            str(MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES),
+
+            "--print",
+            "after_move:filepath",
+
             "-o",
             output_template,
         ])
@@ -3000,7 +2950,7 @@ async def download_media(
 
         print()
         print("===== yt-dlp COMMAND =====")
-        print(" ".join(command))
+        print("yt-dlp command prepared")
         print("==========================")
         print()
 
@@ -3016,10 +2966,7 @@ async def download_media(
             )
         )
 
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=DOWNLOAD_TIMEOUT
-        )
+        stdout, stderr = await communicate_with_cleanup(process, DOWNLOAD_TIMEOUT)
 
         stdout_text = stdout.decode(
             errors="ignore"
@@ -3029,7 +2976,13 @@ async def download_media(
             errors="ignore"
         )
 
-        print(stdout_text)
+        allowed_extensions = (
+            (".mp3", ".m4a", ".opus", ".aac", ".wav")
+            if is_audio else (".mp4", ".mkv", ".webm", ".mov")
+        )
+        media_file = final_output_from_yt_dlp(stdout_text, temp_dir, allowed_extensions)
+
+        print("yt-dlp completed")
 
         if stderr_text:
 
@@ -3043,7 +2996,7 @@ async def download_media(
 
             print()
             print("===== PRIMARY DOWNLOAD FAILED =====")
-            print(f"URL: {url}")
+            print(f"URL: {redact_url(url)}")
             print(f"yt-dlp return code: {process.returncode}")
             print("===== STDOUT =====")
             print(stdout_text[-5000:])
@@ -3061,6 +3014,7 @@ async def download_media(
                 temp_dir=temp_dir,
                 output_template=output_template,
                 format_option=format_option,
+                is_audio=is_audio,
             )
 
             if fallback_file:
@@ -3099,7 +3053,7 @@ async def download_media(
 
                     print()
                     print("===== ALL DOWNLOAD METHODS FAILED =====")
-                    print(f"URL: {url}")
+                    print(f"URL: {redact_url(url)}")
                     print("========================================")
                     print()
 
@@ -3110,51 +3064,8 @@ async def download_media(
                     return
 
         # ----------------------------------------------------
-        # البحث عن الملف
+        # The final path is supplied by yt-dlp; fallback paths are explicit too.
         # ----------------------------------------------------
-
-        media_file = None
-
-        if is_audio:
-
-            allowed_extensions = (
-                ".mp3",
-                ".m4a",
-                ".opus",
-                ".aac",
-                ".wav",
-            )
-
-        else:
-
-            allowed_extensions = (
-                ".mp4",
-                ".mkv",
-                ".webm",
-                ".mov",
-            )
-
-        for filename in os.listdir(
-            temp_dir
-        ):
-
-            full_path = os.path.join(
-                temp_dir,
-                filename
-            )
-
-            if not os.path.isfile(
-                full_path
-            ):
-                continue
-
-            if filename.lower().endswith(
-                allowed_extensions
-            ):
-
-                media_file = full_path
-
-                break
 
         if not media_file:
 
@@ -3291,6 +3202,11 @@ async def download_media(
                         pool_timeout=60,
                     )
 
+                save_download(user, url, website, "video", quality_name)
+                try:
+                    await query.delete_message()
+                except Exception:
+                    pass
                 return
 
             # ----------------------------------------------------
@@ -3322,51 +3238,6 @@ async def download_media(
             )
 
             return
-
-            # ----------------------------------------------------
-            # بعد انتهاء الضغط: عرض رسالة رفع الفيديو
-            # ----------------------------------------------------
-            try:
-                await query.edit_message_text(
-                    TEXTS[language]["uploading"]
-                )
-            except Exception as upload_message_error:
-                print("⚠️ Could not update upload message:")
-                print(repr(upload_message_error))
-
-            with open(
-                media_file,
-                "rb"
-            ) as video:
-
-                await context.bot.send_video(
-
-                    chat_id=update.effective_chat.id,
-
-                    video=video,
-
-                    caption=(
-                        TEXTS[language]["video_done"]
-                        .format(
-                            quality=quality_name,
-                            username=(
-                                f"@{user.username}"
-                                if user.username
-                                else (
-                                    user.first_name
-                                    or "صديقي"
-                                )
-                            )
-                        )
-                    ),
-
-                    supports_streaming=True,
-
-                    read_timeout=600,
-                    write_timeout=600,
-                    connect_timeout=60,
-                    pool_timeout=60,
-                )
 
         # ----------------------------------------------------
         # حفظ التحميل
@@ -4536,6 +4407,12 @@ async def process_broadcast(
 
     conn = get_db()
     cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO broadcast_logs (admin_id, message, sent_count, failed_count, created_at)
+        VALUES (?, ?, 0, 0, ?)
+    """, (ADMIN_ID, message, datetime.now().isoformat()))
+    broadcast_id = cur.lastrowid
+    conn.commit()
 
     cur.execute("""
         SELECT user_id
@@ -4577,7 +4454,7 @@ async def process_broadcast(
                 )
                 VALUES (?, ?, ?, ?)
             """, (
-                None,
+                broadcast_id,
                 row["user_id"],
                 sent_message.message_id,
                 datetime.now().isoformat(),
@@ -4603,21 +4480,8 @@ async def process_broadcast(
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO broadcast_logs (
-            admin_id,
-            message,
-            sent_count,
-            failed_count,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        ADMIN_ID,
-        message,
-        sent,
-        failed,
-        datetime.now().isoformat(),
-    ))
+        UPDATE broadcast_logs SET sent_count = ?, failed_count = ? WHERE id = ?
+    """, (sent, failed, broadcast_id))
 
     conn.commit()
     conn.close()
@@ -5301,12 +5165,13 @@ async def cancel_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
+    # A deferred compression owns a temporary directory until the user decides.
+    temp_dir = context.user_data.get("compression_temp_dir")
     context.user_data.clear()
+    if temp_dir and os.path.isdir(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-    await update.message.reply_text(
-        "✅ تم إلغاء العملية."
-    )
+    await update.message.reply_text("✅ تم إلغاء العملية.")
 
 
 # ============================================================
@@ -5333,11 +5198,10 @@ async def handle_contact(
     contact = update.message.contact
 
     if contact:
-
-        save_phone(
-            user.id,
-            contact.phone_number
-        )
+        if contact.user_id is not None and contact.user_id != user.id:
+            await update.message.reply_text("❌ لا يمكن حفظ رقم جهة اتصال لشخص آخر.")
+            return
+        save_phone(user.id, contact.phone_number)
 
         language = get_language(
             user.id
