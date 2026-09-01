@@ -2266,13 +2266,6 @@ async def show_video_menu(
 
         [
             InlineKeyboardButton(
-                "🗜️ ضغط الفيديو",
-                callback_data="video_compress"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
                 TEXTS[language]["back"],
                 callback_data="main_menu"
             )
@@ -2748,487 +2741,12 @@ async def download_with_yoinku(
     return None, diagnostics
 
 # ============================================================
-# ضغط الفيديو الكبير تلقائيًا
+# حد حجم فيديو Telegram
 # ============================================================
 
 MAX_TELEGRAM_VIDEO_MB = 49
 MAX_TELEGRAM_VIDEO_BYTES = MAX_TELEGRAM_VIDEO_MB * 1024 * 1024
 
-async def get_video_size_mb(media_file):
-    """
-    إرجاع حجم الفيديو بالميغابايت.
-    """
-    try:
-        if not os.path.isfile(media_file):
-            return 0.0
-
-        return os.path.getsize(media_file) / 1024 / 1024
-
-    except Exception as e:
-        print("❌ Could not read video size:")
-        print(repr(e))
-        return 0.0
-
-
-async def compress_video_if_needed(
-    media_file,
-    temp_dir,
-    query=None,
-    language="ar",
-    compression_percent=50,
-):
-    """
-    ضغط الفيديو بشكل ذكي مع عدة محاولات.
-
-    الهدف:
-    - إبقاء الملف النهائي تحت 42 MB بهامش أمان.
-    - عدم إعادة الملف الأصلي الكبير إذا فشلت عملية الضغط.
-    - استخدام محاولات إضافية تلقائيًا عند الحاجة.
-    """
-
-    SAFE_MB = MAX_TELEGRAM_VIDEO_MB
-    SAFE_BYTES = SAFE_MB * 1024 * 1024
-
-    try:
-        if not os.path.isfile(media_file):
-            print("❌ Compression input file not found")
-            return None
-
-        original_size = os.path.getsize(media_file)
-
-        print()
-        print("===== VIDEO SIZE CHECK =====")
-        print(f"Original size: {original_size / 1024 / 1024:.2f} MB")
-        print(f"Safe target: {SAFE_MB} MB")
-        print("============================")
-
-        # الفيديو أصغر من الحد الآمن
-        if original_size <= SAFE_BYTES:
-            print("✅ Compression not required.")
-            return media_file
-
-        # --------------------------------------------------------
-        # إشعار المستخدم
-        # --------------------------------------------------------
-        if query is not None:
-            try:
-                compression_message = {
-                    "ar": (
-                        "⏳ لحظات من فضلك...\n\n"
-                        "📦 تم تحميل الفيديو بنجاح، لكن حجمه كبير قليلًا.\n\n"
-                        "⚙️ جاري الآن ضغط الفيديو وتحسين حجمه ليصبح مناسبًا للإرسال عبر تيليجرام.\n\n"
-                        "🎯 قد تستغرق هذه العملية بعض الوقت حسب مدة الفيديو وحجمه.\n\n"
-                        "📤 بعد انتهاء المعالجة سيتم إرسال الفيديو إليك تلقائيًا.\n\n"
-                        "❤️ شكرًا لصبرك، لا حاجة لإعادة إرسال الرابط."
-                    ),
-                    "en": (
-                        "⏳ Please wait a moment...\n\n"
-                        "📦 The video has been downloaded successfully, but it is too large.\n\n"
-                        "⚙️ The server is compressing and optimizing the video for Telegram.\n\n"
-                        "🎯 This may take some time depending on the video length and size.\n\n"
-                        "📤 The video will be sent automatically when processing is complete.\n\n"
-                        "❤️ Thank you for your patience. There is no need to resend the link."
-                    ),
-                }
-
-                message = compression_message.get(
-                    language,
-                    compression_message["ar"]
-                )
-
-                await query.edit_message_text(message)
-
-            except Exception as notify_error:
-                print("⚠️ Could not update compression message:")
-                print(repr(notify_error))
-
-        if not shutil.which("ffmpeg"):
-            print("❌ ffmpeg غير موجود")
-            return None
-
-        if not shutil.which("ffprobe"):
-            print("❌ ffprobe غير موجود")
-            return None
-
-        # --------------------------------------------------------
-        # قراءة مدة الفيديو
-        # --------------------------------------------------------
-        probe_command = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            media_file,
-        ]
-
-        probe = await asyncio.create_subprocess_exec(
-            *probe_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        probe_stdout, probe_stderr = await communicate_with_cleanup(probe, 120)
-
-        if probe.returncode != 0:
-            print("❌ Could not read video duration")
-            print(probe_stderr.decode(errors="ignore")[-2000:])
-            return None
-
-        try:
-            duration = float(probe_stdout.decode().strip())
-        except Exception:
-            duration = 0
-
-        if duration <= 0:
-            print("❌ Invalid video duration")
-            return None
-
-        print(f"Duration: {duration:.2f} seconds")
-        print(f"Duration: {duration / 60:.2f} minutes")
-
-        # --------------------------------------------------------
-        # نسبة الضغط
-        # --------------------------------------------------------
-        try:
-            compression_percent = int(compression_percent)
-        except Exception:
-            compression_percent = 50
-
-        compression_percent = max(
-            10,
-            min(50, compression_percent)
-        )
-
-        # --------------------------------------------------------
-        # الحجم المستهدف
-        # --------------------------------------------------------
-        requested_target = int(
-            original_size * (100 - compression_percent) / 100
-        )
-
-        target_bytes = min(
-            requested_target,
-            SAFE_BYTES
-        )
-
-        target_bytes = max(
-            target_bytes,
-            5 * 1024 * 1024
-        )
-
-        print()
-        print("===== SMART COMPRESSION =====")
-        print(f"Compression percent: {compression_percent}%")
-        print(f"Target size: {target_bytes / 1024 / 1024:.2f} MB")
-        print("==============================")
-
-        # --------------------------------------------------------
-        # دالة تنفيذ ضغط واحدة
-        # --------------------------------------------------------
-        async def run_ffmpeg(
-            input_file,
-            output_file,
-            video_kbps,
-            audio_kbps,
-            scale_width,
-            preset="veryfast",
-        ):
-            if os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                except Exception:
-                    pass
-
-            scale_filter = f"scale='min({scale_width},iw)':-2"
-
-            command = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                input_file,
-
-                "-vf",
-                scale_filter,
-
-                "-c:v",
-                "libx264",
-
-                "-preset",
-                preset,
-
-                "-b:v",
-                f"{video_kbps}k",
-
-                "-maxrate",
-                f"{video_kbps}k",
-
-                "-bufsize",
-                f"{max(video_kbps * 2, 120)}k",
-
-                "-c:a",
-                "aac",
-
-                "-b:a",
-                f"{audio_kbps}k",
-
-                "-ac",
-                "2",
-
-                "-movflags",
-                "+faststart",
-
-                output_file,
-            ]
-
-            print()
-            print("===== FFMPEG COMPRESSION =====")
-            print(f"Video bitrate: {video_kbps}k")
-            print(f"Audio bitrate: {audio_kbps}k")
-            print(f"Resolution: {scale_width}px")
-            print("===============================")
-
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            stdout, stderr = await communicate_with_cleanup(process, DOWNLOAD_TIMEOUT)
-
-            if process.returncode != 0:
-                print("❌ FFmpeg failed")
-                print(stderr.decode(errors="ignore")[-5000:])
-                return False
-
-            if not os.path.isfile(output_file):
-                print("❌ FFmpeg output file was not created")
-                return False
-
-            return True
-
-        # --------------------------------------------------------
-        # حساب bitrate
-        # --------------------------------------------------------
-        audio_bitrate = 48_000
-
-        total_bitrate = int(
-            (target_bytes * 8) / duration
-        )
-
-        video_bitrate = total_bitrate - audio_bitrate
-
-        video_bitrate = max(
-            80_000,
-            video_bitrate
-        )
-
-        video_bitrate = min(
-            2_000_000,
-            video_bitrate
-        )
-
-        video_kbps = max(
-            80,
-            video_bitrate // 1000
-        )
-
-        audio_kbps = 48
-
-        if video_kbps >= 900:
-            scale_width = 854
-        elif video_kbps >= 500:
-            scale_width = 640
-        elif video_kbps >= 250:
-            scale_width = 480
-        else:
-            scale_width = 360
-
-        output_file = os.path.join(
-            temp_dir,
-            "compressed_video.mp4"
-        )
-
-        # --------------------------------------------------------
-        # المحاولة الأولى
-        # --------------------------------------------------------
-        success = await run_ffmpeg(
-            media_file,
-            output_file,
-            video_kbps,
-            audio_kbps,
-            scale_width,
-        )
-
-        if success:
-            size = os.path.getsize(output_file)
-
-            print()
-            print("===== COMPRESSION RESULT =====")
-            print(f"New size: {size / 1024 / 1024:.2f} MB")
-            print("==============================")
-
-            if size <= SAFE_BYTES:
-                print("✅ First compression successful.")
-                return output_file
-
-        # --------------------------------------------------------
-        # محاولات إضافية
-        # --------------------------------------------------------
-        attempts = [
-            {
-                "name": "SECOND",
-                "factor": 0.78,
-                "audio": 40,
-                "scale": 640,
-            },
-            {
-                "name": "THIRD",
-                "factor": 0.62,
-                "audio": 32,
-                "scale": 480,
-            },
-            {
-                "name": "FINAL",
-                "factor": 0.48,
-                "audio": 24,
-                "scale": 360,
-            },
-        ]
-
-        previous_file = output_file
-
-        for index, attempt in enumerate(attempts, start=2):
-
-            emergency_file = os.path.join(
-                temp_dir,
-                f"compressed_video_attempt_{index}.mp4"
-            )
-
-            attempt_video_kbps = max(
-                60,
-                int(video_kbps * attempt["factor"])
-            )
-
-            print()
-            print(f"===== {attempt['name']} COMPRESSION =====")
-            print(f"Video bitrate: {attempt_video_kbps}k")
-            print(f"Audio bitrate: {attempt['audio']}k")
-            print(f"Resolution: {attempt['scale']}px")
-            print("================================")
-
-            success = await run_ffmpeg(
-                previous_file,
-                emergency_file,
-                attempt_video_kbps,
-                attempt["audio"],
-                attempt["scale"],
-            )
-
-            if not success:
-                continue
-
-            current_size = os.path.getsize(emergency_file)
-
-            print()
-            print(f"===== ATTEMPT {index} RESULT =====")
-            print(
-                f"Size: "
-                f"{current_size / 1024 / 1024:.2f} MB"
-            )
-            print("================================")
-
-            if current_size <= SAFE_BYTES:
-                print(
-                    f"✅ Compression attempt {index} "
-                    f"successful."
-                )
-                return emergency_file
-
-            previous_file = emergency_file
-
-        # --------------------------------------------------------
-        # محاولة أخيرة ديناميكية حسب الحجم الفعلي
-        # --------------------------------------------------------
-        if os.path.isfile(previous_file):
-
-            current_size = os.path.getsize(previous_file)
-
-            print()
-            print("===== DYNAMIC FINAL COMPRESSION =====")
-            print(
-                f"Current size: "
-                f"{current_size / 1024 / 1024:.2f} MB"
-            )
-
-            ratio = SAFE_BYTES / current_size
-
-            final_video_kbps = max(
-                50,
-                int(video_kbps * ratio * 0.85)
-            )
-
-            final_file = os.path.join(
-                temp_dir,
-                "compressed_video_final.mp4"
-            )
-
-            success = await run_ffmpeg(
-                previous_file,
-                final_file,
-                final_video_kbps,
-                24,
-                320,
-                "faster",
-            )
-
-            if success and os.path.isfile(final_file):
-
-                final_size = os.path.getsize(final_file)
-
-                print()
-                print("===== FINAL COMPRESSION RESULT =====")
-                print(
-                    f"Final size: "
-                    f"{final_size / 1024 / 1024:.2f} MB"
-                )
-                print("====================================")
-
-                if final_size <= SAFE_BYTES:
-                    print("✅ Final compression successful.")
-                    return final_file
-
-        # --------------------------------------------------------
-        # فشل كامل
-        # --------------------------------------------------------
-        print()
-        print("===== COMPRESSION FAILED =====")
-        print(
-            f"❌ Could not produce a file below "
-            f"{SAFE_MB} MB."
-        )
-        print(
-            "❌ Original large file will NOT be returned."
-        )
-        print("==============================")
-
-        return None
-
-    except asyncio.TimeoutError:
-        print()
-        print("===== COMPRESSION TIMEOUT =====")
-        print("❌ FFmpeg compression timed out.")
-        print("===============================")
-        return None
-
-    except Exception as e:
-        print()
-        print("===== COMPRESSION ERROR =====")
-        print(repr(e))
-        print("=============================")
-        return None
 
 
 async def download_with_fallback(
@@ -3533,84 +3051,6 @@ async def download_with_fallback(
 # ============================================================
 
 
-# ============================================================
-# قائمة اختيار نسبة ضغط الفيديو بعد معرفة حجمه
-# ============================================================
-
-async def show_compression_menu(
-    query,
-    language,
-    file_size_mb
-):
-    compression_keyboard = [
-
-        [
-            InlineKeyboardButton(
-                "🟢 ضغط خفيف 10%",
-                callback_data="compress_10"
-            ),
-            InlineKeyboardButton(
-                "🟡 ضغط متوسط 20%",
-                callback_data="compress_20"
-            ),
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🟠 ضغط قوي 30%",
-                callback_data="compress_30"
-            ),
-            InlineKeyboardButton(
-                "🔴 ضغط أقوى 40%",
-                callback_data="compress_40"
-            ),
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🔴 ضغط قوي جدًا 50%",
-                callback_data="compress_50"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "❌ إلغاء",
-                callback_data="video_menu"
-            )
-        ],
-    ]
-
-    if language == "en":
-        message = (
-            f"📦 Video size: {file_size_mb:.2f} MB\n\n"
-            "🗜️ Choose the compression level:\n\n"
-            "🟢 10% — Light compression\n"
-            "🟡 20% — Medium compression\n"
-            "🟠 30% — Strong compression\n"
-            "🔴 40% — Stronger compression\n"
-            "🔴 50% — Very strong compression\n\n"
-            "⚙️ The selected compression will be applied next."
-        )
-    else:
-        message = (
-            f"📦 حجم الفيديو: {file_size_mb:.2f} MB\n\n"
-            "🗜️ اختر نسبة ضغط الفيديو:\n\n"
-            "🟢 10% — ضغط خفيف\n"
-            "🟡 20% — ضغط متوسط\n"
-            "🟠 30% — ضغط قوي\n"
-            "🔴 40% — ضغط أقوى\n"
-            "🔴 50% — ضغط قوي جدًا\n\n"
-            "⚙️ بعد اختيار النسبة سيبدأ ضغط الفيديو."
-        )
-
-    await query.edit_message_text(
-        message,
-        reply_markup=InlineKeyboardMarkup(
-            compression_keyboard
-        )
-    )
-
 
 async def download_media(
     update: Update,
@@ -3652,262 +3092,15 @@ async def download_media(
     choice = query.data
 
     # --------------------------------------------------------
-    # اختيار نسبة ضغط الفيديو
     # --------------------------------------------------------
 
-    if choice == "video_compress":
 
-        compression_keyboard = [
 
-            [
-                InlineKeyboardButton(
-                    "🟢 ضغط خفيف 10%",
-                    callback_data="compress_10"
-                ),
-                InlineKeyboardButton(
-                    "🟡 ضغط متوسط 20%",
-                    callback_data="compress_20"
-                ),
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "🟠 ضغط قوي 30%",
-                    callback_data="compress_30"
-                ),
-                InlineKeyboardButton(
-                    "🔴 ضغط أقوى 40%",
-                    callback_data="compress_40"
-                ),
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "🔴 ضغط قوي جدًا 50%",
-                    callback_data="compress_50"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "🔙 رجوع",
-                    callback_data="video_menu"
-                )
-            ],
-        ]
-
-        await query.edit_message_text(
-            "🗜️ اختر نسبة ضغط الفيديو:",
-            reply_markup=InlineKeyboardMarkup(
-                compression_keyboard
-            )
-        )
-
-        return
 
     # --------------------------------------------------------
-    # اختيار نسبة الضغط
     # --------------------------------------------------------
 
-    # --------------------------------------------------------
-    # اختيار نسبة الضغط
-    # --------------------------------------------------------
 
-    if choice in (
-        "compress_10",
-        "compress_20",
-        "compress_30",
-        "compress_40",
-        "compress_50",
-    ):
-
-        compression_percent = int(
-            choice.replace("compress_", "")
-        )
-
-        media_file = context.user_data.get(
-            "compression_file"
-        )
-
-        temp_dir = context.user_data.get(
-            "compression_temp_dir"
-        )
-
-        quality_name = context.user_data.get(
-            "compression_quality",
-            "Maximum available quality"
-        )
-
-        if not media_file or not os.path.isfile(media_file):
-
-            await query.edit_message_text(
-                TEXTS[language]["file_error"]
-            )
-
-            return
-
-        if not temp_dir or not os.path.isdir(temp_dir):
-
-            temp_dir = os.path.dirname(media_file)
-
-        context.user_data["compression_percent"] = (
-            compression_percent
-        )
-
-        await query.edit_message_text(
-            f"🗜️ تم اختيار ضغط بنسبة {compression_percent}%\n\n"
-            "⚙️ جاري ضغط الفيديو الآن...\n"
-            "⏳ يرجى الانتظار حتى انتهاء المعالجة."
-        )
-
-        print()
-        print("===== USER SELECTED COMPRESSION =====")
-        print(f"Compression: {compression_percent}%")
-        print(f"Input file: {media_file}")
-        print("======================================")
-        print()
-
-        media_file = await compress_video_if_needed(
-            media_file,
-            temp_dir,
-            query=query,
-            language=language,
-            compression_percent=compression_percent,
-        )
-
-        if not media_file or not os.path.isfile(media_file):
-
-            await query.edit_message_text(
-                TEXTS[language]["file_error"]
-            )
-
-            return
-
-        final_size = os.path.getsize(media_file)
-
-        print()
-        print("===== COMPRESSED FILE READY =====")
-        print(f"File: {media_file}")
-        print(
-            f"Size: "
-            f"{final_size / 1024 / 1024:.2f} MB"
-        )
-        print("=================================")
-        print()
-
-        try:
-
-            await query.edit_message_text(
-                TEXTS[language]["uploading"]
-            )
-
-        except Exception as upload_error:
-
-            print("⚠️ Could not update upload message:")
-            print(repr(upload_error))
-
-        try:
-
-            with open(
-                media_file,
-                "rb"
-            ) as video:
-
-                await context.bot.send_video(
-
-                    chat_id=update.effective_chat.id,
-
-                    video=video,
-
-                    caption=(
-                        TEXTS[language]["video_done"]
-                        .format(
-                            quality=quality_name,
-                            username=(
-                                f"@{user.username}"
-                                if user.username
-                                else (
-                                    user.first_name
-                                    or "صديقي"
-                                )
-                            )
-                        )
-                    ),
-
-                    supports_streaming=True,
-
-                    read_timeout=600,
-                    write_timeout=600,
-                    connect_timeout=60,
-                    pool_timeout=60,
-                )
-
-        except Exception as send_error:
-
-            print()
-            print("===== COMPRESSED VIDEO SEND ERROR =====")
-            print(repr(send_error))
-            print("========================================")
-            print()
-
-            try:
-                await query.edit_message_text(
-                    TEXTS[language]["general_error"]
-                )
-            except Exception:
-                pass
-
-            return
-
-        # ----------------------------------------------------
-        # حفظ عملية التحميل
-        # ----------------------------------------------------
-
-        save_download(
-            user=user,
-            url=url,
-            website=detect_website(url),
-            media_type="video",
-            quality=quality_name,
-        )
-
-        # ----------------------------------------------------
-        # تنظيف بيانات الضغط والملفات المؤقتة
-        # ----------------------------------------------------
-
-        context.user_data.pop(
-            "compression_file",
-            None
-        )
-
-        context.user_data.pop(
-            "compression_temp_dir",
-            None
-        )
-
-        context.user_data.pop(
-            "compression_quality",
-            None
-        )
-
-        context.user_data.pop(
-            "compression_percent",
-            None
-        )
-
-        try:
-            await query.delete_message()
-        except Exception:
-            pass
-
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
-
-        print("✅ Compressed video sent and temp files cleaned.")
-
-        return
 
     # --------------------------------------------------------
     # القوائم
@@ -4077,7 +3270,7 @@ async def download_media(
     attempt_started_at = time.monotonic()
 
     # Always initialize before entering try: finally must be safe on every path.
-    keep_for_compression = False
+
 
     # تتبع آخر خطأ في مسار التحميل
     last_error_stage = None
@@ -4558,11 +3751,10 @@ async def download_media(
             return
 
         # ----------------------------------------------------
-        # الصوت يتم إرساله مباشرة
         # ----------------------------------------------------
-
+        # إرسال الصوت مباشرة بدون ضغط
+        # ----------------------------------------------------
         if is_audio:
-
             await query.edit_message_text(
                 TEXTS[language]["uploading"]
             )
@@ -4570,15 +3762,16 @@ async def download_media(
             print()
             print("===== FINAL AUDIO FILE =====")
             print(f"File: {media_file}")
+
             if os.path.isfile(media_file):
                 final_size = os.path.getsize(media_file)
                 print(
                     f"Audio size: "
                     f"{final_size / 1024 / 1024:.2f} MB"
                 )
+
             print("============================")
             print()
-
 
             with open(
                 media_file,
@@ -4586,11 +3779,8 @@ async def download_media(
             ) as audio:
 
                 await context.bot.send_audio(
-
                     chat_id=update.effective_chat.id,
-
                     audio=audio,
-
                     caption=(
                         TEXTS[language]["audio_done"]
                         .format(
@@ -4605,25 +3795,20 @@ async def download_media(
                             )
                         )
                     ),
-
                     read_timeout=600,
                     write_timeout=600,
                     connect_timeout=60,
                     pool_timeout=60,
                 )
 
+        # ----------------------------------------------------
+        # إرسال الفيديو مباشرة بدون ضغط أو تخفيض جودة
+        # ----------------------------------------------------
         else:
-
-            # ----------------------------------------------------
-            # معرفة حجم الفيديو قبل الضغط
-            # ----------------------------------------------------
-
             if not os.path.isfile(media_file):
-
                 await query.edit_message_text(
                     TEXTS[language]["file_error"]
                 )
-
                 return
 
             video_size_bytes = os.path.getsize(
@@ -4646,82 +3831,44 @@ async def download_media(
             print("=======================")
             print()
 
-            # ----------------------------------------------------
-            # إذا كان الفيديو ضمن الحد، نرسله مباشرة
-            # ----------------------------------------------------
-
-            if video_size_bytes <= MAX_TELEGRAM_VIDEO_BYTES:
-
+            if video_size_bytes > MAX_TELEGRAM_VIDEO_BYTES:
                 await query.edit_message_text(
-                    TEXTS[language]["uploading"]
+                    TEXTS[language]["file_error"]
                 )
-
-                with open(
-                    media_file,
-                    "rb"
-                ) as video:
-
-                    await context.bot.send_video(
-                        chat_id=update.effective_chat.id,
-                        video=video,
-                        caption=(
-                            TEXTS[language]["video_done"]
-                            .format(
-                                quality=quality_name,
-                                username=(
-                                    f"@{user.username}"
-                                    if user.username
-                                    else (
-                                        user.first_name
-                                        or "صديقي"
-                                    )
-                                )
-                            )
-                        ),
-                        read_timeout=600,
-                        write_timeout=600,
-                        connect_timeout=60,
-                        pool_timeout=60,
-                    )
-
-                save_download(user, url, website, "video", quality_name)
-                try:
-                    await query.delete_message()
-                except Exception:
-                    pass
                 return
 
-            # ----------------------------------------------------
-            # الفيديو أكبر من الحد
-            # لا نضغط تلقائيًا
-            # نعرض الحجم ونطلب من المستخدم اختيار النسبة
-            # ----------------------------------------------------
-
-            context.user_data["compression_file"] = (
-                media_file
+            await query.edit_message_text(
+                TEXTS[language]["uploading"]
             )
 
-            context.user_data["compression_temp_dir"] = (
-                temp_dir
-            )
+            with open(
+                media_file,
+                "rb"
+            ) as video:
 
-            context.user_data["compression_quality"] = (
-                quality_name
-            )
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=video,
+                    caption=(
+                        TEXTS[language]["video_done"]
+                        .format(
+                            quality=quality_name,
+                            username=(
+                                f"@{user.username}"
+                                if user.username
+                                else (
+                                    user.first_name
+                                    or "صديقي"
+                                )
+                            )
+                        )
+                    ),
+                    read_timeout=600,
+                    write_timeout=600,
+                    connect_timeout=60,
+                    pool_timeout=60,
+                )
 
-            # إبقاء مجلد التحميل موجودًا حتى يختار المستخدم
-            # نسبة الضغط ويكتمل الضغط في callback لاحق.
-            keep_for_compression = True
-
-            await show_compression_menu(
-                query,
-                language,
-                video_size_mb
-            )
-
-            return
-
-        # ----------------------------------------------------
         # حفظ التحميل
         # ----------------------------------------------------
 
@@ -4846,13 +3993,11 @@ async def download_media(
             pass
 
     finally:
-        # لا تحذف الملفات إذا كان المستخدم سيختار
-        # نسبة الضغط من قائمة الضغط.
-        if not keep_for_compression:
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True
-            )
+                shutil.rmtree(
+            temp_dir,
+            ignore_errors=True
+        )
+
 
 
 # ============================================================
@@ -7472,11 +6617,9 @@ async def cancel_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    # A deferred compression owns a temporary directory until the user decides.
-    temp_dir = context.user_data.get("compression_temp_dir")
+
     context.user_data.clear()
-    if temp_dir and os.path.isdir(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
+
 
     await update.message.reply_text("✅ تم إلغاء العملية.")
 
@@ -7983,7 +7126,7 @@ def main():
     app.add_handler(
         CallbackQueryHandler(
             download_media,
-            pattern=r"^(video_|audio_|compress_|main_menu)"
+            pattern=r"^(video_|audio_|main_menu)"
         )
     )
 
