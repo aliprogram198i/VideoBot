@@ -9,6 +9,9 @@ import re
 import ipaddress
 import logging
 import socket
+import json
+import time
+import uuid
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -777,6 +780,620 @@ def add_column_if_missing(
         )
 
 
+# ============================================================
+# AI ERROR REPORTING
+# ============================================================
+
+def sanitize_error_for_storage(value, max_length=4000):
+    """Remove secrets and sensitive URLs from diagnostic text."""
+    if value is None:
+        return ""
+
+    text = str(value)
+
+    # --------------------------------------------------------
+    # Authorization: Bearer <secret>
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"(Authorization\s*:\s*Bearer\s+)[^\s,;]+",
+        r"\1[REDACTED]",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(
+        r"(Bearer\s+)[^\s,;]+",
+        r"\1[REDACTED]",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # --------------------------------------------------------
+    # KEY=value / KEY:value / KEY value
+    # --------------------------------------------------------
+
+    secret_keys = (
+        "BOT_TOKEN",
+        "GEMINI_API_KEY",
+        "YOINKU_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
+        "API_KEY",
+        "AUTHORIZATION",
+        "X-API-KEY",
+        "X_API_KEY",
+    )
+
+    for key in secret_keys:
+        text = re.sub(
+            rf"({re.escape(key)}\s*[=:]\s*)[^\s,;]+",
+            r"\1[REDACTED]",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        text = re.sub(
+            rf"({re.escape(key)}\s+)[^\s,;]+",
+            r"\1[REDACTED]",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    # --------------------------------------------------------
+    # Authorization header without Bearer
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"(Authorization\s*:\s*)[^\s,;]+",
+        r"\1[REDACTED]",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # --------------------------------------------------------
+    # JSON secrets
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r'("(?:api[_-]?key|token|access[_-]?token|secret|authorization)"\s*:\s*")[^"]*(")',
+        r"\1[REDACTED]\2",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # --------------------------------------------------------
+    # Sensitive URL query parameters
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"((?:[?&]|\b)(?:api[_-]?key|token|access[_-]?token|secret|key)\s*=)[^&\s]+",
+        r"\1[REDACTED]",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # --------------------------------------------------------
+    # Existing URL redaction helper
+    # --------------------------------------------------------
+
+    try:
+        text = redact_url(text)
+    except Exception:
+        pass
+
+    return text[:max_length]
+
+
+def _sanitize_error_value(value, max_length=4000):
+    """Sanitize one diagnostic value before storing or sending to Gemini."""
+    if value is None:
+        return None
+
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            value = json.dumps(
+                value,
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:
+            value = str(value)
+    else:
+        value = str(value)
+
+    return sanitize_error_for_storage(
+        value,
+        max_length=max_length,
+    )
+
+
+def _sanitize_error_details(details):
+    """Recursively sanitize diagnostic details."""
+    if details is None:
+        return {}
+
+    if isinstance(details, dict):
+        result = {}
+        for key, value in details.items():
+            safe_key = str(key)[:100]
+
+            if isinstance(value, dict):
+                result[safe_key] = _sanitize_error_details(value)
+
+            elif isinstance(value, (list, tuple)):
+                result[safe_key] = [
+                    _sanitize_error_details(item)
+                    if isinstance(item, dict)
+                    else _sanitize_error_value(item, 2000)
+                    for item in value[:50]
+                ]
+
+            else:
+                result[safe_key] = _sanitize_error_value(
+                    value,
+                    4000,
+                )
+
+        return result
+
+    if isinstance(details, (list, tuple)):
+        return [
+            _sanitize_error_details(item)
+            if isinstance(item, dict)
+            else _sanitize_error_value(item, 2000)
+            for item in details[:50]
+        ]
+
+    return _sanitize_error_value(details, 4000)
+
+
+def _details_to_json(details):
+    """Convert sanitized diagnostics to bounded JSON."""
+    if not details:
+        return None
+
+    try:
+        safe_details = _sanitize_error_details(details)
+
+        return json.dumps(
+            safe_details,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )[:12000]
+
+    except Exception:
+        return None
+
+
+def log_download_error(
+    user=None,
+    user_id=None,
+    username=None,
+    url=None,
+    website=None,
+    media_type=None,
+    stage=None,
+    error_type=None,
+    error_message=None,
+    traceback_text=None,
+    yoinku_used=False,
+    attempt_id=None,
+    attempt_number=None,
+    duration_ms=None,
+    return_code=None,
+    exception_type=None,
+    http_status=None,
+    response_type=None,
+    bytes_downloaded=None,
+    candidate_index=None,
+    candidate_count=None,
+    details=None,
+):
+    """Store a sanitized technical download error."""
+
+    try:
+        if user is not None:
+            user_id = getattr(user, "id", user_id)
+            username = getattr(user, "username", username)
+
+        if not attempt_id:
+            attempt_id = uuid.uuid4().hex[:16]
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            INSERT INTO error_logs (
+                user_id,
+                username,
+                url,
+                website,
+                media_type,
+                stage,
+                error_type,
+                error_message,
+                traceback,
+                yoinku_used,
+                attempt_id,
+                attempt_number,
+                duration_ms,
+                return_code,
+                exception_type,
+                http_status,
+                response_type,
+                bytes_downloaded,
+                candidate_index,
+                candidate_count,
+                details_json,
+                created_at
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                user_id,
+                username,
+                redact_url(url) if url else "",
+                website or "",
+                media_type or "",
+                stage or "unknown",
+                error_type or "UnknownError",
+
+                _sanitize_error_value(
+                    error_message,
+                    4000,
+                ),
+
+                _sanitize_error_value(
+                    traceback_text,
+                    8000,
+                ),
+
+                1 if yoinku_used else 0,
+
+                attempt_id,
+                attempt_number,
+                duration_ms,
+                return_code,
+                exception_type,
+                http_status,
+                _sanitize_error_value(
+                    response_type,
+                    300,
+                ),
+                bytes_downloaded,
+                candidate_index,
+                candidate_count,
+
+                _details_to_json(details),
+
+                datetime.now().isoformat(),
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+    except Exception as exc:
+        logger.exception(
+            "Failed to save download error: %s",
+            type(exc).__name__,
+        )
+
+
+def get_ai_errors_data(days=30):
+    """Return aggregated error information for Gemini.
+
+    Error records are grouped by attempt_id when available so that
+    multiple failed stages of one download are not counted as
+    independent incidents.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+
+    cutoff = datetime.fromtimestamp(
+        datetime.now().timestamp() - days * 86400
+    ).isoformat()
+
+    # --------------------------------------------------------
+    # إجمالي سجلات الأخطاء
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM error_logs
+        WHERE created_at >= ?
+        """,
+        (cutoff,),
+    )
+    total_error_records = cur.fetchone()["total"] or 0
+
+    # --------------------------------------------------------
+    # إجمالي محاولات التحميل الفعلية
+    #
+    # كل attempt_id يمثل محاولة تحميل واحدة.
+    # السجلات القديمة التي لا تحتوي attempt_id تُحسب كسجلات
+    # مستقلة حتى لا نفقد بياناتها.
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT
+            COUNT(
+                DISTINCT CASE
+                    WHEN attempt_id IS NOT NULL
+                         AND attempt_id != ''
+                    THEN attempt_id
+                END
+            ) AS grouped_attempts,
+            SUM(
+                CASE
+                    WHEN attempt_id IS NULL
+                         OR attempt_id = ''
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS legacy_records
+        FROM error_logs
+        WHERE created_at >= ?
+        """,
+        (cutoff,),
+    )
+
+    attempt_row = cur.fetchone()
+
+    grouped_attempts = (
+        attempt_row["grouped_attempts"] or 0
+    )
+    legacy_records = (
+        attempt_row["legacy_records"] or 0
+    )
+
+    total_attempts = (
+        grouped_attempts + legacy_records
+    )
+
+    # --------------------------------------------------------
+    # المواقع / المنصات الأكثر تسببًا بالأخطاء
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT website, COUNT(*) AS count
+        FROM error_logs
+        WHERE created_at >= ?
+        GROUP BY website
+        ORDER BY count DESC
+        LIMIT 10
+        """,
+        (cutoff,),
+    )
+
+    websites = [
+        {
+            "website": row["website"] or "unknown",
+            "count": row["count"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
+    # --------------------------------------------------------
+    # المراحل الأكثر فشلًا
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT stage, COUNT(*) AS count
+        FROM error_logs
+        WHERE created_at >= ?
+        GROUP BY stage
+        ORDER BY count DESC
+        LIMIT 10
+        """,
+        (cutoff,),
+    )
+
+    stages = [
+        {
+            "stage": row["stage"] or "unknown",
+            "count": row["count"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
+    # --------------------------------------------------------
+    # أنواع الأخطاء الأكثر تكرارًا
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT error_type, COUNT(*) AS count
+        FROM error_logs
+        WHERE created_at >= ?
+        GROUP BY error_type
+        ORDER BY count DESC
+        LIMIT 10
+        """,
+        (cutoff,),
+    )
+
+    error_types = [
+        {
+            "error_type": row["error_type"] or "UnknownError",
+            "count": row["count"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
+    # --------------------------------------------------------
+    # المحاولات التي تحتوي على أكثر من سجل خطأ
+    #
+    # هذا هو الجزء المهم لتحليل Gemini:
+    # محاولة واحدة قد تحتوي yt-dlp + fallback + yoinku
+    # + download، لكنها تبقى حادثة واحدة.
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT
+            attempt_id,
+            website,
+            media_type,
+            MIN(created_at) AS started_at,
+            MAX(created_at) AS last_error_at,
+            COUNT(*) AS error_records,
+            GROUP_CONCAT(
+                DISTINCT stage
+            ) AS failed_stages,
+            GROUP_CONCAT(
+                DISTINCT error_type
+            ) AS error_types,
+            MAX(yoinku_used) AS yoinku_used
+        FROM error_logs
+        WHERE created_at >= ?
+          AND attempt_id IS NOT NULL
+          AND attempt_id != ''
+        GROUP BY attempt_id
+        ORDER BY last_error_at DESC
+        LIMIT 50
+        """,
+        (cutoff,),
+    )
+
+    attempt_summaries = []
+
+    for row in cur.fetchall():
+        failed_stages = [
+            item.strip()
+            for item in (
+                row["failed_stages"] or ""
+            ).split(",")
+            if item.strip()
+        ]
+
+        attempt_error_types = [
+            item.strip()
+            for item in (
+                row["error_types"] or ""
+            ).split(",")
+            if item.strip()
+        ]
+
+        attempt_summaries.append(
+            {
+                "attempt_id": row["attempt_id"],
+                "website": row["website"] or "unknown",
+                "media_type": row["media_type"] or "",
+                "started_at": row["started_at"],
+                "last_error_at": row["last_error_at"],
+                "error_records": row["error_records"] or 0,
+                "failed_stages": failed_stages,
+                "error_types": attempt_error_types,
+                "yoinku_used": bool(
+                    row["yoinku_used"]
+                ),
+            }
+        )
+
+    attempts_with_multiple_errors = sum(
+        1
+        for attempt in attempt_summaries
+        if attempt["error_records"] > 1
+    )
+
+    # --------------------------------------------------------
+    # آخر سجلات الأخطاء للتفاصيل
+    # --------------------------------------------------------
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            attempt_id,
+            attempt_number,
+            website,
+            media_type,
+            stage,
+            error_type,
+            error_message,
+            yoinku_used,
+            duration_ms,
+            return_code,
+            exception_type,
+            http_status,
+            response_type,
+            bytes_downloaded,
+            candidate_index,
+            candidate_count,
+            created_at
+        FROM error_logs
+        WHERE created_at >= ?
+        ORDER BY id DESC
+        LIMIT 30
+        """,
+        (cutoff,),
+    )
+
+    recent_errors = []
+
+    for row in cur.fetchall():
+        recent_errors.append(
+            {
+                "id": row["id"],
+                "attempt_id": row["attempt_id"] or "",
+                "attempt_number": row["attempt_number"],
+                "website": row["website"] or "",
+                "media_type": row["media_type"] or "",
+                "stage": row["stage"] or "",
+                "error_type": row["error_type"] or "",
+                "error_message": sanitize_error_for_storage(
+                    row["error_message"],
+                    1200,
+                ),
+                "yoinku_used": bool(
+                    row["yoinku_used"]
+                ),
+                "duration_ms": row["duration_ms"],
+                "return_code": row["return_code"],
+                "exception_type": row["exception_type"] or "",
+                "http_status": row["http_status"],
+                "response_type": row["response_type"] or "",
+                "bytes_downloaded": row["bytes_downloaded"],
+                "candidate_index": row["candidate_index"],
+                "candidate_count": row["candidate_count"],
+                "created_at": row["created_at"],
+            }
+        )
+
+    conn.close()
+
+    return {
+        "period_days": days,
+
+        # عدد السجلات وليس عدد الحوادث.
+        "total_error_records": total_error_records,
+
+        # عدد محاولات التحميل الفعلية قدر الإمكان.
+        "total_attempts": total_attempts,
+
+        # المحاولات التي نتج عنها أكثر من سجل خطأ.
+        "attempts_with_multiple_errors": (
+            attempts_with_multiple_errors
+        ),
+
+        "websites": websites,
+        "stages": stages,
+        "error_types": error_types,
+        "attempt_summaries": attempt_summaries,
+        "recent_errors": recent_errors,
+    }
+
+
 def init_db():
 
     conn = get_db()
@@ -915,6 +1532,88 @@ def init_db():
             quality TEXT,
             created_at TEXT
         )
+    """)
+
+    # --------------------------------------------------------
+    # جدول أخطاء التحميل
+    # --------------------------------------------------------
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS error_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            url TEXT,
+            website TEXT,
+            media_type TEXT,
+            stage TEXT,
+            error_type TEXT,
+            error_message TEXT,
+            traceback TEXT,
+            yoinku_used INTEGER DEFAULT 0,
+            attempt_id TEXT,
+            attempt_number INTEGER,
+            duration_ms INTEGER,
+            return_code INTEGER,
+            exception_type TEXT,
+            http_status INTEGER,
+            response_type TEXT,
+            bytes_downloaded INTEGER,
+            candidate_index INTEGER,
+            candidate_count INTEGER,
+            details_json TEXT,
+            created_at TEXT
+        )
+    """)
+
+    # --------------------------------------------------------
+    # Migration للأعمدة الجديدة في قواعد البيانات القديمة
+    # --------------------------------------------------------
+
+    error_log_columns = {
+        "attempt_id": "TEXT",
+        "attempt_number": "INTEGER",
+        "duration_ms": "INTEGER",
+        "return_code": "INTEGER",
+        "exception_type": "TEXT",
+        "http_status": "INTEGER",
+        "response_type": "TEXT",
+        "bytes_downloaded": "INTEGER",
+        "candidate_index": "INTEGER",
+        "candidate_count": "INTEGER",
+        "details_json": "TEXT",
+    }
+
+    cur.execute("PRAGMA table_info(error_logs)")
+    existing_error_columns = {
+        row["name"]
+        for row in cur.fetchall()
+    }
+
+    for column_name, column_type in error_log_columns.items():
+        if column_name not in existing_error_columns:
+            cur.execute(
+                f"ALTER TABLE error_logs ADD COLUMN {column_name} {column_type}"
+            )
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_error_logs_attempt_id
+        ON error_logs(attempt_id)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_error_logs_created_at
+        ON error_logs(created_at)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_error_logs_stage
+        ON error_logs(stage)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_error_logs_website
+        ON error_logs(website)
     """)
 
     # --------------------------------------------------------
@@ -1789,64 +2488,264 @@ async def extract_direct_media_urls(page_url):
 # Yoinku API - fallback
 # ============================================================
 
-async def download_with_yoinku(url, temp_dir, is_audio=False):
-    """Use Yoinku as a bounded fallback without logging credentials or signed URLs."""
+async def download_with_yoinku(
+    url,
+    temp_dir,
+    is_audio=False,
+    attempt_id=None,
+    attempt_number=None,
+):
+    """Use Yoinku as a bounded fallback with sanitized diagnostics."""
+
     api_key = os.getenv("YOINKU_API_KEY")
+
+    started_at = time.monotonic()
+
+    diagnostics = {
+        "attempt_id": attempt_id,
+        "attempt_number": attempt_number,
+        "status": "not_started",
+        "duration_ms": None,
+        "internal_attempts": 0,
+        "exception_type": None,
+        "error_message": None,
+        "http_status": None,
+        "response_type": None,
+        "bytes_downloaded": None,
+    }
+
     if not api_key:
+        diagnostics.update({
+            "status": "not_configured",
+            "exception_type": "MissingAPIKey",
+            "error_message": "YOINKU_API_KEY is not configured.",
+            "duration_ms": int(
+                (time.monotonic() - started_at) * 1000
+            ),
+        })
+
         logger.warning("YOINKU_API_KEY is not configured")
-        return None
+        return None, diagnostics
 
     import json
     import urllib.parse
 
-    limit = MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES
-    if shutil.disk_usage(temp_dir).free < min(limit, MIN_FREE_SPACE_BYTES):
-        logger.warning("Insufficient free space for Yoinku download")
-        return None
-    api_url = "https://yoinku.com/api/v1/download?" + urllib.parse.urlencode({
-        "url": url,
-        "format": "a-320" if is_audio else "v-720",
-    })
-    output_file = os.path.join(temp_dir, "yoinku_download" + (".mp3" if is_audio else ".mp4"))
+    limit = (
+        MAX_AUDIO_DOWNLOAD_BYTES
+        if is_audio
+        else MAX_VIDEO_DOWNLOAD_BYTES
+    )
+
+    if shutil.disk_usage(temp_dir).free < min(
+        limit,
+        MIN_FREE_SPACE_BYTES,
+    ):
+        diagnostics.update({
+            "status": "insufficient_space",
+            "exception_type": "InsufficientFreeSpace",
+            "error_message": (
+                "Insufficient free space for Yoinku download."
+            ),
+            "duration_ms": int(
+                (time.monotonic() - started_at) * 1000
+            ),
+        })
+
+        logger.warning(
+            "Insufficient free space for Yoinku download"
+        )
+        return None, diagnostics
+
+    api_url = (
+        "https://yoinku.com/api/v1/download?"
+        + urllib.parse.urlencode({
+            "url": url,
+            "format": "a-320" if is_audio else "v-720",
+        })
+    )
+
+    output_file = os.path.join(
+        temp_dir,
+        "yoinku_download"
+        + (".mp3" if is_audio else ".mp4"),
+    )
 
     def fetch():
-        request = Request(api_url, headers={"x-api-key": api_key, "Accept": "application/json", "User-Agent": "VideoBot/1.0"})
-        with safe_urlopen(request, timeout=30, max_bytes=MAX_YOINKU_RESPONSE_BYTES, expected_content_types={"application/json"}) as response:
-            data = json.loads(read_limited(response, MAX_YOINKU_RESPONSE_BYTES).decode("utf-8"))
-        direct_url = data.get("url") if isinstance(data, dict) and data.get("ok") else None
+        request = Request(
+            api_url,
+            headers={
+                "x-api-key": api_key,
+                "Accept": "application/json",
+                "User-Agent": "VideoBot/1.0",
+            },
+        )
+
+        with safe_urlopen(
+            request,
+            timeout=30,
+            max_bytes=MAX_YOINKU_RESPONSE_BYTES,
+            expected_content_types={"application/json"},
+        ) as response:
+
+            diagnostics["http_status"] = getattr(
+                response,
+                "status",
+                None,
+            )
+
+            diagnostics["response_type"] = (
+                response.headers.get("Content-Type")
+                if getattr(response, "headers", None)
+                else None
+            )
+
+            response_bytes = read_limited(
+                response,
+                MAX_YOINKU_RESPONSE_BYTES,
+            )
+
+            data = json.loads(
+                response_bytes.decode("utf-8")
+            )
+
+        direct_url = (
+            data.get("url")
+            if isinstance(data, dict)
+            and data.get("ok")
+            else None
+        )
+
         if not direct_url:
-            raise ValueError("Yoinku response did not contain a download URL")
+            raise ValueError(
+                "Yoinku response did not contain a download URL"
+            )
+
         validate_public_http_url(direct_url)
-        request = Request(direct_url, headers={"User-Agent": "VideoBot/1.0"})
+
+        request = Request(
+            direct_url,
+            headers={
+                "User-Agent": "VideoBot/1.0"
+            },
+        )
+
         try:
-            with safe_urlopen(request, timeout=60, max_bytes=limit) as response, open(output_file, "wb") as output:
+            with safe_urlopen(
+                request,
+                timeout=60,
+                max_bytes=limit,
+            ) as response, open(
+                output_file,
+                "wb",
+            ) as output:
+
+                diagnostics["http_status"] = getattr(
+                    response,
+                    "status",
+                    None,
+                )
+
+                diagnostics["response_type"] = (
+                    response.headers.get("Content-Type")
+                    if getattr(response, "headers", None)
+                    else diagnostics["response_type"]
+                )
+
                 total = 0
-                while chunk := response.read(1024 * 1024):
+
+                while chunk := response.read(
+                    1024 * 1024
+                ):
                     total += len(chunk)
+
                     if total > limit:
-                        raise ValueError("Yoinku file exceeds configured size limit")
+                        raise ValueError(
+                            "Yoinku file exceeds configured size limit"
+                        )
+
                     output.write(chunk)
+
+                diagnostics["bytes_downloaded"] = total
+
         except Exception:
             try:
                 os.remove(output_file)
             except FileNotFoundError:
                 pass
+
             raise
-        if not os.path.isfile(output_file) or os.path.getsize(output_file) == 0:
-            raise ValueError("Yoinku returned an empty file")
+
+        if (
+            not os.path.isfile(output_file)
+            or os.path.getsize(output_file) == 0
+        ):
+            raise ValueError(
+                "Yoinku returned an empty file"
+            )
+
         return output_file
 
     for attempt in range(3):
+        diagnostics["internal_attempts"] = attempt + 1
+
         try:
-            return await asyncio.to_thread(fetch)
+            result = await asyncio.to_thread(fetch)
+
+            diagnostics.update({
+                "status": "success",
+                "duration_ms": int(
+                    (time.monotonic() - started_at) * 1000
+                ),
+            })
+
+            return result, diagnostics
+
         except (OSError, TimeoutError) as exc:
-            logger.warning("Yoinku temporary failure on attempt %d: %s", attempt + 1, type(exc).__name__)
+            diagnostics["exception_type"] = type(
+                exc
+            ).__name__
+
+            diagnostics["error_message"] = (
+                sanitize_error_for_storage(
+                    str(exc)
+                )
+            )
+
+            logger.warning(
+                "Yoinku temporary failure on attempt %d: %s",
+                attempt + 1,
+                type(exc).__name__,
+            )
+
             if attempt < 2:
                 await asyncio.sleep(2 ** attempt)
+
         except Exception as exc:
-            logger.warning("Yoinku fallback failed: %s", type(exc).__name__)
+            diagnostics["exception_type"] = type(
+                exc
+            ).__name__
+
+            diagnostics["error_message"] = (
+                sanitize_error_for_storage(
+                    str(exc)
+                )
+            )
+
+            logger.warning(
+                "Yoinku fallback failed: %s",
+                type(exc).__name__,
+            )
+
             break
-    return None
+
+    diagnostics.update({
+        "status": "failed",
+        "duration_ms": int(
+            (time.monotonic() - started_at) * 1000
+        ),
+    })
+
+    return None, diagnostics
 
 # ============================================================
 # ضغط الفيديو الكبير تلقائيًا
@@ -2332,39 +3231,301 @@ async def compress_video_if_needed(
         return None
 
 
-async def download_with_fallback(url, temp_dir, output_template, format_option, is_audio=False):
-    """Download a validated direct candidate and return yt-dlp's final path."""
-    candidates = await extract_direct_media_urls(url)
-    extensions = (".mp3", ".m4a", ".opus", ".aac", ".wav") if is_audio else (".mp4", ".mkv", ".webm", ".mov")
-    max_size = MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES
-    for direct_url in candidates:
+async def download_with_fallback(
+    url,
+    temp_dir,
+    output_template,
+    format_option,
+    is_audio=False,
+    attempt_id=None,
+    attempt_number=None,
+):
+    """
+    Download direct media candidates with detailed diagnostics.
+
+    Returns:
+        (final_path, stdout_text, stderr_text, diagnostics)
+    """
+
+    if not attempt_id:
+        attempt_id = uuid.uuid4().hex
+
+    started_at = time.monotonic()
+
+    diagnostics = {
+        "attempt_id": attempt_id,
+        "attempt_number": attempt_number,
+        "candidate_count": 0,
+        "candidates": [],
+        "total_duration_ms": None,
+    }
+
+    try:
+        candidates = await extract_direct_media_urls(url)
+    except Exception as exc:
+        diagnostics["total_duration_ms"] = int(
+            (time.monotonic() - started_at) * 1000
+        )
+
+        diagnostics["extraction_error"] = {
+            "exception_type": type(exc).__name__,
+            "error_message": sanitize_error_for_storage(str(exc)),
+        }
+
+        logger.warning(
+            "Direct media URL extraction failed: %s",
+            type(exc).__name__,
+        )
+
+        return None, None, None, diagnostics
+
+    if not candidates:
+        diagnostics["total_duration_ms"] = int(
+            (time.monotonic() - started_at) * 1000
+        )
+
+        diagnostics["extraction_error"] = {
+            "exception_type": "NoCandidates",
+            "error_message": "No direct media candidates were extracted.",
+        }
+
+        logger.warning(
+            "Direct fallback produced no candidates for %s",
+            redact_url(url),
+        )
+
+        return None, None, None, diagnostics
+
+    extensions = (
+        (".mp3", ".m4a", ".opus", ".aac", ".wav")
+        if is_audio
+        else
+        (".mp4", ".mkv", ".webm", ".mov")
+    )
+
+    max_size = (
+        MAX_AUDIO_DOWNLOAD_BYTES
+        if is_audio
+        else MAX_VIDEO_DOWNLOAD_BYTES
+    )
+
+    diagnostics["candidate_count"] = len(candidates)
+
+    last_stdout = None
+    last_stderr = None
+
+    for candidate_index, direct_url in enumerate(
+        candidates,
+        start=1,
+    ):
+        candidate_started_at = time.monotonic()
+
+        candidate_info = {
+            "candidate_index": candidate_index,
+            "candidate_count": len(candidates),
+            "status": "started",
+            "duration_ms": None,
+            "return_code": None,
+            "exception_type": None,
+            "error_message": None,
+            "bytes_downloaded": None,
+            "response_type": None,
+        }
+
+        diagnostics["candidates"].append(candidate_info)
+
         command = [
-            "python", "-m", "yt_dlp", "--no-playlist", "-f", format_option,
-            "--retries", "5", "--fragment-retries", "5", "--socket-timeout", "60",
-            "--concurrent-fragments", "2", "--max-filesize", str(max_size),
-            "--print", "after_move:filepath", "--no-warnings", "-o",
-            os.path.join(temp_dir, "fallback_%(id)s.%(ext)s"),
+            "python",
+            "-m",
+            "yt_dlp",
+            "--no-playlist",
+            "-f",
+            format_option,
+            "--retries",
+            "5",
+            "--fragment-retries",
+            "5",
+            "--socket-timeout",
+            "60",
+            "--concurrent-fragments",
+            "2",
+            "--max-filesize",
+            str(max_size),
+            "--print",
+            "after_move:filepath",
+            "--no-warnings",
+            "-o",
+            os.path.join(
+                temp_dir,
+                "fallback_%(id)s.%(ext)s",
+            ),
         ]
+
         if is_audio:
-            command.extend(["-x", "--audio-format", "mp3"])
+            command.extend(
+                [
+                    "-x",
+                    "--audio-format",
+                    "mp3",
+                ]
+            )
         else:
-            command.extend(["--merge-output-format", "mp4"])
+            command.extend(
+                [
+                    "--merge-output-format",
+                    "mp4",
+                ]
+            )
+
         command.append(direct_url)
+
         try:
-            process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            stdout, stderr = await communicate_with_cleanup(process, DOWNLOAD_TIMEOUT)
-            stdout_text = stdout.decode(errors="ignore")
-            stderr_text = stderr.decode(errors="ignore")
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await communicate_with_cleanup(
+                process,
+                DOWNLOAD_TIMEOUT,
+            )
+
+            stdout_text = stdout.decode(
+                errors="ignore"
+            )
+            stderr_text = stderr.decode(
+                errors="ignore"
+            )
+
+            last_stdout = stdout_text
+            last_stderr = stderr_text
+
+            candidate_info["return_code"] = process.returncode
+
             if process.returncode == 0:
-                final_path = final_output_from_yt_dlp(stdout_text, temp_dir, extensions)
+                final_path = final_output_from_yt_dlp(
+                    stdout_text,
+                    temp_dir,
+                    extensions,
+                )
+
                 if final_path:
-                    return final_path, stdout_text, stderr_text
-            logger.warning("Direct fallback failed for %s", redact_url(direct_url))
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+                    try:
+                        candidate_info["bytes_downloaded"] = (
+                            os.path.getsize(final_path)
+                        )
+                    except OSError:
+                        candidate_info["bytes_downloaded"] = None
+
+                    candidate_info["status"] = "success"
+
+                    candidate_info["duration_ms"] = int(
+                        (time.monotonic() - candidate_started_at)
+                        * 1000
+                    )
+
+                    diagnostics["total_duration_ms"] = int(
+                        (time.monotonic() - started_at)
+                        * 1000
+                    )
+
+                    return (
+                        final_path,
+                        stdout_text,
+                        stderr_text,
+                        diagnostics,
+                    )
+
+                candidate_info["status"] = "no_output_file"
+                candidate_info["error_message"] = (
+                    "yt-dlp exited successfully but no usable output file was found."
+                )
+
+            else:
+                candidate_info["status"] = "failed"
+                candidate_info["error_message"] = (
+                    sanitize_error_for_storage(
+                        stderr_text[-4000:]
+                        or stdout_text[-4000:]
+                        or (
+                            "yt-dlp exited with code "
+                            f"{process.returncode}"
+                        )
+                    )
+                )
+
+            candidate_info["duration_ms"] = int(
+                (time.monotonic() - candidate_started_at)
+                * 1000
+            )
+
+            logger.warning(
+                "Direct fallback candidate %d/%d failed for %s "
+                "(return_code=%s, duration_ms=%s)",
+                candidate_index,
+                len(candidates),
+                redact_url(direct_url),
+                process.returncode,
+                candidate_info["duration_ms"],
+            )
+
+        except (
+            asyncio.TimeoutError,
+            asyncio.CancelledError,
+        ):
+            candidate_info["status"] = "timeout"
+            candidate_info["exception_type"] = (
+                "TimeoutError"
+                if isinstance(
+                    sys.exc_info()[1],
+                    asyncio.TimeoutError,
+                )
+                else "CancelledError"
+            )
+
+            candidate_info["error_message"] = (
+                "Direct fallback candidate timed out."
+            )
+
+            candidate_info["duration_ms"] = int(
+                (time.monotonic() - candidate_started_at)
+                * 1000
+            )
+
             raise
+
         except Exception as exc:
-            logger.warning("Direct fallback error: %s", type(exc).__name__)
-    return None, None, None
+            candidate_info["status"] = "exception"
+            candidate_info["exception_type"] = type(exc).__name__
+            candidate_info["error_message"] = (
+                sanitize_error_for_storage(
+                    str(exc)
+                )
+            )
+
+            candidate_info["duration_ms"] = int(
+                (time.monotonic() - candidate_started_at)
+                * 1000
+            )
+
+            logger.warning(
+                "Direct fallback candidate %d/%d error: %s",
+                candidate_index,
+                len(candidates),
+                type(exc).__name__,
+            )
+
+    diagnostics["total_duration_ms"] = int(
+        (time.monotonic() - started_at) * 1000
+    )
+
+    return (
+        None,
+        last_stdout,
+        last_stderr,
+        diagnostics,
+    )
 
 
 # ============================================================
@@ -2907,8 +4068,22 @@ async def download_media(
     )
 
     temp_dir = tempfile.mkdtemp(prefix="videobot_")
+
+    # معرّف موحّد لمحاولة التحميل بالكامل.
+    # كل مراحل المحاولة (yt-dlp / fallback / Yoinku / final)
+    # يجب أن تستخدم نفس attempt_id حتى يستطيع Gemini تجميعها كحادثة واحدة.
+    attempt_id = uuid.uuid4().hex
+    attempt_number = 1
+    attempt_started_at = time.monotonic()
+
     # Always initialize before entering try: finally must be safe on every path.
     keep_for_compression = False
+
+    # تتبع آخر خطأ في مسار التحميل
+    last_error_stage = None
+    last_error_type = None
+    last_error_message = None
+    yoinku_attempted = False
 
     try:
 
@@ -3044,6 +4219,44 @@ async def download_media(
 
         if process.returncode != 0:
 
+            # تسجيل فشل yt-dlp لتحليله لاحقًا بواسطة Gemini
+            last_error_stage = "yt-dlp"
+            last_error_type = "yt_dlp_failed"
+            last_error_message = (
+                stderr_text[-4000:]
+                or stdout_text[-4000:]
+                or f"yt-dlp exited with code {process.returncode}"
+            )
+
+            log_download_error(
+                user_id=query.from_user.id if query.from_user else None,
+                username=query.from_user.username if query.from_user else None,
+                url=url,
+                website=website,
+                media_type="audio" if is_audio else "video",
+                stage=last_error_stage,
+                error_type=last_error_type,
+                error_message=last_error_message,
+                traceback_text=None,
+                yoinku_used=False,
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+                duration_ms=int(
+                    (time.monotonic() - attempt_started_at) * 1000
+                ),
+                return_code=process.returncode,
+                exception_type="YtDlpProcessError",
+                details={
+                    "stdout_tail": sanitize_error_for_storage(
+                        stdout_text[-2000:]
+                    ),
+                    "stderr_tail": sanitize_error_for_storage(
+                        stderr_text[-2000:]
+                    ),
+                    "return_code": process.returncode,
+                },
+            )
+
             print()
             print("===== PRIMARY DOWNLOAD FAILED =====")
             print(f"URL: {redact_url(url)}")
@@ -3059,12 +4272,14 @@ async def download_media(
             # محاولة استخراج مصدر مباشر من صفحة الموقع
             # ------------------------------------------------
 
-            fallback_file, _, _ = await download_with_fallback(
+            fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
                 url=url,
                 temp_dir=temp_dir,
                 output_template=output_template,
                 format_option=format_option,
                 is_audio=is_audio,
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
             )
 
             if fallback_file:
@@ -3083,10 +4298,126 @@ async def download_media(
                 # Yoinku fallback
                 # ------------------------------------------------
 
-                yoinku_file = await download_with_yoinku(
+                # تسجيل فشل المصدر المباشر قبل تجربة Yoinku
+                last_error_stage = "direct_fallback"
+                last_error_type = "fallback_failed"
+                last_error_message = (
+                    "Direct media fallback failed to produce a usable file."
+                )
+
+                # استخراج آخر تشخيص متاح من direct fallback.
+                fallback_candidates = (
+                    fallback_diagnostics.get("candidates", [])
+                    if isinstance(fallback_diagnostics, dict)
+                    else []
+                )
+
+                last_fallback_candidate = (
+                    fallback_candidates[-1]
+                    if fallback_candidates
+                    else {}
+                )
+
+                fallback_extraction_error = (
+                    fallback_diagnostics.get("extraction_error")
+                    if isinstance(fallback_diagnostics, dict)
+                    else None
+                )
+
+                fallback_exception_type = (
+                    (
+                        fallback_extraction_error.get(
+                            "exception_type"
+                        )
+                        if isinstance(
+                            fallback_extraction_error,
+                            dict,
+                        )
+                        else None
+                    )
+                    or last_fallback_candidate.get(
+                        "exception_type"
+                    )
+                    or "DirectFallbackError"
+                )
+
+                fallback_error_message = (
+                    (
+                        fallback_extraction_error.get(
+                            "error_message"
+                        )
+                        if isinstance(
+                            fallback_extraction_error,
+                            dict,
+                        )
+                        else None
+                    )
+                    or last_fallback_candidate.get(
+                        "error_message"
+                    )
+                    or last_error_message
+                )
+
+                log_download_error(
+                    user_id=query.from_user.id if query.from_user else None,
+                    username=query.from_user.username if query.from_user else None,
+                    url=url,
+                    website=website,
+                    media_type="audio" if is_audio else "video",
+                    stage=last_error_stage,
+                    error_type=last_error_type,
+                    error_message=fallback_error_message,
+                    traceback_text=None,
+                    yoinku_used=False,
+                    attempt_id=attempt_id,
+                    attempt_number=attempt_number,
+                    duration_ms=(
+                        fallback_diagnostics.get(
+                            "total_duration_ms"
+                        )
+                        if isinstance(
+                            fallback_diagnostics,
+                            dict,
+                        )
+                        else None
+                    ),
+                    return_code=last_fallback_candidate.get(
+                        "return_code"
+                    ),
+                    exception_type=fallback_exception_type,
+                    http_status=last_fallback_candidate.get(
+                        "http_status"
+                    ),
+                    response_type=last_fallback_candidate.get(
+                        "response_type"
+                    ),
+                    bytes_downloaded=last_fallback_candidate.get(
+                        "bytes_downloaded"
+                    ),
+                    candidate_index=last_fallback_candidate.get(
+                        "candidate_index"
+                    ),
+                    candidate_count=(
+                        fallback_diagnostics.get(
+                            "candidate_count"
+                        )
+                        if isinstance(
+                            fallback_diagnostics,
+                            dict,
+                        )
+                        else None
+                    ),
+                    details=fallback_diagnostics,
+                )
+
+                yoinku_attempted = True
+
+                yoinku_file, yoinku_diagnostics = await download_with_yoinku(
                     url=url,
                     temp_dir=temp_dir,
                     is_audio=is_audio,
+                    attempt_id=attempt_id,
+                    attempt_number=attempt_number,
                 )
 
                 if yoinku_file:
@@ -3102,6 +4433,107 @@ async def download_media(
                 else:
 
                     print()
+                    # ------------------------------------------------
+                    # تسجيل فشل Yoinku بالتشخيص الكامل
+                    # ------------------------------------------------
+
+                    last_error_stage = "yoinku"
+                    last_error_type = "yoinku_failed"
+
+                    yoinku_error_message = (
+                        yoinku_diagnostics.get("error_message")
+                        if isinstance(yoinku_diagnostics, dict)
+                        else None
+                    ) or (
+                        "Yoinku fallback was attempted but did not return a usable file."
+                    )
+
+                    yoinku_exception_type = (
+                        yoinku_diagnostics.get("exception_type")
+                        if isinstance(yoinku_diagnostics, dict)
+                        else None
+                    ) or "YoinkuFallbackError"
+
+                    log_download_error(
+                        user_id=query.from_user.id if query.from_user else None,
+                        username=query.from_user.username if query.from_user else None,
+                        url=url,
+                        website=website,
+                        media_type="audio" if is_audio else "video",
+                        stage=last_error_stage,
+                        error_type=last_error_type,
+                        error_message=yoinku_error_message,
+                        traceback_text=None,
+                        yoinku_used=yoinku_attempted,
+                        attempt_id=attempt_id,
+                        attempt_number=attempt_number,
+                        duration_ms=(
+                            yoinku_diagnostics.get("duration_ms")
+                            if isinstance(yoinku_diagnostics, dict)
+                            else None
+                        ),
+                        return_code=None,
+                        exception_type=yoinku_exception_type,
+                        http_status=(
+                            yoinku_diagnostics.get("http_status")
+                            if isinstance(yoinku_diagnostics, dict)
+                            else None
+                        ),
+                        response_type=(
+                            yoinku_diagnostics.get("response_type")
+                            if isinstance(yoinku_diagnostics, dict)
+                            else None
+                        ),
+                        bytes_downloaded=(
+                            yoinku_diagnostics.get("bytes_downloaded")
+                            if isinstance(yoinku_diagnostics, dict)
+                            else None
+                        ),
+                        candidate_index=None,
+                        candidate_count=None,
+                        details=yoinku_diagnostics,
+                    )
+
+                    # ------------------------------------------------
+                    # تسجيل فشل جميع طرق التحميل
+                    # ------------------------------------------------
+
+                    log_download_error(
+                        user_id=query.from_user.id if query.from_user else None,
+                        username=query.from_user.username if query.from_user else None,
+                        url=url,
+                        website=website,
+                        media_type="audio" if is_audio else "video",
+                        stage="download",
+                        error_type="all_methods_failed",
+                        error_message="All available download methods failed.",
+                        traceback_text=None,
+                        yoinku_used=yoinku_attempted,
+                        attempt_id=attempt_id,
+                        attempt_number=attempt_number,
+                        duration_ms=int(
+                            (time.monotonic() - attempt_started_at) * 1000
+                        ),
+                        return_code=None,
+                        exception_type="AllDownloadMethodsFailed",
+                        http_status=None,
+                        response_type=None,
+                        bytes_downloaded=None,
+                        candidate_index=None,
+                        candidate_count=(
+                            fallback_diagnostics.get("candidate_count")
+                            if isinstance(
+                                fallback_diagnostics,
+                                dict,
+                            )
+                            else None
+                        ),
+                        details={
+                            "fallback": fallback_diagnostics,
+                            "yoinku": yoinku_diagnostics,
+                        },
+                    )
+
                     print("===== ALL DOWNLOAD METHODS FAILED =====")
                     print(f"URL: {redact_url(url)}")
                     print("========================================")
@@ -3318,18 +4750,87 @@ async def download_media(
             pass
 
     except asyncio.TimeoutError:
+        timeout_duration_ms = int(
+            (time.monotonic() - attempt_started_at) * 1000
+        )
+
+        log_download_error(
+            user_id=query.from_user.id if query.from_user else None,
+            username=query.from_user.username if query.from_user else None,
+            url=url,
+            website=website,
+            media_type="audio" if is_audio else "video",
+            stage=last_error_stage or "download",
+            error_type=last_error_type or "timeout",
+            error_message=(
+                last_error_message
+                or "Download operation timed out"
+            ),
+            traceback_text=None,
+            yoinku_used=yoinku_attempted,
+            attempt_id=attempt_id,
+            attempt_number=attempt_number,
+            duration_ms=timeout_duration_ms,
+            return_code=None,
+            exception_type="TimeoutError",
+            http_status=None,
+            response_type=None,
+            bytes_downloaded=None,
+            candidate_index=None,
+            candidate_count=None,
+            details={
+                "timeout": True,
+                "duration_ms": timeout_duration_ms,
+            },
+        )
 
         try:
-
             await query.edit_message_text(
                 TEXTS[language]["download_error"]
             )
-
         except Exception:
-
             pass
 
     except Exception as e:
+        import traceback as _traceback
+
+        error_traceback = _traceback.format_exc()
+
+        exception_duration_ms = int(
+            (time.monotonic() - attempt_started_at) * 1000
+        )
+
+        log_download_error(
+            user_id=query.from_user.id if query.from_user else None,
+            username=query.from_user.username if query.from_user else None,
+            url=url,
+            website=website,
+            media_type="audio" if is_audio else "video",
+            stage=last_error_stage or "download",
+            error_type=last_error_type or type(e).__name__,
+            error_message=(
+                last_error_message
+                or sanitize_error_for_storage(str(e))
+            ),
+            traceback_text=error_traceback,
+            yoinku_used=yoinku_attempted,
+            attempt_id=attempt_id,
+            attempt_number=attempt_number,
+            duration_ms=exception_duration_ms,
+            return_code=None,
+            exception_type=type(e).__name__,
+            http_status=None,
+            response_type=None,
+            bytes_downloaded=None,
+            candidate_index=None,
+            candidate_count=None,
+            details={
+                "exception": sanitize_error_for_storage(
+                    repr(e)
+                ),
+                "duration_ms": exception_duration_ms,
+            },
+        )
 
         print()
         print("===== BOT ERROR =====")
@@ -3338,17 +4839,13 @@ async def download_media(
         print()
 
         try:
-
             await query.edit_message_text(
                 TEXTS[language]["general_error"]
             )
-
         except Exception:
-
             pass
 
     finally:
-
         # لا تحذف الملفات إذا كان المستخدم سيختار
         # نسبة الضغط من قائمة الضغط.
         if not keep_for_compression:
@@ -3361,7 +4858,6 @@ async def download_media(
 # ============================================================
 # لوحة الإدارة
 # ============================================================
-
 def admin_keyboard():
     return InlineKeyboardMarkup([
         [
@@ -3687,6 +5183,12 @@ async def admin_ai_callback(
             InlineKeyboardButton(
                 "🌐 تحليل المنصات",
                 callback_data="ai_websites"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🐞 تقرير الأخطاء",
+                callback_data="ai_errors"
             )
         ],
         [
@@ -4054,6 +5556,137 @@ async def run_admin_ai_analysis(
                     InlineKeyboardButton(
                         "🔄 إعادة المحاولة",
                         callback_data="ai_retry"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 الذكاء الاصطناعي",
+                        callback_data="admin_ai"
+                    )
+                ],
+            ])
+        )
+
+
+async def admin_ai_errors_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+        data = get_ai_errors_data(30)
+
+        if data["total_errors"] == 0:
+            await query.edit_message_text(
+                "🐞 تقرير أخطاء البوت\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                "✅ لا توجد أخطاء مسجلة خلال آخر 30 يوماً.\n\n"
+                "سيتم تسجيل أخطاء التحميل تلقائياً عند حدوثها.",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🔄 تحديث",
+                            callback_data="ai_errors"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔙 الذكاء الاصطناعي",
+                            callback_data="admin_ai"
+                        ),
+                        InlineKeyboardButton(
+                            "🏠 الرئيسية",
+                            callback_data="admin_home"
+                        )
+                    ],
+                ])
+            )
+            return
+
+        prompt = f"""
+أنت مهندس Reliability وBackend متخصص في Telegram bots
+وأنظمة تحميل الوسائط باستخدام yt-dlp وFFmpeg وواجهات fallback.
+
+هذه بيانات أخطاء حقيقية من VideoBot خلال آخر 30 يوماً:
+
+{data}
+
+أنشئ تقريراً تقنياً باللغة العربية.
+
+يجب أن يتضمن التقرير:
+
+1. 🔴 الحالة العامة
+- إجمالي الأخطاء.
+- تقييم مستوى الأخطاء بناءً على البيانات فقط.
+
+2. 🌐 تحليل المنصات
+- أكثر المنصات تسبباً بالأخطاء.
+- عدد الأخطاء لكل منصة عندما تكون البيانات متوفرة.
+
+3. ⚙️ مراحل الفشل
+- حدد أكثر مراحل النظام فشلاً.
+- مثل yt-dlp أو fallback أو Yoinku أو download_media أو غيرها.
+
+4. 🧩 أنواع الأخطاء
+- حدد الأخطاء الأكثر تكراراً.
+- اشرح معناها تقنياً.
+
+5. 🔎 السبب المحتمل
+- اربط نوع الخطأ بالمرحلة والمنصة ورسالة الخطأ.
+- إذا لم تكن البيانات كافية، قل بوضوح إن السبب غير مؤكد.
+
+6. 🛠️ الحل المقترح
+- قدم حلولاً عملية للمطور.
+- رتب الحلول حسب الأولوية.
+
+7. 🚨 الأولوية
+صنف المشاكل:
+- حرجة
+- عالية
+- متوسطة
+- منخفضة
+
+8. 📋 آخر الأخطاء
+- لخص أهم الأخطاء الحديثة.
+- اذكر المنصة والمرحلة ونوع الخطأ والمشكلة.
+
+قواعد صارمة:
+- استخدم البيانات المعطاة فقط.
+- لا تخترع أرقاماً.
+- لا تخترع أخطاء غير موجودة.
+- لا تذكر API keys أو tokens أو كلمات مرور.
+- لا تحاول تحديد هوية المستخدمين.
+- لا تقترح تنفيذ أوامر تلقائياً على الخادم.
+- هذا التقرير للتشخيص فقط.
+"""
+
+        await run_admin_ai_analysis(
+            query,
+            "🐞 تقرير أخطاء البوت",
+            prompt
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "AI error report failed: %s",
+            type(exc).__name__
+        )
+
+        await query.edit_message_text(
+            "🐞 تقرير أخطاء البوت\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "❌ تعذر تحميل تقرير الأخطاء.\n\n"
+            f"نوع الخطأ: {type(exc).__name__}",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 إعادة المحاولة",
+                        callback_data="ai_errors"
                     )
                 ],
                 [
@@ -6189,6 +7822,12 @@ def main():
         CallbackQueryHandler(
             admin_ai_websites_callback,
             pattern=r"^ai_websites$"
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_ai_errors_callback,
+            pattern=r"^ai_errors$"
         )
     )
 
