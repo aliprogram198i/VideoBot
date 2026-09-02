@@ -2746,9 +2746,10 @@ async def download_with_yoinku(
             )
 
             logger.warning(
-                "Yoinku temporary failure on attempt %d: %s",
+                "Yoinku temporary failure on attempt %d: %s (HTTP status: %s)",
                 attempt + 1,
                 type(exc).__name__,
+                diagnostics.get("http_status"),
             )
 
             if time.monotonic() >= fetch_deadline:
