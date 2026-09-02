@@ -7,3 +7,5 @@ idna==3.19
 python-telegram-bot==22.8
 yt-dlp==2026.8.19
 google-genai>=1.0.0
+
+yt-dlp-ejs==0.8.0
