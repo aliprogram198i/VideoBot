@@ -63,6 +63,7 @@ else:
 print(f"🗄️ Database path: {DB_FILE}")
 
 DOWNLOAD_TIMEOUT = 900
+YOINKU_DOWNLOAD_TIMEOUT = 300
 PROCESS_SHUTDOWN_TIMEOUT = 10
 MAX_HTML_BYTES = 5 * 1024 * 1024
 MAX_VIDEO_DOWNLOAD_BYTES = 500 * 1024 * 1024
@@ -2563,7 +2564,13 @@ async def download_with_yoinku(
         + (".mp3" if is_audio else ".mp4"),
     )
 
+    fetch_deadline = (
+        time.monotonic()
+        + YOINKU_DOWNLOAD_TIMEOUT
+    )
+
     def fetch():
+
         request = Request(
             api_url,
             headers={
@@ -2573,9 +2580,17 @@ async def download_with_yoinku(
             },
         )
 
+        remaining_time = fetch_deadline - time.monotonic()
+
+        if remaining_time <= 0:
+            raise TimeoutError(
+                "Yoinku download exceeded "
+                f"{YOINKU_DOWNLOAD_TIMEOUT} seconds"
+            )
+
         with safe_urlopen(
             request,
-            timeout=30,
+            timeout=min(30, max(1, remaining_time)),
             max_bytes=MAX_YOINKU_RESPONSE_BYTES,
             expected_content_types={"application/json"},
         ) as response:
@@ -2623,9 +2638,17 @@ async def download_with_yoinku(
         )
 
         try:
+            remaining_time = fetch_deadline - time.monotonic()
+
+            if remaining_time <= 0:
+                raise TimeoutError(
+                    "Yoinku download exceeded "
+                    f"{YOINKU_DOWNLOAD_TIMEOUT} seconds"
+                )
+
             with safe_urlopen(
                 request,
-                timeout=60,
+                timeout=min(60, max(1, remaining_time)),
                 max_bytes=limit,
             ) as response, open(
                 output_file,
@@ -2646,9 +2669,24 @@ async def download_with_yoinku(
 
                 total = 0
 
-                while chunk := response.read(
-                    1024 * 1024
-                ):
+                while True:
+                    remaining_time = (
+                        fetch_deadline - time.monotonic()
+                    )
+
+                    if remaining_time <= 0:
+                        raise TimeoutError(
+                            "Yoinku download exceeded "
+                            f"{YOINKU_DOWNLOAD_TIMEOUT} seconds"
+                        )
+
+                    chunk = response.read(
+                        1024 * 1024
+                    )
+
+                    if not chunk:
+                        break
+
                     total += len(chunk)
 
                     if total > limit:
@@ -2710,8 +2748,20 @@ async def download_with_yoinku(
                 type(exc).__name__,
             )
 
+            if time.monotonic() >= fetch_deadline:
+                break
+
             if attempt < 2:
-                await asyncio.sleep(2 ** attempt)
+                remaining_time = (
+                    fetch_deadline - time.monotonic()
+                )
+
+                if remaining_time <= 0:
+                    break
+
+                await asyncio.sleep(
+                    min(2 ** attempt, remaining_time)
+                )
 
         except Exception as exc:
             diagnostics["exception_type"] = type(
