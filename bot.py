@@ -3762,27 +3762,57 @@ async def download_media(
             print()
 
             # ------------------------------------------------
-            # محاولة استخراج مصدر مباشر من صفحة الموقع
+            # Yoinku fallback
+            # يتم تجربته قبل direct fallback لتقليل زمن الفشل.
             # ------------------------------------------------
 
-            fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
+            yoinku_attempted = True
+
+            yoinku_file, yoinku_diagnostics = await download_with_yoinku(
                 url=url,
                 temp_dir=temp_dir,
-                output_template=output_template,
-                format_option=format_option,
                 is_audio=is_audio,
                 attempt_id=attempt_id,
                 attempt_number=attempt_number,
             )
+
+            # ------------------------------------------------
+            # محاولة استخراج مصدر مباشر من صفحة الموقع
+            # فقط إذا فشل Yoinku.
+            # ------------------------------------------------
+
+            if yoinku_file:
+                fallback_file = yoinku_file
+                fallback_diagnostics = {}
+            else:
+                fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
+                    url=url,
+                    temp_dir=temp_dir,
+                    output_template=output_template,
+                    format_option=format_option,
+                    is_audio=is_audio,
+                    attempt_id=attempt_id,
+                    attempt_number=attempt_number,
+                )
 
             if fallback_file:
 
                 media_file = fallback_file
 
                 print()
-                print("✅ FALLBACK DOWNLOAD SUCCESS")
+
+                if yoinku_file:
+                    print("===== YOINKU FALLBACK SUCCESS =====")
+                else:
+                    print("✅ FALLBACK DOWNLOAD SUCCESS")
+
                 print(f"File: {media_file}")
-                print("==============================")
+
+                if yoinku_file:
+                    print("===================================")
+                else:
+                    print("==============================")
+
                 print()
 
             else:
@@ -3861,7 +3891,7 @@ async def download_media(
                     error_type=last_error_type,
                     error_message=fallback_error_message,
                     traceback_text=None,
-                    yoinku_used=False,
+                    yoinku_used=yoinku_attempted,
                     attempt_id=attempt_id,
                     attempt_number=attempt_number,
                     duration_ms=(
@@ -3903,140 +3933,118 @@ async def download_media(
                     details=fallback_diagnostics,
                 )
 
-                yoinku_attempted = True
+                print()
+                # ------------------------------------------------
+                # تسجيل فشل Yoinku بالتشخيص الكامل
+                # ------------------------------------------------
 
-                yoinku_file, yoinku_diagnostics = await download_with_yoinku(
-                    url=url,
-                    temp_dir=temp_dir,
-                    is_audio=is_audio,
-                    attempt_id=attempt_id,
-                    attempt_number=attempt_number,
+                last_error_stage = "yoinku"
+                last_error_type = "yoinku_failed"
+
+                yoinku_error_message = (
+                    yoinku_diagnostics.get("error_message")
+                    if isinstance(yoinku_diagnostics, dict)
+                    else None
+                ) or (
+                    "Yoinku fallback was attempted but did not return a usable file."
                 )
 
-                if yoinku_file:
+                yoinku_exception_type = (
+                    yoinku_diagnostics.get("exception_type")
+                    if isinstance(yoinku_diagnostics, dict)
+                    else None
+                ) or "YoinkuFallbackError"
 
-                    media_file = yoinku_file
-
-                    print()
-                    print("===== YOINKU FALLBACK SUCCESS =====")
-                    print(f"File: {media_file}")
-                    print("===================================")
-                    print()
-
-                else:
-
-                    print()
-                    # ------------------------------------------------
-                    # تسجيل فشل Yoinku بالتشخيص الكامل
-                    # ------------------------------------------------
-
-                    last_error_stage = "yoinku"
-                    last_error_type = "yoinku_failed"
-
-                    yoinku_error_message = (
-                        yoinku_diagnostics.get("error_message")
+                log_download_error(
+                    user_id=query.from_user.id if query.from_user else None,
+                    username=query.from_user.username if query.from_user else None,
+                    url=url,
+                    website=website,
+                    media_type="audio" if is_audio else "video",
+                    stage=last_error_stage,
+                    error_type=last_error_type,
+                    error_message=yoinku_error_message,
+                    traceback_text=None,
+                    yoinku_used=yoinku_attempted,
+                    attempt_id=attempt_id,
+                    attempt_number=attempt_number,
+                    duration_ms=(
+                        yoinku_diagnostics.get("duration_ms")
                         if isinstance(yoinku_diagnostics, dict)
                         else None
-                    ) or (
-                        "Yoinku fallback was attempted but did not return a usable file."
-                    )
-
-                    yoinku_exception_type = (
-                        yoinku_diagnostics.get("exception_type")
+                    ),
+                    return_code=None,
+                    exception_type=yoinku_exception_type,
+                    http_status=(
+                        yoinku_diagnostics.get("http_status")
                         if isinstance(yoinku_diagnostics, dict)
                         else None
-                    ) or "YoinkuFallbackError"
+                    ),
+                    response_type=(
+                        yoinku_diagnostics.get("response_type")
+                        if isinstance(yoinku_diagnostics, dict)
+                        else None
+                    ),
+                    bytes_downloaded=(
+                        yoinku_diagnostics.get("bytes_downloaded")
+                        if isinstance(yoinku_diagnostics, dict)
+                        else None
+                    ),
+                    candidate_index=None,
+                    candidate_count=None,
+                    details=yoinku_diagnostics,
+                )
 
-                    log_download_error(
-                        user_id=query.from_user.id if query.from_user else None,
-                        username=query.from_user.username if query.from_user else None,
-                        url=url,
-                        website=website,
-                        media_type="audio" if is_audio else "video",
-                        stage=last_error_stage,
-                        error_type=last_error_type,
-                        error_message=yoinku_error_message,
-                        traceback_text=None,
-                        yoinku_used=yoinku_attempted,
-                        attempt_id=attempt_id,
-                        attempt_number=attempt_number,
-                        duration_ms=(
-                            yoinku_diagnostics.get("duration_ms")
-                            if isinstance(yoinku_diagnostics, dict)
-                            else None
-                        ),
-                        return_code=None,
-                        exception_type=yoinku_exception_type,
-                        http_status=(
-                            yoinku_diagnostics.get("http_status")
-                            if isinstance(yoinku_diagnostics, dict)
-                            else None
-                        ),
-                        response_type=(
-                            yoinku_diagnostics.get("response_type")
-                            if isinstance(yoinku_diagnostics, dict)
-                            else None
-                        ),
-                        bytes_downloaded=(
-                            yoinku_diagnostics.get("bytes_downloaded")
-                            if isinstance(yoinku_diagnostics, dict)
-                            else None
-                        ),
-                        candidate_index=None,
-                        candidate_count=None,
-                        details=yoinku_diagnostics,
-                    )
+                # ------------------------------------------------
+                # تسجيل فشل جميع طرق التحميل
+                # ------------------------------------------------
 
-                    # ------------------------------------------------
-                    # تسجيل فشل جميع طرق التحميل
-                    # ------------------------------------------------
+                log_download_error(
+                    user_id=query.from_user.id if query.from_user else None,
+                    username=query.from_user.username if query.from_user else None,
+                    url=url,
+                    website=website,
+                    media_type="audio" if is_audio else "video",
+                    stage="download",
+                    error_type="all_methods_failed",
+                    error_message="All available download methods failed.",
+                    traceback_text=None,
+                    yoinku_used=yoinku_attempted,
+                    attempt_id=attempt_id,
+                    attempt_number=attempt_number,
+                    duration_ms=int(
+                        (time.monotonic() - attempt_started_at) * 1000
+                    ),
+                    return_code=None,
+                    exception_type="AllDownloadMethodsFailed",
+                    http_status=None,
+                    response_type=None,
+                    bytes_downloaded=None,
+                    candidate_index=None,
+                    candidate_count=(
+                        fallback_diagnostics.get("candidate_count")
+                        if isinstance(
+                            fallback_diagnostics,
+                            dict,
+                        )
+                        else None
+                    ),
+                    details={
+                        "fallback": fallback_diagnostics,
+                        "yoinku": yoinku_diagnostics,
+                    },
+                )
 
-                    log_download_error(
-                        user_id=query.from_user.id if query.from_user else None,
-                        username=query.from_user.username if query.from_user else None,
-                        url=url,
-                        website=website,
-                        media_type="audio" if is_audio else "video",
-                        stage="download",
-                        error_type="all_methods_failed",
-                        error_message="All available download methods failed.",
-                        traceback_text=None,
-                        yoinku_used=yoinku_attempted,
-                        attempt_id=attempt_id,
-                        attempt_number=attempt_number,
-                        duration_ms=int(
-                            (time.monotonic() - attempt_started_at) * 1000
-                        ),
-                        return_code=None,
-                        exception_type="AllDownloadMethodsFailed",
-                        http_status=None,
-                        response_type=None,
-                        bytes_downloaded=None,
-                        candidate_index=None,
-                        candidate_count=(
-                            fallback_diagnostics.get("candidate_count")
-                            if isinstance(
-                                fallback_diagnostics,
-                                dict,
-                            )
-                            else None
-                        ),
-                        details={
-                            "fallback": fallback_diagnostics,
-                            "yoinku": yoinku_diagnostics,
-                        },
-                    )
+                print("===== ALL DOWNLOAD METHODS FAILED =====")
+                print(f"URL: {redact_url(url)}")
+                print("========================================")
+                print()
 
-                    print("===== ALL DOWNLOAD METHODS FAILED =====")
-                    print(f"URL: {redact_url(url)}")
-                    print("========================================")
-                    print()
+                await query.edit_message_text(
+                    TEXTS[language]["download_error"]
+                )
 
-                    await query.edit_message_text(
-                        TEXTS[language]["download_error"]
-                    )
-
-                    return
+                return
 
         # ----------------------------------------------------
         # The final path is supplied by yt-dlp; fallback paths are explicit too.
