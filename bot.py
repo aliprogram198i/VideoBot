@@ -223,7 +223,7 @@ TEXTS = {
     "ar": {
 
         "choose_language":
-            "🎬 أهلاً وسهلاً بكم في بوت AliBoot 🤍\n\n📥 بوتكم السهل والسريع لتحميل الفيديوهات والأصوات\nمن مختلف المنصات بجودة عالية وبكل سهولة.\n\n🔗 أرسل رابط الفيديو أو الصوت، ودع AliBoot يتولى الباقي.\n\n🆓 تحميل مجاني • 🚀 سريع • 🎧 جودة عالية\n\n👨‍👩‍👧‍👦 لا تنسوا مشاركة البوت مع الأصدقاء والعائلة ❤️\n🔗 شارك الرابط ليستفيد الجميع 🌍\n\n👇 أرسل الرابط الآن وابدأ التحميل!"
+            "🎬 أهلاً وسهلاً بكم في بوت AliBot 🤍\n\n📥 بوتكم السهل والسريع لتحميل الفيديوهات والأصوات\nمن مختلف المنصات بجودة عالية وبكل سهولة.\n\n🔗 أرسل رابط الفيديو أو الصوت، ودع AliBot يتولى الباقي.\n\n🆓 تحميل مجاني • 🚀 سريع • 🎧 جودة عالية\n\n👨‍👩‍👧‍👦 لا تنسوا مشاركة البوت مع الأصدقاء والعائلة ❤️\n🔗 شارك الرابط ليستفيد الجميع 🌍\n\n👇 أرسل الرابط الآن وابدأ التحميل!"
             "🎬 حمّل فيديوهاتك وصوتياتك بسهولة وسرعة.\n"
             "⚡ جودة متعددة\n"
             "🎵 تحويل الفيديو إلى صوت\n"
@@ -231,16 +231,16 @@ TEXTS = {
             "🌐 اختر لغة البوت:",
 
         "welcome":
-            "✨ مرحبًا بك في AliBoot ✨\n\n"
+            "✨ مرحبًا بك في AliBot ✨\n\n"
             "🚀 سرعة استثنائية • ⚡ أداء فائق\n"
             "🛡️ أمان وخصوصية • 🔐 موثوقية عالية\n"
             "🤖 ذكاء متقدم • 🎯 معالجة دقيقة\n"
             "🎬 جودة فائقة • 🎵 صوت نقي\n"
             "🌐 دعم متعدد المنصات\n\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
-            "💎 AliBoot\n"
+            "💎 AliBot\n"
             "ذكاء في المعالجة • سرعة في التنفيذ • جودة بلا تنازل\n\n"
-            "📎 أرسل الرابط فقط، ودع AliBoot يتولى الباقي.",
+            "📎 أرسل الرابط فقط، ودع AliBot يتولى الباقي.",
 
         "language_saved":
             "✅ تم تغيير لغة البوت بنجاح.",
@@ -302,13 +302,13 @@ TEXTS = {
             "🔙 رجوع",
 
         "loading":
-            "⏳ <b>AliBoot | جاري تجهيز طلبك</b>\n\n"
+            "⏳ <b>AliBot | جاري تجهيز طلبك</b>\n\n"
             "👤 المستخدم: {username}\n"
             "🌐 المنصة: {website}\n"
             "🎚 الجودة: {quality}\n\n"
             "⚙️ جاري معالجة الرابط وتجهيز الملف...\n"
             "🚀 قد تستغرق العملية لحظات حسب حجم الفيديو وسرعة المنصة.\n\n"
-            "💙 AliBoot يعمل من أجلك، يرجى الانتظار...",
+            "💙 AliBot يعمل من أجلك، يرجى الانتظار...",
 
         "uploading":
             "✅ اكتمل التحميل بنجاح!\n\n"
@@ -322,7 +322,7 @@ TEXTS = {
             "🎚 <b>الجودة:</b> {quality}\n"
             "📥 <b>الحالة:</b> جاهز للإرسال ✅\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🙏 شكراً لاستخدامك <b>بوت AliBoot</b>\n"
+            "🙏 شكراً لاستخدامك <b>بوت AliBot</b>\n"
             "❤️ نتمنى أن تستمتع بالخدمة\n\n"
             "🔗 شارك البوت مع أصدقائك ليستفيد الجميع 🌍",
 
@@ -334,7 +334,7 @@ TEXTS = {
             "🎚 <b>الجودة:</b> {quality}\n"
             "📥 <b>الحالة:</b> جاهز للإرسال ✅\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🙏 شكراً لاستخدامك <b>بوت AliBoot</b>\n"
+            "🙏 شكراً لاستخدامك <b>بوت AliBot</b>\n"
             "❤️ نتمنى أن تستمتع بالخدمة\n\n"
             "🔗 شارك البوت مع أصدقائك ليستفيد الجميع 🌍",
 
@@ -379,15 +379,15 @@ TEXTS = {
             "🌐 Choose your language:",
 
         "welcome":
-            "✨ Welcome to AliBoot ✨\n\n"
+            "✨ Welcome to AliBot ✨\n\n"
             "🚀 Download your favorite videos quickly and easily from popular platforms.\n\n"
             "🎬 Multiple video qualities\n"
             "🎵 High-quality audio extraction\n"
             "⚡ Fast and reliable downloads\n"
             "🌐 Multiple platforms supported\n\n"
-            "📎 Just send your video link and let AliBoot handle the rest.\n\n"
+            "📎 Just send your video link and let AliBot handle the rest.\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🤖 AliBoot\n"
+            "🤖 AliBot\n"
             "💙 Fast • Simple • Free\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Enjoy your download! 🚀",
@@ -452,13 +452,13 @@ TEXTS = {
             "🔙 Back",
 
         "loading":
-            "⏳ <b>AliBoot | Preparing your request</b>\n\n"
+            "⏳ <b>AliBot | Preparing your request</b>\n\n"
             "👤 User: {username}\n"
             "🌐 Platform: {website}\n"
             "🎚 Quality: {quality}\n\n"
             "⚙️ Processing the link and preparing your file...\n"
             "🚀 This may take a moment depending on the file size and platform speed.\n\n"
-            "💙 AliBoot is working for you. Please wait...",
+            "💙 AliBot is working for you. Please wait...",
 
         "uploading":
             "✅ Download completed!\n\n"
@@ -512,15 +512,15 @@ TEXTS = {
             "🌐 Dilinizi seçin:",
 
         "welcome":
-            "✨ AliBoot'a hoş geldiniz ✨\n\n"
+            "✨ AliBot'a hoş geldiniz ✨\n\n"
             "🚀 Favori videolarınızı popüler platformlardan hızlı ve kolay şekilde indirin.\n\n"
             "🎬 Birden fazla video kalitesi\n"
             "🎵 Yüksek kaliteli ses çıkarma\n"
             "⚡ Hızlı ve güvenilir indirme\n"
             "🌐 Birden fazla platform desteği\n\n"
-            "📎 Video bağlantınızı gönderin, gerisini AliBoot halletsin.\n\n"
+            "📎 Video bağlantınızı gönderin, gerisini AliBot halletsin.\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🤖 AliBoot\n"
+            "🤖 AliBot\n"
             "💙 Hızlı • Basit • Ücretsiz\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "İyi indirmeler! 🚀",
@@ -584,13 +584,13 @@ TEXTS = {
             "🔙 Geri",
 
         "loading":
-            "⏳ <b>AliBoot | İsteğiniz hazırlanıyor</b>\n\n"
+            "⏳ <b>AliBot | İsteğiniz hazırlanıyor</b>\n\n"
             "👤 Kullanıcı: {username}\n"
             "🌐 Platform: {website}\n"
             "🎚 Kalite: {quality}\n\n"
             "⚙️ Bağlantı işleniyor ve dosyanız hazırlanıyor...\n"
             "🚀 Dosya boyutuna ve platform hızına bağlı olarak biraz sürebilir.\n\n"
-            "💙 AliBoot sizin için çalışıyor. Lütfen bekleyin...",
+            "💙 AliBot sizin için çalışıyor. Lütfen bekleyin...",
 
         "uploading":
             "✅ İndirme tamamlandı!\n\n"
@@ -643,15 +643,15 @@ TEXTS = {
             "🌐 Sprache auswählen:",
 
         "welcome":
-            "✨ Willkommen bei AliBoot ✨\n\n"
+            "✨ Willkommen bei AliBot ✨\n\n"
             "🚀 Laden Sie Ihre Lieblingsvideos schnell und einfach von beliebten Plattformen herunter.\n\n"
             "🎬 Mehrere Videoqualitäten\n"
             "🎵 Hochwertige Audioextraktion\n"
             "⚡ Schnelle und zuverlässige Downloads\n"
             "🌐 Unterstützung mehrerer Plattformen\n\n"
-            "📎 Senden Sie einfach Ihren Videolink und AliBoot erledigt den Rest.\n\n"
+            "📎 Senden Sie einfach Ihren Videolink und AliBot erledigt den Rest.\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🤖 AliBoot\n"
+            "🤖 AliBot\n"
             "💙 Schnell • Einfach • Kostenlos\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Viel Spaß beim Download! 🚀",
@@ -715,13 +715,13 @@ TEXTS = {
             "🔙 Zurück",
 
         "loading":
-            "⏳ <b>AliBoot | Anfrage wird vorbereitet</b>\n\n"
+            "⏳ <b>AliBot | Anfrage wird vorbereitet</b>\n\n"
             "👤 Benutzer: {username}\n"
             "🌐 Plattform: {website}\n"
             "🎚 Qualität: {quality}\n\n"
             "⚙️ Link wird verarbeitet und Ihre Datei wird vorbereitet...\n"
             "🚀 Je nach Dateigröße und Plattformgeschwindigkeit kann dies einen Moment dauern.\n\n"
-            "💙 AliBoot arbeitet für Sie. Bitte warten...",
+            "💙 AliBot arbeitet für Sie. Bitte warten...",
 
         "uploading":
             "✅ Download abgeschlossen!\n\n"
@@ -6891,7 +6891,7 @@ async def admin_home_callback(
 
     await query.edit_message_text(
 
-        "🛠️ لوحة إدارة AliBoot\n"
+        "🛠️ لوحة إدارة AliBot\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
 
         "📊 لوحة المعلومات والتحليلات\n"
@@ -7643,7 +7643,7 @@ def main():
 
 
 # ============================================================
-# لوحة الإدارة المتقدمة - AliBoot
+# لوحة الإدارة المتقدمة - AliBot
 # ============================================================
 
 def get_admin_dashboard_data(days=30):
@@ -7829,7 +7829,7 @@ def admin_dashboard_text(data):
     )
 
     text = (
-        "📊 لوحة معلومات AliBoot\n"
+        "📊 لوحة معلومات AliBot\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
 
         f"👥 إجمالي المستخدمين: "
