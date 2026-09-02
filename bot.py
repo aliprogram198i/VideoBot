@@ -231,13 +231,16 @@ TEXTS = {
             "🌐 اختر لغة البوت:",
 
         "welcome":
-            "🎬 أهلاً وسهلاً بكم في بوت الحسيان 🤍\n\n📥 بوتكم السهل والسريع لتحميل الفيديوهات والأصوات\nمن مختلف المنصات بجودة عالية وبكل سهولة.\n\n🔗 أرسل رابط الفيديو أو الصوت، ودع الحسيان يتولى الباقي.\n\n🆓 تحميل مجاني • 🚀 سريع • 🎧 جودة عالية\n\n👨‍👩‍👧‍👦 لا تنسوا مشاركة البوت مع الأصدقاء والعائلة ❤️\n🔗 شارك الرابط ليستفيد الجميع 🌍\n\n👇 أرسل الرابط الآن وابدأ التحميل!"
-            "🚀 أرسل رابط الفيديو الذي تريد تحميله، "
-            "وسنتولى الباقي.\n\n"
-            "📺 فيديو بجودات متعددة\n"
-            "🎵 تحميل الصوت MP3\n"
-            "⚡ خدمة مجانية بالكامل\n\n"
-            "🔗 أرسل الرابط الآن:",
+            "✨ مرحبًا بك في AliBoot ✨\n\n"
+            "🚀 سرعة استثنائية • ⚡ أداء فائق\n"
+            "🛡️ أمان وخصوصية • 🔐 موثوقية عالية\n"
+            "🤖 ذكاء متقدم • 🎯 معالجة دقيقة\n"
+            "🎬 جودة فائقة • 🎵 صوت نقي\n"
+            "🌐 دعم متعدد المنصات\n\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "💎 AliBoot\n"
+            "ذكاء في المعالجة • سرعة في التنفيذ • جودة بلا تنازل\n\n"
+            "📎 أرسل الرابط فقط، ودع AliBoot يتولى الباقي.",
 
         "language_saved":
             "✅ تم تغيير لغة البوت بنجاح.",
@@ -299,11 +302,13 @@ TEXTS = {
             "🔙 رجوع",
 
         "loading":
-            "⏳ جاري تحميل الملف...\n\n"
+            "⏳ <b>AliBoot | جاري تجهيز طلبك</b>\n\n"
+            "👤 المستخدم: {username}\n"
             "🌐 المنصة: {website}\n"
             "🎚 الجودة: {quality}\n\n"
-            "⚡ قد تستغرق العملية بعض الوقت حسب حجم الفيديو.\n"
-            "يرجى الانتظار...",
+            "⚙️ جاري معالجة الرابط وتجهيز الملف...\n"
+            "🚀 قد تستغرق العملية لحظات حسب حجم الفيديو وسرعة المنصة.\n\n"
+            "💙 AliBoot يعمل من أجلك، يرجى الانتظار...",
 
         "uploading":
             "✅ اكتمل التحميل بنجاح!\n\n"
@@ -374,12 +379,18 @@ TEXTS = {
             "🌐 Choose your language:",
 
         "welcome":
-            "🎬 Welcome to the Download Bot ❤️\n\n"
-            "🚀 Send a video link and we'll handle the rest.\n\n"
-            "📺 Multiple video qualities\n"
-            "🎵 MP3 audio download\n"
-            "⚡ Completely free\n\n"
-            "🔗 Send your link:",
+            "✨ Welcome to AliBoot ✨\n\n"
+            "🚀 Download your favorite videos quickly and easily from popular platforms.\n\n"
+            "🎬 Multiple video qualities\n"
+            "🎵 High-quality audio extraction\n"
+            "⚡ Fast and reliable downloads\n"
+            "🌐 Multiple platforms supported\n\n"
+            "📎 Just send your video link and let AliBoot handle the rest.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 AliBoot\n"
+            "💙 Fast • Simple • Free\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Enjoy your download! 🚀",
 
         "language_saved":
             "✅ Language changed successfully.",
@@ -441,11 +452,13 @@ TEXTS = {
             "🔙 Back",
 
         "loading":
-            "⏳ Downloading...\n\n"
+            "⏳ <b>AliBoot | Preparing your request</b>\n\n"
+            "👤 User: {username}\n"
             "🌐 Platform: {website}\n"
             "🎚 Quality: {quality}\n\n"
-            "⚡ This may take some time depending on the video size.\n"
-            "Please wait...",
+            "⚙️ Processing the link and preparing your file...\n"
+            "🚀 This may take a moment depending on the file size and platform speed.\n\n"
+            "💙 AliBoot is working for you. Please wait...",
 
         "uploading":
             "✅ Download completed!\n\n"
@@ -499,12 +512,18 @@ TEXTS = {
             "🌐 Dilinizi seçin:",
 
         "welcome":
-            "🎬 İndirme Botuna hoş geldiniz ❤️\n\n"
-            "🚀 Video bağlantısını gönderin.\n\n"
-            "📺 Farklı video kaliteleri\n"
-            "🎵 MP3 ses indirme\n"
-            "⚡ Tamamen ücretsiz\n\n"
-            "🔗 Bağlantıyı gönderin:",
+            "✨ AliBoot'a hoş geldiniz ✨\n\n"
+            "🚀 Favori videolarınızı popüler platformlardan hızlı ve kolay şekilde indirin.\n\n"
+            "🎬 Birden fazla video kalitesi\n"
+            "🎵 Yüksek kaliteli ses çıkarma\n"
+            "⚡ Hızlı ve güvenilir indirme\n"
+            "🌐 Birden fazla platform desteği\n\n"
+            "📎 Video bağlantınızı gönderin, gerisini AliBoot halletsin.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 AliBoot\n"
+            "💙 Hızlı • Basit • Ücretsiz\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "İyi indirmeler! 🚀",
 
         "language_saved":
             "✅ Dil başarıyla değiştirildi.",
@@ -565,10 +584,13 @@ TEXTS = {
             "🔙 Geri",
 
         "loading":
-            "⏳ İndiriliyor...\n\n"
+            "⏳ <b>AliBoot | İsteğiniz hazırlanıyor</b>\n\n"
+            "👤 Kullanıcı: {username}\n"
             "🌐 Platform: {website}\n"
             "🎚 Kalite: {quality}\n\n"
-            "Lütfen bekleyin...",
+            "⚙️ Bağlantı işleniyor ve dosyanız hazırlanıyor...\n"
+            "🚀 Dosya boyutuna ve platform hızına bağlı olarak biraz sürebilir.\n\n"
+            "💙 AliBoot sizin için çalışıyor. Lütfen bekleyin...",
 
         "uploading":
             "✅ İndirme tamamlandı!\n\n"
@@ -621,12 +643,18 @@ TEXTS = {
             "🌐 Sprache auswählen:",
 
         "welcome":
-            "🎬 Willkommen beim Download-Bot ❤️\n\n"
-            "🚀 Senden Sie einen Videolink.\n\n"
-            "📺 Mehrere Videoqualitäten\n"
-            "🎵 MP3-Audio\n"
-            "⚡ Komplett kostenlos\n\n"
-            "🔗 Link senden:",
+            "✨ Willkommen bei AliBoot ✨\n\n"
+            "🚀 Laden Sie Ihre Lieblingsvideos schnell und einfach von beliebten Plattformen herunter.\n\n"
+            "🎬 Mehrere Videoqualitäten\n"
+            "🎵 Hochwertige Audioextraktion\n"
+            "⚡ Schnelle und zuverlässige Downloads\n"
+            "🌐 Unterstützung mehrerer Plattformen\n\n"
+            "📎 Senden Sie einfach Ihren Videolink und AliBoot erledigt den Rest.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 AliBoot\n"
+            "💙 Schnell • Einfach • Kostenlos\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Viel Spaß beim Download! 🚀",
 
         "language_saved":
             "✅ Sprache erfolgreich geändert.",
@@ -687,10 +715,13 @@ TEXTS = {
             "🔙 Zurück",
 
         "loading":
-            "⏳ Download läuft...\n\n"
+            "⏳ <b>AliBoot | Anfrage wird vorbereitet</b>\n\n"
+            "👤 Benutzer: {username}\n"
             "🌐 Plattform: {website}\n"
             "🎚 Qualität: {quality}\n\n"
-            "Bitte warten...",
+            "⚙️ Link wird verarbeitet und Ihre Datei wird vorbereitet...\n"
+            "🚀 Je nach Dateigröße und Plattformgeschwindigkeit kann dies einen Moment dauern.\n\n"
+            "💙 AliBoot arbeitet für Sie. Bitte warten...",
 
         "uploading":
             "✅ Download abgeschlossen!\n\n"
@@ -3600,6 +3631,16 @@ async def download_media(
 
     await query.edit_message_text(
         TEXTS[language]["loading"].format(
+            username=(
+                f"@{user.username}"
+                if user.username
+                else {
+                    "ar": "غير محدد",
+                    "en": "Not specified",
+                    "tr": "Belirtilmemiş",
+                    "de": "Nicht angegeben",
+                }.get(language, "غير محدد")
+            ),
             website=website,
             quality=quality_name
         )
