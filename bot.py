@@ -3038,29 +3038,36 @@ async def download_with_fallback(
                 candidate_info["duration_ms"],
             )
 
-        except (
-            asyncio.TimeoutError,
-            asyncio.CancelledError,
-        ):
+        except asyncio.TimeoutError:
             candidate_info["status"] = "timeout"
-            candidate_info["exception_type"] = (
-                "TimeoutError"
-                if isinstance(
-                    sys.exc_info()[1],
-                    asyncio.TimeoutError,
-                )
-                else "CancelledError"
-            )
-
+            candidate_info["exception_type"] = "TimeoutError"
             candidate_info["error_message"] = (
                 "Direct fallback candidate timed out."
             )
-
             candidate_info["duration_ms"] = int(
                 (time.monotonic() - candidate_started_at)
                 * 1000
             )
 
+            logger.warning(
+                "Direct fallback candidate %d/%d timed out for %s",
+                candidate_index,
+                len(candidates),
+                redact_url(direct_url),
+            )
+
+            return None, last_stdout, last_stderr, diagnostics
+
+        except asyncio.CancelledError:
+            candidate_info["status"] = "cancelled"
+            candidate_info["exception_type"] = "CancelledError"
+            candidate_info["error_message"] = (
+                "Direct fallback candidate was cancelled."
+            )
+            candidate_info["duration_ms"] = int(
+                (time.monotonic() - candidate_started_at)
+                * 1000
+            )
             raise
 
         except Exception as exc:
