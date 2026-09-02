@@ -2732,6 +2732,9 @@ async def download_with_yoinku(
             return result, diagnostics
 
         except (OSError, TimeoutError) as exc:
+            http_code = getattr(exc, "code", None)
+            if http_code is not None:
+                diagnostics["http_status"] = http_code
             diagnostics["exception_type"] = type(
                 exc
             ).__name__
