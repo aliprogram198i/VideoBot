@@ -14,7 +14,7 @@ import time
 import uuid
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPError, HTTPRedirectHandler, Request, build_opener, urlopen
 
 from telegram import (
     Update,
@@ -2730,6 +2730,47 @@ async def download_with_yoinku(
             })
 
             return result, diagnostics
+
+        except HTTPError as exc:
+            diagnostics["http_status"] = getattr(exc, "code", None)
+            diagnostics["exception_type"] = type(exc).__name__
+
+            retry_after = None
+            try:
+                retry_after = exc.headers.get("Retry-After")
+            except Exception:
+                retry_after = None
+
+            diagnostics["retry_after"] = retry_after
+            diagnostics["error_message"] = (
+                sanitize_error_for_storage(str(exc))
+            )
+
+            logger.warning(
+                "Yoinku HTTP failure on attempt %d: %s (HTTP status: %s, Retry-After: %s)",
+                attempt + 1,
+                type(exc).__name__,
+                diagnostics.get("http_status"),
+                retry_after,
+            )
+
+            if getattr(exc, "code", None) == 429:
+                break
+
+            if time.monotonic() >= fetch_deadline:
+                break
+
+            if attempt < 2:
+                remaining_time = (
+                    fetch_deadline - time.monotonic()
+                )
+
+                if remaining_time <= 0:
+                    break
+
+                await asyncio.sleep(
+                    min(2 ** attempt, remaining_time)
+                )
 
         except (OSError, TimeoutError) as exc:
             http_code = getattr(exc, "code", None)
