@@ -3052,6 +3052,249 @@ async def download_with_fallback(
 
 
 
+async def split_video_for_telegram(
+    media_file,
+    output_dir,
+    max_part_bytes,
+):
+    """
+    Split a large video into Telegram-safe parts without re-encoding.
+
+    FFmpeg uses stream copy (-c copy), so the original video/audio
+    quality is preserved. The initial number of parts is estimated
+    from the original file size, then oversized parts are split again.
+    """
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    original_size = os.path.getsize(media_file)
+
+    initial_parts = max(
+        2,
+        (original_size + max_part_bytes - 1) // max_part_bytes,
+    )
+
+    probe_process = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        media_file,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    probe_stdout, probe_stderr = await probe_process.communicate()
+
+    if probe_process.returncode != 0:
+        raise RuntimeError(
+            "ffprobe failed: "
+            + probe_stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+        )
+
+    try:
+        duration = float(
+            probe_stdout.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Could not determine video duration"
+        ) from exc
+
+    if duration <= 0:
+        raise RuntimeError("Invalid video duration")
+
+    async def create_part(
+        source_file,
+        start_time,
+        part_duration,
+        output_file,
+    ):
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{start_time:.3f}",
+            "-i",
+            source_file,
+            "-t",
+            f"{part_duration:.3f}",
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-reset_timestamps",
+            "1",
+            output_file,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        _, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            raise RuntimeError(
+                "FFmpeg split failed: "
+                + stderr.decode(
+                    "utf-8",
+                    errors="replace",
+                ).strip()
+            )
+
+        if not os.path.isfile(output_file):
+            raise RuntimeError(
+                f"FFmpeg did not create: {output_file}"
+            )
+
+    # Initial split.
+    initial_duration = duration / initial_parts
+    initial_files = []
+
+    for index in range(initial_parts):
+        start_time = initial_duration * index
+
+        if index == initial_parts - 1:
+            part_duration = max(
+                0.1,
+                duration - start_time,
+            )
+        else:
+            part_duration = initial_duration
+
+        output_file = os.path.join(
+            output_dir,
+            f"split_{index + 1:04d}.mp4",
+        )
+
+        await create_part(
+            media_file,
+            start_time,
+            part_duration,
+            output_file,
+        )
+
+        initial_files.append(output_file)
+
+    # Recursively split any part that is still too large.
+    final_files = []
+
+    async def process_part(source_file, part_number):
+        source_size = os.path.getsize(source_file)
+
+        if source_size <= max_part_bytes:
+            final_files.append(source_file)
+            return
+
+        probe = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            source_file,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        probe_out, probe_err = await probe.communicate()
+
+        if probe.returncode != 0:
+            raise RuntimeError(
+                "ffprobe failed while checking split part: "
+                + probe_err.decode(
+                    "utf-8",
+                    errors="replace",
+                ).strip()
+            )
+
+        try:
+            part_duration = float(
+                probe_out.decode(
+                    "utf-8",
+                    errors="replace",
+                ).strip()
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Could not determine duration of {source_file}"
+            ) from exc
+
+        if part_duration <= 1.0:
+            raise RuntimeError(
+                f"Unable to safely split oversized part: {source_file}"
+            )
+
+        midpoint = part_duration / 2.0
+
+        stem = Path(source_file).stem
+
+        first_file = os.path.join(
+            output_dir,
+            f"{stem}_a.mp4",
+        )
+
+        second_file = os.path.join(
+            output_dir,
+            f"{stem}_b.mp4",
+        )
+
+        await create_part(
+            source_file,
+            0,
+            midpoint,
+            first_file,
+        )
+
+        await create_part(
+            source_file,
+            midpoint,
+            part_duration - midpoint,
+            second_file,
+        )
+
+        try:
+            os.remove(source_file)
+        except OSError:
+            pass
+
+        await process_part(
+            first_file,
+            part_number * 2,
+        )
+
+        await process_part(
+            second_file,
+            part_number * 2 + 1,
+        )
+
+    for index, part_file in enumerate(initial_files, start=1):
+        await process_part(
+            part_file,
+            index,
+        )
+
+    if not final_files:
+        raise RuntimeError("No final video parts were created")
+
+    final_files.sort()
+
+    return final_files
+
+
 async def download_media(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -3831,44 +4074,90 @@ async def download_media(
             print("=======================")
             print()
 
-            if video_size_bytes > MAX_TELEGRAM_VIDEO_BYTES:
-                await query.edit_message_text(
-                    TEXTS[language]["file_error"]
-                )
-                return
-
             await query.edit_message_text(
                 TEXTS[language]["uploading"]
             )
 
-            with open(
-                media_file,
-                "rb"
-            ) as video:
+            username_display = (
+                f"@{user.username}"
+                if user.username
+                else (
+                    user.first_name
+                    or "صديقي"
+                )
+            )
 
-                await context.bot.send_video(
-                    chat_id=update.effective_chat.id,
-                    video=video,
-                    caption=(
-                        TEXTS[language]["video_done"]
-                        .format(
-                            quality=quality_name,
-                            username=(
-                                f"@{user.username}"
-                                if user.username
-                                else (
-                                    user.first_name
-                                    or "صديقي"
-                                )
-                            )
-                        )
-                    ),
-                    read_timeout=600,
-                    write_timeout=600,
-                    connect_timeout=60,
-                    pool_timeout=60,
+            video_caption = (
+                TEXTS[language]["video_done"]
+                .format(
+                    quality=quality_name,
+                    username=username_display,
+                )
+            )
+
+            if video_size_bytes <= MAX_TELEGRAM_VIDEO_BYTES:
+                # فيديو ضمن الحد: إرساله كما هو بدون أي تعديل.
+                with open(
+                    media_file,
+                    "rb",
+                ) as video:
+                    await context.bot.send_video(
+                        chat_id=update.effective_chat.id,
+                        video=video,
+                        caption=video_caption,
+                        read_timeout=600,
+                        write_timeout=600,
+                        connect_timeout=60,
+                        pool_timeout=60,
+                    )
+            else:
+                # فيديو أكبر من الحد: تقسيمه بدون إعادة ترميز.
+                split_dir = os.path.join(
+                    temp_dir,
+                    "video_parts",
                 )
 
+                # 47 MB حد داخلي آمن، مع إبقاء Telegram limit عند 49 MB.
+                split_limit_bytes = 47 * 1024 * 1024
+
+                part_files = await split_video_for_telegram(
+                    media_file=media_file,
+                    output_dir=split_dir,
+                    max_part_bytes=split_limit_bytes,
+                )
+
+                total_parts = len(part_files)
+
+                for part_index, part_file in enumerate(
+                    part_files,
+                    start=1,
+                ):
+                    part_size = os.path.getsize(part_file)
+
+                    if part_size > MAX_TELEGRAM_VIDEO_BYTES:
+                        raise RuntimeError(
+                            "A generated video part still exceeds "
+                            f"Telegram limit: {part_file}"
+                        )
+
+                    part_caption = (
+                        f"📹 الجزء {part_index} من {total_parts}\n"
+                        f"{video_caption}"
+                    )
+
+                    with open(
+                        part_file,
+                        "rb",
+                    ) as video_part:
+                        await context.bot.send_video(
+                            chat_id=update.effective_chat.id,
+                            video=video_part,
+                            caption=part_caption,
+                            read_timeout=600,
+                            write_timeout=600,
+                            connect_timeout=60,
+                            pool_timeout=60,
+                        )
         # حفظ التحميل
         # ----------------------------------------------------
 
