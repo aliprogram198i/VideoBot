@@ -231,16 +231,18 @@ TEXTS = {
             "🌐 اختر لغة البوت:",
 
         "welcome":
-            "✨ مرحبًا بك في AliBot ✨\n\n"
-            "🚀 سرعة استثنائية • ⚡ أداء فائق\n"
-            "🛡️ أمان وخصوصية • 🔐 موثوقية عالية\n"
-            "🤖 ذكاء متقدم • 🎯 معالجة دقيقة\n"
-            "🎬 جودة فائقة • 🎵 صوت نقي\n"
-            "🌐 دعم متعدد المنصات\n\n"
-            "━━━━━━━━━━━━━━━━━━\n\n"
-            "💎 AliBot\n"
-            "ذكاء في المعالجة • سرعة في التنفيذ • جودة بلا تنازل\n\n"
-            "📎 أرسل الرابط فقط، ودع AliBot يتولى الباقي.",
+            "🤖 ماذا يمكن لهذا البوت فعله؟\n\n"
+            "🚀 AliBot - الأسرع لتحميل الفيديوهات\n\n"
+            "حمّل مقاطعك المفضلة من تيك توك، إنستا، يوتيوب، وفيسبوك "
+            "بجودة HD وبدون علامة مائية بضغطة زر.\n\n"
+            "⚡ فورًا.\n\n"
+            "✨ مميزات البوت\n\n"
+            "📥 تحميل فوري: أرسل الرابط واستلم الفيديو.\n\n"
+            "🛡️ بدون حقوق: احفظ المقاطع بنقائها الأصلي.\n"
+            "🆓 مجاني وآمن: بدون إعلانات ولا حدود للتحميل.\n\n"
+            "👥 شارك البوت مع أصدقائك عبر المعرف "
+            "@MyVideoDownloaderAliBot لتعم الفائدة.\n\n"
+            "👇 اضغط على زر ابدأ بالأسفل وانطلق!",
 
         "language_saved":
             "✅ تم تغيير لغة البوت بنجاح.",
@@ -2088,13 +2090,45 @@ async def start(
         return
 
     await update.message.reply_text(
-        TEXTS[language]["welcome"]
+        TEXTS[language]["welcome"],
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "▶️ ابدأ الآن",
+                    callback_data="start_button"
+                )
+            ]
+        ])
     )
 
 
 # ============================================================
 # تغيير اللغة
 # ============================================================
+
+async def start_button_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+
+    await query.answer()
+
+    user = update.effective_user
+
+    if is_banned(user.id):
+        await query.message.reply_text(
+            TEXTS["ar"]["banned"]
+        )
+        return
+
+    language = get_language(user.id) or "ar"
+
+    await query.message.reply_text(
+        TEXTS[language]["send_link"]
+    )
+
 
 async def language_command(
     update: Update,
@@ -7292,6 +7326,13 @@ def main():
         CommandHandler(
             "start",
             start
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            start_button_callback,
+            pattern=r"^start_button$"
         )
     )
 
