@@ -67,7 +67,11 @@ YOINKU_DOWNLOAD_TIMEOUT = 300
 PROCESS_SHUTDOWN_TIMEOUT = 10
 MAX_HTML_BYTES = 5 * 1024 * 1024
 MAX_VIDEO_DOWNLOAD_BYTES = 500 * 1024 * 1024
-MAX_AUDIO_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_AUDIO_DOWNLOAD_BYTES = 500 * 1024 * 1024
+MAX_TELEGRAM_AUDIO_MB = 47
+MAX_TELEGRAM_AUDIO_BYTES = (
+    MAX_TELEGRAM_AUDIO_MB * 1024 * 1024
+)
 MAX_YOINKU_RESPONSE_BYTES = 1 * 1024 * 1024
 MIN_FREE_SPACE_BYTES = 256 * 1024 * 1024
 MAX_BROADCAST_LENGTH = 4000
@@ -190,12 +194,48 @@ def read_limited(response, max_bytes):
 
 
 def final_output_from_yt_dlp(stdout_text, temp_dir, extensions):
-    """Use yt-dlp's explicit after_move output, never directory iteration."""
+    """Resolve the final yt-dlp artifact safely from explicit output first."""
     base = os.path.realpath(temp_dir) + os.sep
+
+    # Primary source: yt-dlp --print after_move:filepath
     for line in reversed(stdout_text.splitlines()):
         candidate = line.strip()
-        if candidate.lower().endswith(extensions) and os.path.realpath(candidate).startswith(base) and os.path.isfile(candidate):
-            return candidate
+        if (
+            candidate
+            and candidate.lower().endswith(extensions)
+            and os.path.realpath(candidate).startswith(base)
+            and os.path.isfile(candidate)
+        ):
+            return os.path.realpath(candidate)
+
+    # Defensive fallback: only inspect direct files created in our
+    # trusted temporary directory. Never recurse outside temp_dir.
+    try:
+        candidates = []
+        for name in os.listdir(temp_dir):
+            candidate = os.path.join(temp_dir, name)
+            real_candidate = os.path.realpath(candidate)
+
+            if not real_candidate.startswith(base):
+                continue
+            if not os.path.isfile(real_candidate):
+                continue
+            if not name.startswith("download_"):
+                continue
+            if not name.lower().endswith(extensions):
+                continue
+
+            candidates.append(real_candidate)
+
+        if candidates:
+            candidates.sort(
+                key=lambda p: os.path.getmtime(p),
+                reverse=True,
+            )
+            return candidates[0]
+    except OSError:
+        pass
+
     return None
 
 
@@ -3462,6 +3502,270 @@ async def split_video_for_telegram(
     return final_files
 
 
+async def split_audio_for_telegram(
+    media_file,
+    temp_dir,
+    max_part_bytes=47 * 1024 * 1024,
+):
+    """
+    Split a large audio file into Telegram-safe parts.
+
+    The first split is based on the total byte size and duration.
+    Parts are validated afterwards, and any oversized part is
+    recursively split again. Audio is stream-copied whenever possible;
+    no re-encoding is performed.
+    """
+    if not os.path.isfile(media_file):
+        raise FileNotFoundError(f"Audio file not found: {media_file}")
+
+    total_size = os.path.getsize(media_file)
+
+    if total_size <= max_part_bytes:
+        return [media_file]
+
+    split_root = os.path.join(temp_dir, "audio_parts")
+    os.makedirs(split_root, exist_ok=True)
+
+    duration_process = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        media_file,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    duration_stdout, duration_stderr = await communicate_with_cleanup(
+        duration_process,
+        60,
+    )
+
+    if duration_process.returncode != 0:
+        raise RuntimeError(
+            "ffprobe failed while preparing audio split: "
+            + duration_stderr.decode(errors="ignore")[-2000:]
+        )
+
+    duration_text = duration_stdout.decode(errors="ignore").strip()
+
+    try:
+        duration = float(duration_text)
+    except (TypeError, ValueError):
+        raise RuntimeError(
+            f"Invalid audio duration returned by ffprobe: {duration_text!r}"
+        )
+
+    if duration <= 0:
+        raise RuntimeError("Audio duration is not positive")
+
+    # Initial estimate. A safety margin avoids producing parts too close
+    # to Telegram's upload ceiling.
+    initial_parts = max(
+        2,
+        (total_size + max_part_bytes - 1) // max_part_bytes,
+    )
+
+    segment_time = duration / initial_parts
+
+    initial_pattern = os.path.join(
+        split_root,
+        "part_%04d.mp3",
+    )
+
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        media_file,
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        "-f",
+        "segment",
+        "-segment_time",
+        str(segment_time),
+        "-reset_timestamps",
+        "1",
+        initial_pattern,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    _, stderr = await communicate_with_cleanup(
+        process,
+        DOWNLOAD_TIMEOUT,
+    )
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            "ffmpeg failed while splitting audio: "
+            + stderr.decode(errors="ignore")[-3000:]
+        )
+
+    generated = sorted(
+        os.path.join(split_root, name)
+        for name in os.listdir(split_root)
+        if name.startswith("part_")
+        and name.lower().endswith(".mp3")
+        and os.path.isfile(os.path.join(split_root, name))
+    )
+
+    if not generated:
+        raise RuntimeError("ffmpeg produced no audio parts")
+
+    async def split_oversized_part(source_file, depth=0):
+        if os.path.getsize(source_file) <= max_part_bytes:
+            return [source_file]
+
+        if depth >= 8:
+            raise RuntimeError(
+                "Unable to reduce an audio part below Telegram limit "
+                f"after {depth} recursive splits: {source_file}"
+            )
+
+        probe = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            source_file,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        probe_stdout, probe_stderr = await communicate_with_cleanup(
+            probe,
+            60,
+        )
+
+        if probe.returncode != 0:
+            raise RuntimeError(
+                "ffprobe failed on oversized audio part: "
+                + probe_stderr.decode(errors="ignore")[-2000:]
+            )
+
+        try:
+            part_duration = float(
+                probe_stdout.decode(errors="ignore").strip()
+            )
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                "Invalid duration for oversized audio part"
+            )
+
+        if part_duration <= 1:
+            raise RuntimeError(
+                "Oversized audio part cannot be safely split further"
+            )
+
+        recursive_dir = os.path.join(
+            split_root,
+            f"recursive_{depth}",
+        )
+        os.makedirs(recursive_dir, exist_ok=True)
+
+        pattern = os.path.join(
+            recursive_dir,
+            f"part_{depth}_%04d.mp3",
+        )
+
+        child_process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            source_file,
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-f",
+            "segment",
+            "-segment_time",
+            str(part_duration / 2),
+            "-reset_timestamps",
+            "1",
+            pattern,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        _, child_stderr = await communicate_with_cleanup(
+            child_process,
+            DOWNLOAD_TIMEOUT,
+        )
+
+        if child_process.returncode != 0:
+            raise RuntimeError(
+                "ffmpeg failed during recursive audio split: "
+                + child_stderr.decode(errors="ignore")[-3000:]
+            )
+
+        children = sorted(
+            os.path.join(recursive_dir, name)
+            for name in os.listdir(recursive_dir)
+            if name.startswith(f"part_{depth}_")
+            and name.lower().endswith(".mp3")
+            and os.path.isfile(os.path.join(recursive_dir, name))
+        )
+
+        if len(children) < 2:
+            raise RuntimeError(
+                "Recursive audio split did not produce multiple parts"
+            )
+
+        result = []
+        for child in children:
+            result.extend(
+                await split_oversized_part(child, depth + 1)
+            )
+
+        return result
+
+    final_parts = []
+    for part in generated:
+        final_parts.extend(
+            await split_oversized_part(part)
+        )
+
+    # Final hard validation.
+    final_parts = sorted(
+        final_parts,
+        key=lambda p: os.path.getmtime(p),
+    )
+
+    if not final_parts:
+        raise RuntimeError("No final audio parts available")
+
+    for part in final_parts:
+        if not os.path.isfile(part):
+            raise RuntimeError(
+                f"Audio part disappeared before delivery: {part}"
+            )
+
+        part_size = os.path.getsize(part)
+        if part_size > max_part_bytes:
+            raise RuntimeError(
+                f"Audio part exceeds Telegram-safe limit: "
+                f"{part_size} bytes"
+            )
+
+    return final_parts
+
+
 async def download_media(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -3830,7 +4134,7 @@ async def download_media(
             print("=========================")
             print()
 
-        if process.returncode != 0:
+        if process.returncode != 0 or not media_file:
 
             # تسجيل فشل yt-dlp لتحليله لاحقًا بواسطة Gemini
             last_error_stage = "yt-dlp"
@@ -4180,36 +4484,61 @@ async def download_media(
 
         # ----------------------------------------------------
         # ----------------------------------------------------
-        # إرسال الصوت مباشرة بدون ضغط
+        # ----------------------------------------------------
+        # إرسال الصوت مع تقسيم الملفات الكبيرة
         # ----------------------------------------------------
         if is_audio:
             await query.edit_message_text(
                 TEXTS[language]["uploading"]
             )
 
+            if not os.path.isfile(media_file):
+                await query.edit_message_text(
+                    TEXTS[language]["file_error"]
+                )
+                return
+
+            final_size = os.path.getsize(media_file)
             print()
             print("===== FINAL AUDIO FILE =====")
             print(f"File: {media_file}")
-
-            if os.path.isfile(media_file):
-                final_size = os.path.getsize(media_file)
-                print(
-                    f"Audio size: "
-                    f"{final_size / 1024 / 1024:.2f} MB"
-                )
-
+            print(
+                f"Audio size: "
+                f"{final_size / 1024 / 1024:.2f} MB"
+            )
             print("============================")
             print()
 
-            with open(
-                media_file,
-                "rb"
-            ) as audio:
+            audio_parts = await split_audio_for_telegram(
+                media_file=media_file,
+                temp_dir=temp_dir,
+                max_part_bytes=MAX_TELEGRAM_AUDIO_BYTES,
+            )
 
-                await context.bot.send_audio(
-                    chat_id=update.effective_chat.id,
-                    audio=audio,
-                    caption=(
+            total_parts = len(audio_parts)
+
+            print("===== AUDIO DELIVERY =====")
+            print(f"Parts: {total_parts}")
+
+            for part_index, part_file in enumerate(
+                audio_parts,
+                start=1,
+            ):
+                part_size = os.path.getsize(part_file)
+
+                if part_size > MAX_TELEGRAM_AUDIO_BYTES:
+                    raise RuntimeError(
+                        "Audio part exceeds Telegram-safe size: "
+                        f"{part_size} bytes"
+                    )
+
+                print(
+                    f"Part {part_index}/{total_parts}: "
+                    f"{part_size / 1024 / 1024:.2f} MB"
+                )
+
+                if total_parts == 1:
+                    caption = (
                         TEXTS[language]["audio_done"]
                         .format(
                             quality=quality_name,
@@ -4220,17 +4549,44 @@ async def download_media(
                                     user.first_name
                                     or "صديقي"
                                 )
-                            )
+                            ),
                         )
-                    ),
-                    read_timeout=600,
-                    write_timeout=600,
-                    connect_timeout=60,
-                    pool_timeout=60,
-                )
+                    )
+                else:
+                    caption = (
+                        f"🎵 الجزء {part_index} من {total_parts}\n"
+                        + TEXTS[language]["audio_done"]
+                        .format(
+                            quality=quality_name,
+                            username=(
+                                f"@{user.username}"
+                                if user.username
+                                else (
+                                    user.first_name
+                                    or "صديقي"
+                                )
+                            ),
+                        )
+                    )
+
+                with open(part_file, "rb") as audio:
+                    await context.bot.send_audio(
+                        chat_id=update.effective_chat.id,
+                        audio=audio,
+                        caption=caption,
+                        read_timeout=600,
+                        write_timeout=600,
+                        connect_timeout=60,
+                        pool_timeout=60,
+                    )
+
+            print("==========================")
+            print()
 
         # ----------------------------------------------------
         # إرسال الفيديو مباشرة بدون ضغط أو تخفيض جودة
+        # ----------------------------------------------------
+
         # ----------------------------------------------------
         else:
             if not os.path.isfile(media_file):
