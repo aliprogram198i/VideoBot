@@ -3915,7 +3915,7 @@ async def download_media(
 
         is_audio = True
 
-        format_option = "bestaudio/best"
+        format_option = "bestaudio/best[acodec!=none]"
 
         quality_name = "Best audio"
 
@@ -3925,7 +3925,7 @@ async def download_media(
 
         is_audio = True
 
-        format_option = "bestaudio/best"
+        format_option = "bestaudio/best[acodec!=none]"
 
         quality_name = "320 kbps"
 
@@ -3935,7 +3935,7 @@ async def download_media(
 
         is_audio = True
 
-        format_option = "bestaudio/best"
+        format_option = "bestaudio/best[acodec!=none]"
 
         quality_name = "256 kbps"
 
@@ -3945,7 +3945,7 @@ async def download_media(
 
         is_audio = True
 
-        format_option = "bestaudio/best"
+        format_option = "bestaudio/best[acodec!=none]"
 
         quality_name = "192 kbps"
 
@@ -3955,7 +3955,7 @@ async def download_media(
 
         is_audio = True
 
-        format_option = "bestaudio/best"
+        format_option = "bestaudio/best[acodec!=none]"
 
         quality_name = "128 kbps"
 
@@ -4186,6 +4186,24 @@ async def download_media(
             print()
 
             # ------------------------------------------------
+            # Fallback policy
+            # ------------------------------------------------
+            # YouTube has a dedicated yt-dlp extractor.
+            # Its generic HTML/direct-media fallback is not an
+            # independent recovery path for YouTube.
+            hostname = (urlparse(url).hostname or "").lower()
+            is_youtube = hostname in {
+                "youtube.com",
+                "www.youtube.com",
+                "m.youtube.com",
+                "music.youtube.com",
+                "youtu.be",
+                "www.youtu.be",
+                "youtube-nocookie.com",
+                "www.youtube-nocookie.com",
+            }
+
+            # ------------------------------------------------
             # Yoinku fallback
             # يتم تجربته قبل direct fallback لتقليل زمن الفشل.
             # ------------------------------------------------
@@ -4208,6 +4226,15 @@ async def download_media(
             if yoinku_file:
                 fallback_file = yoinku_file
                 fallback_diagnostics = {}
+            elif is_youtube:
+                fallback_file = None
+                fallback_diagnostics = {
+                    "candidate_count": 0,
+                    "skipped": "youtube_direct_fallback_not_applicable",
+                }
+                print(
+                    "ℹ️ Skipping generic direct-media fallback for YouTube"
+                )
             else:
                 fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
                     url=url,
