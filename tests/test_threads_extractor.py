@@ -27,6 +27,16 @@ class ThreadsExtractorTests(unittest.TestCase):
         candidates = extract_threads_media(html, THREADS_URL)
         self.assertTrue(any(item.url == HLS_URL and item.kind == "hls" for item in candidates))
 
+    def test_json_ld_content_url_is_discovered(self):
+        html = f'<script type="application/ld+json">{{"video":{{"contentUrl":"{SIGNED_CDN_URL}"}}}}</script>'
+        candidates = extract_threads_media(html, THREADS_URL)
+        self.assertTrue(any(item.url == SIGNED_CDN_URL for item in candidates))
+
+    def test_open_graph_video_is_discovered_regardless_of_attribute_order(self):
+        html = f'<meta content="{SIGNED_CDN_URL}" property="og:video">'
+        candidates = extract_threads_media(html, THREADS_URL)
+        self.assertTrue(any(item.url == SIGNED_CDN_URL for item in candidates))
+
     def test_generic_extractor_remains_unchanged_for_normal_media(self):
         html = f'<video src="{CDN_URL}"></video>'
         candidates = extract_candidates(html, THREADS_URL)
@@ -35,6 +45,10 @@ class ThreadsExtractorTests(unittest.TestCase):
     def test_non_http_urls_are_rejected(self):
         html = '<script>"video_url":"javascript:alert(1)"</script>'
         self.assertEqual(extract_threads_media(html, THREADS_URL), [])
+
+    def test_invalid_max_candidates_is_rejected(self):
+        with self.assertRaises(ValueError):
+            extract_threads_media('<script></script>', THREADS_URL, max_candidates=0)
 
 
 if __name__ == "__main__":
