@@ -1,0 +1,38 @@
+name: Enable AliBot internal plugins
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  enable-plugins:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply plugin integration
+        run: python3 tools/enable_internal_plugins.py
+
+      - name: Validate plugin layer
+        run: |
+          python3 -m py_compile bot.py plugins/manager.py plugins/core_runtime.py
+          python3 -m unittest tests/test_plugin_manager.py
+
+      - name: Commit plugin integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py
+          if git diff --cached --quiet; then
+            echo "Plugin integration already present."
+          else
+            git commit -m "build: enable AliBot internal plugin layer"
+            git push
+          fi
