@@ -8,8 +8,10 @@ from urllib.parse import urlparse
 
 from .page_fetcher import PageFetcher
 from .smart_extractor import MediaCandidate, extract_candidates
+from .source_url_variants import public_media_variants
 from .threads_extractor import extract_threads_media
 from .threads_ytdlp import extract_threads_with_yt_dlp
+from .universal_ytdlp import extract_with_yt_dlp
 
 
 DEFAULT_MAX_DEPTH = 3
@@ -39,13 +41,10 @@ class EmbedResolver:
     ) -> None:
         if not isinstance(page_fetcher, PageFetcher):
             raise TypeError("page_fetcher must be a PageFetcher")
-
         if max_depth < 0:
             raise ValueError("max_depth must be >= 0")
-
         if max_pages <= 0:
             raise ValueError("max_pages must be > 0")
-
         if max_candidates <= 0:
             raise ValueError("max_candidates must be > 0")
 
@@ -62,6 +61,35 @@ class EmbedResolver:
             or host.endswith(".threads.com")
             or host == "threads.net"
             or host.endswith(".threads.net")
+        )
+
+    @staticmethod
+    def _is_media_candidate(candidate: MediaCandidate) -> bool:
+        return candidate.kind in {"hls", "dash", "progressive"}
+
+    def _add_candidate(
+        self,
+        candidate: MediaCandidate,
+        *,
+        source_page: str,
+        depth: int,
+        all_candidates: list[MediaCandidate],
+        seen_candidates: set[tuple[str, str]],
+    ) -> None:
+        key = (candidate.url, candidate.kind)
+        if key in seen_candidates:
+            return
+        seen_candidates.add(key)
+        all_candidates.append(
+            MediaCandidate(
+                url=candidate.url,
+                kind=candidate.kind,
+                source_page=source_page,
+                discovered_by=candidate.discovered_by,
+                depth=depth,
+                score=candidate.score,
+                metadata=dict(candidate.metadata),
+            )
         )
 
     def _add_threads_ytdlp_candidates(
@@ -81,11 +109,7 @@ class EmbedResolver:
             return
 
         for candidate in threads_ytdlp:
-            key = (candidate.url, candidate.kind)
-            if key in seen_candidates:
-                continue
-            seen_candidates.add(key)
-            all_candidates.append(
+            self._add_candidate(
                 MediaCandidate(
                     url=candidate.url,
                     kind=candidate.kind,
@@ -93,10 +117,60 @@ class EmbedResolver:
                     discovered_by=candidate.discovered_by,
                     depth=depth,
                     score=candidate.confidence,
-                )
+                    metadata={},
+                ),
+                source_page=source_url,
+                depth=depth,
+                all_candidates=all_candidates,
+                seen_candidates=seen_candidates,
             )
             if len(all_candidates) >= self.max_candidates:
                 break
+
+    def _add_universal_ytdlp_candidates(
+        self,
+        source_url: str,
+        *,
+        depth: int,
+        all_candidates: list[MediaCandidate],
+        seen_candidates: set[tuple[str, str]],
+    ) -> None:
+        """Use the installed yt-dlp registry as the broad final extraction layer."""
+        for variant in public_media_variants(source_url):
+            try:
+                extracted = extract_with_yt_dlp(variant)
+            except Exception as exc:
+                log = __import__("logging").getLogger(__name__)
+                log.warning(
+                    "Universal yt-dlp fallback error for %s: %s",
+                    variant,
+                    type(exc).__name__,
+                )
+                continue
+
+            for item in extracted:
+                self._add_candidate(
+                    MediaCandidate(
+                        url=item.url,
+                        kind=item.kind,
+                        source_page=source_url,
+                        discovered_by=item.discovered_by,
+                        depth=depth,
+                        score=item.confidence,
+                        metadata=dict(item.metadata),
+                    ),
+                    source_page=source_url,
+                    depth=depth,
+                    all_candidates=all_candidates,
+                    seen_candidates=seen_candidates,
+                )
+                if len(all_candidates) >= self.max_candidates:
+                    return
+
+            # A successful extraction on the original URL is sufficient; only
+            # use parent/comment variants when the original URL yielded nothing.
+            if extracted:
+                return
 
     def resolve(
         self,
@@ -116,16 +190,11 @@ class EmbedResolver:
 
         while queue and len(visited) < self.max_pages:
             current_url, depth = queue.pop(0)
-
             if current_url in visited:
                 continue
-
             if depth > self.max_depth:
                 continue
 
-            # Threads share URLs must not depend on page_fetcher succeeding.
-            # The dedicated yt-dlp plugin can resolve /share/<id> directly, so
-            # run it first and keep page fetching as a separate fallback path.
             if self._is_threads_url(current_url):
                 self._add_threads_ytdlp_candidates(
                     current_url,
@@ -145,14 +214,19 @@ class EmbedResolver:
             except Exception as exc:
                 if first_error is None:
                     first_error = exc
+                # Even when HTML fetching fails, a native yt-dlp extractor may
+                # still know how to resolve the public media URL.
+                if not self._is_threads_url(current_url):
+                    self._add_universal_ytdlp_candidates(
+                        current_url,
+                        depth=depth,
+                        all_candidates=all_candidates,
+                        seen_candidates=seen_candidates,
+                    )
                 continue
 
             visited.append(current_url)
 
-            # Threads share links can redirect to a canonical /@user/post/... URL.
-            # Keep current_url as the source identity so the share ID remains
-            # available to the platform-specific dynamic resolver, while using
-            # fetched.url as the base for media URLs discovered in the page.
             parsed_host = (urlparse(fetched.url).hostname or "").lower()
             is_threads = (
                 parsed_host == "threads.com"
@@ -162,8 +236,6 @@ class EmbedResolver:
             )
 
             if is_threads:
-                # The direct plugin was already attempted before page fetching.
-                # The existing extractor remains an independent second path.
                 try:
                     threads_candidates = extract_threads_media(
                         fetched.html,
@@ -172,25 +244,16 @@ class EmbedResolver:
                         source_url=current_url,
                     )
                     for candidate in threads_candidates:
-                        key = (candidate.url, candidate.kind)
-                        if key in seen_candidates:
-                            continue
-                        seen_candidates.add(key)
-                        all_candidates.append(
-                            MediaCandidate(
-                                url=candidate.url,
-                                kind=candidate.kind,
-                                source_page=fetched.url,
-                                discovered_by=candidate.discovered_by,
-                                depth=depth,
-                                score=candidate.confidence,
-                            )
+                        self._add_candidate(
+                            candidate,
+                            source_page=fetched.url,
+                            depth=depth,
+                            all_candidates=all_candidates,
+                            seen_candidates=seen_candidates,
                         )
                         if len(all_candidates) >= self.max_candidates:
                             break
                 except (TypeError, ValueError):
-                    # Generic extraction remains available if platform parsing
-                    # receives malformed/unexpected page data.
                     pass
 
             if len(all_candidates) >= self.max_candidates:
@@ -204,11 +267,13 @@ class EmbedResolver:
             )
 
             for candidate in candidates:
-                key = (candidate.url, candidate.kind)
-
-                if key not in seen_candidates:
-                    seen_candidates.add(key)
-                    all_candidates.append(candidate)
+                self._add_candidate(
+                    candidate,
+                    source_page=fetched.url,
+                    depth=depth,
+                    all_candidates=all_candidates,
+                    seen_candidates=seen_candidates,
+                )
 
                 if (
                     candidate.kind == "iframe"
@@ -222,6 +287,22 @@ class EmbedResolver:
 
                 if len(all_candidates) >= self.max_candidates:
                     break
+
+            # The page may contain no explicit media because the player is
+            # generated by JavaScript or represented only in platform metadata.
+            # Let yt-dlp's extractor registry have a chance before declaring
+            # the source unresolved. Threads already has its dedicated path.
+            if not is_threads and not any(
+                self._is_media_candidate(candidate)
+                for candidate in all_candidates
+                if candidate.source_page == fetched.url
+            ):
+                self._add_universal_ytdlp_candidates(
+                    current_url,
+                    depth=depth,
+                    all_candidates=all_candidates,
+                    seen_candidates=seen_candidates,
+                )
 
             if len(all_candidates) >= self.max_candidates:
                 break
