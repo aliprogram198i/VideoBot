@@ -100,11 +100,15 @@ def build_production_smart_extraction_stack(
         max_candidates=max_candidates,
     )
 
+    # Use the same browser-like request headers for candidate probes as for
+    # page fetching. This is important for Meta/CDN media endpoints that can
+    # behave differently when probed with a minimal/default User-Agent.
     network = SmartNetworkAdapter(
         url_validator=url_validator,
         request_factory=request_factory,
         open_function=open_function,
         max_declared_bytes=max_declared_bytes,
+        headers=headers,
     )
 
     validator = CandidateValidator(
