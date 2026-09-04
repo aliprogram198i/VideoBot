@@ -54,6 +54,50 @@ class EmbedResolver:
         self.max_pages = max_pages
         self.max_candidates = max_candidates
 
+    @staticmethod
+    def _is_threads_url(url: str) -> bool:
+        host = (urlparse(url).hostname or "").lower()
+        return (
+            host == "threads.com"
+            or host.endswith(".threads.com")
+            or host == "threads.net"
+            or host.endswith(".threads.net")
+        )
+
+    def _add_threads_ytdlp_candidates(
+        self,
+        source_url: str,
+        *,
+        depth: int,
+        all_candidates: list[MediaCandidate],
+        seen_candidates: set[tuple[str, str]],
+    ) -> None:
+        """Run the isolated Threads yt-dlp plugin independently of page fetching."""
+        try:
+            threads_ytdlp = extract_threads_with_yt_dlp(source_url)
+        except Exception as exc:
+            log = __import__("logging").getLogger(__name__)
+            log.warning("Threads yt-dlp fallback error: %s", type(exc).__name__)
+            return
+
+        for candidate in threads_ytdlp:
+            key = (candidate.url, candidate.kind)
+            if key in seen_candidates:
+                continue
+            seen_candidates.add(key)
+            all_candidates.append(
+                MediaCandidate(
+                    url=candidate.url,
+                    kind=candidate.kind,
+                    source_page=source_url,
+                    discovered_by=candidate.discovered_by,
+                    depth=depth,
+                    score=candidate.confidence,
+                )
+            )
+            if len(all_candidates) >= self.max_candidates:
+                break
+
     def resolve(
         self,
         page_url: str,
@@ -78,6 +122,19 @@ class EmbedResolver:
 
             if depth > self.max_depth:
                 continue
+
+            # Threads share URLs must not depend on page_fetcher succeeding.
+            # The dedicated yt-dlp plugin can resolve /share/<id> directly, so
+            # run it first and keep page fetching as a separate fallback path.
+            if self._is_threads_url(current_url):
+                self._add_threads_ytdlp_candidates(
+                    current_url,
+                    depth=depth,
+                    all_candidates=all_candidates,
+                    seen_candidates=seen_candidates,
+                )
+                if len(all_candidates) >= self.max_candidates:
+                    break
 
             try:
                 fetched = self.page_fetcher.fetch(
@@ -105,32 +162,8 @@ class EmbedResolver:
             )
 
             if is_threads:
-                # First ask the official installed yt-dlp plugin. It understands
-                # the current Threads server-rendered payload and /share/<id>
-                # URLs directly. This is deliberately limited to public URLs.
-                try:
-                    threads_ytdlp = extract_threads_with_yt_dlp(current_url)
-                    for candidate in threads_ytdlp:
-                        key = (candidate.url, candidate.kind)
-                        if key in seen_candidates:
-                            continue
-                        seen_candidates.add(key)
-                        all_candidates.append(
-                            MediaCandidate(
-                                url=candidate.url,
-                                kind=candidate.kind,
-                                source_page=current_url,
-                                discovered_by=candidate.discovered_by,
-                                depth=depth,
-                                score=candidate.confidence,
-                            )
-                        )
-                        if len(all_candidates) >= self.max_candidates:
-                            break
-                except Exception as exc:
-                    log = __import__("logging").getLogger(__name__)
-                    log.warning("Threads yt-dlp fallback error: %s", type(exc).__name__)
-
+                # The direct plugin was already attempted before page fetching.
+                # The existing extractor remains an independent second path.
                 try:
                     threads_candidates = extract_threads_media(
                         fetched.html,
