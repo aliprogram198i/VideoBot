@@ -126,7 +126,14 @@ def _extract_meta_content(page: str) -> list[tuple[str, str]]:
     return results
 
 
-def _extract_json_urls(value: object, page_url: str, result: list[ThreadsMedia], seen: set[tuple[str, str]], source: str, confidence: int) -> None:
+def _extract_json_urls(
+    value: object,
+    page_url: str,
+    result: list[ThreadsMedia],
+    seen: set[tuple[str, str]],
+    source: str,
+    confidence: int,
+) -> None:
     """Recursively inspect resolver JSON without assuming one fixed schema."""
     if isinstance(value, dict):
         for key, child in value.items():
@@ -141,10 +148,24 @@ def _extract_json_urls(value: object, page_url: str, result: list[ThreadsMedia],
                     kind = _kind(url) or "progressive"
                     _add(result, seen, url, kind, source, confidence)
             else:
-                _extract_json_urls(child, page_url, result, seen, source, confidence)
+                _extract_json_urls(
+                    child,
+                    page_url,
+                    result,
+                    seen,
+                    source,
+                    confidence,
+                )
     elif isinstance(value, list):
         for item in value:
-            _extract_json_urls(item, page_url, result, seen, source, confidence)
+            _extract_json_urls(
+                item,
+                page_url,
+                result,
+                seen,
+                source,
+                confidence,
+            )
 
 
 def _dynamic_resolver_base() -> str:
@@ -219,6 +240,7 @@ def extract_threads_media(
     page_url: str,
     *,
     max_candidates: int = 50,
+    source_url: str | None = None,
 ) -> list[ThreadsMedia]:
     """Extract publicly exposed Threads video candidates from HTML/JSON text."""
     if not isinstance(page, str):
@@ -229,7 +251,11 @@ def extract_threads_media(
     if max_candidates <= 0:
         raise ValueError("max_candidates must be greater than zero")
 
-    original_page_url = page_url
+    original_page_url = source_url or page_url
+    parsed_source = urlparse(original_page_url)
+    if parsed_source.scheme not in {"http", "https"} or not parsed_source.hostname:
+        raise ValueError("source_url must be an absolute HTTP(S) URL")
+
     page = _decode(page)
     result: list[ThreadsMedia] = []
     seen: set[tuple[str, str]] = set()
