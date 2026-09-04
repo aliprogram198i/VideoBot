@@ -34,6 +34,7 @@ RUN python tools/patch_runtime_features.py \
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 
 ENV TMPDIR=/app/tmp
+ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 USER videobot
 
 CMD ["python", "-u", "bot.py"]
