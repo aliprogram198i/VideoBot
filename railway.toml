@@ -1,0 +1,5 @@
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "python tools/enable_internal_plugins.py && python -u bot.py"
