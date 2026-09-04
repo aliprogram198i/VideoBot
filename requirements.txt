@@ -6,7 +6,7 @@ httpx==0.28.1
 idna==3.19
 python-telegram-bot==22.8
 yt-dlp==2026.8.19
-google-genai==1.43.0
+google-genai==2.22.0
 
 yt-dlp-ejs==0.8.0
 # Dedicated Threads extractor: supports threads.com/threads.net post and /share URLs.
