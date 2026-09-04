@@ -13,7 +13,7 @@ import json
 import time
 import uuid
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, urljoin
 from urllib.request import HTTPError, HTTPRedirectHandler, Request, build_opener, urlopen
 
 from telegram import (
@@ -2447,141 +2447,150 @@ async def show_audio_menu(
 
 async def extract_direct_media_urls(page_url):
     """
-    محاولة اكتشاف روابط الفيديو المباشرة من صفحات المواقع
-    التي لا يملك yt-dlp لها extractor مخصصًا.
+    استخراج روابط الوسائط المباشرة مع دعم صفحات الفيديو متعددة السيرفرات.
+    يتم فحص iframe / data-embed-url ثم تجربة جميع السيرفرات بالتتابع.
     """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 15) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/139.0 Mobile Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": page_url,
+    }
 
-    def fetch_page():
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 15) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/139.0 Mobile Safari/537.36"
-            ),
-            "Accept": (
-                "text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        }
+    async def fetch(url):
+        def _fetch():
+            request = Request(url, headers=headers)
+            with safe_urlopen(
+                request,
+                timeout=30,
+                max_bytes=MAX_HTML_BYTES,
+                expected_content_types={"text/html", "application/xhtml+xml"},
+            ) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                return read_limited(
+                    response, MAX_HTML_BYTES
+                ).decode(charset, errors="ignore")
+        return await asyncio.to_thread(_fetch)
 
-        request = Request(
-            page_url,
-            headers=headers
+    def normalize_url(value, base_url):
+        value = html.unescape(value).strip()
+        value = (
+            value.replace("\\/", "/")
+            .replace("\\u0026", "&")
+            .replace("\\u003d", "=")
+            .replace("\\u003F", "?")
+            .replace("\\u003f", "?")
         )
 
-        with safe_urlopen(
-            request,
-            timeout=30,
-            max_bytes=MAX_HTML_BYTES,
-            expected_content_types={"text/html", "application/xhtml+xml"},
-        ) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            return read_limited(response, MAX_HTML_BYTES).decode(charset, errors="ignore")
+        if value.startswith("//"):
+            return "https:" + value
+
+        return urljoin(base_url, value)
+
+    def extract_media(html_text, base_url):
+        found = []
+
+        patterns = [
+            r'https?://[^"\'\s<>\\]+\.m3u8(?:\?[^"\'\s<>\\]*)?',
+            r'https?://[^"\'\s<>\\]+\.mp4(?:\?[^"\'\s<>\\]*)?',
+            r'["\']([^"\']+\.m3u8(?:\?[^"\']*)?)["\']',
+            r'["\']([^"\']+\.mp4(?:\?[^"\']*)?)["\']',
+        ]
+
+        for pattern in patterns:
+            for match in re.findall(pattern, html_text, flags=re.IGNORECASE):
+                if isinstance(match, tuple):
+                    match = next((x for x in match if x), "")
+
+                if not match:
+                    continue
+
+                candidate = normalize_url(match, base_url)
+
+                if not candidate.startswith(("http://", "https://")):
+                    continue
+
+                if candidate not in found:
+                    found.append(candidate)
+
+        found.sort(key=lambda x: (0 if ".m3u8" in x.lower() else 1, len(x)))
+        return found
 
     try:
-
-        page = await asyncio.to_thread(
-            fetch_page
-        )
-
+        page = await fetch(page_url)
     except Exception as e:
-
-        print()
-        print("===== DIRECT SOURCE ERROR =====")
-        print(repr(e))
-        print("===============================")
-        print()
-
+        logger.warning("Direct source page failed: %s", repr(e))
         return []
 
-    # فك ترميز HTML وبعض صيغ JavaScript
     page = html.unescape(page)
 
-    page = (
-        page
-        .replace("\\/", "/")
-        .replace("\\u0026", "&")
-        .replace("\\u003d", "=")
-        .replace("\\u003F", "?")
-        .replace("\\u003f", "?")
-    )
+    # أولاً: استخراج الوسائط الموجودة مباشرة في الصفحة.
+    candidates = extract_media(page, page_url)
 
-    candidates = []
+    # ثانيًا: استخراج جميع سيرفرات الفيديو من iframe و data-embed-url.
+    server_urls = []
 
-    # --------------------------------------------------------
-    # M3U8 / HLS
-    # --------------------------------------------------------
-
-    m3u8_patterns = [
-        r'https?://[^"\'\s<>\\]+\.m3u8(?:\?[^"\'\s<>\\]*)?',
-        r'["\']([^"\']+\.m3u8(?:\?[^"\']*)?)["\']',
+    server_patterns = [
+        r'data-embed-url=["\']([^"\']+)["\']',
+        r'<iframe[^>]+src=["\']([^"\']+)["\']',
     ]
 
-    # --------------------------------------------------------
-    # MP4
-    # --------------------------------------------------------
+    for pattern in server_patterns:
+        for match in re.findall(pattern, page, flags=re.IGNORECASE):
+            server = normalize_url(match, page_url)
 
-    mp4_patterns = [
-        r'https?://[^"\'\s<>\\]+\.mp4(?:\?[^"\'\s<>\\]*)?',
-        r'["\']([^"\']+\.mp4(?:\?[^"\']*)?)["\']',
-    ]
+            if server.startswith(("http://", "https://")) and server not in server_urls:
+                server_urls.append(server)
 
-    for pattern in m3u8_patterns + mp4_patterns:
+    # تجربة كل سيرفر حتى نجد مصادر إضافية.
+    for server_url in server_urls[:20]:
+        try:
+            server_page = await fetch(server_url)
+            server_candidates = extract_media(server_page, server_url)
 
-        for match in re.findall(
-            pattern,
-            page,
-            flags=re.IGNORECASE
-        ):
+            for candidate in server_candidates:
+                if candidate not in candidates:
+                    candidates.append(candidate)
 
-            if isinstance(match, tuple):
-                match = next(
-                    (x for x in match if x),
-                    ""
-                )
+        except Exception as e:
+            logger.info(
+                "Multi-server extractor skipped %s: %s",
+                redact_url(server_url),
+                type(e).__name__,
+            )
+            continue
 
-            if not match:
-                continue
-
-            match = html.unescape(match)
-
-            if match.startswith("//"):
-                match = "https:" + match
-
-            elif match.startswith("/"):
-                parsed = urlparse(page_url)
-
-                match = (
-                    f"{parsed.scheme}://"
-                    f"{parsed.netloc}"
-                    f"{match}"
-                )
-
-            elif not match.startswith(("http://", "https://")):
-                continue
-
-            if match not in candidates:
-                candidates.append(match)
-
-    # إعطاء الأولوية لـ HLS
+    # HLS أولاً ثم MP4.
     candidates.sort(
         key=lambda x: (
             0 if ".m3u8" in x.lower() else 1,
-            len(x)
+            len(x),
         )
     )
 
     public_candidates = []
+
     for candidate in candidates:
         try:
             validate_public_http_url(candidate)
             public_candidates.append(candidate)
         except ValueError:
-            logger.warning("Rejected non-public direct media URL: %s", redact_url(candidate))
-    return public_candidates[:20]
+            logger.warning(
+                "Rejected non-public direct media URL: %s",
+                redact_url(candidate),
+            )
 
+    logger.info(
+        "Multi-server direct extractor: %d servers, %d media candidates",
+        len(server_urls),
+        len(public_candidates),
+    )
+
+    return public_candidates[:20]
 
 # ============================================================
 # Yoinku API - fallback
