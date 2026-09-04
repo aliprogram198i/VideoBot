@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from .page_fetcher import FetchedPage
 
@@ -178,8 +179,25 @@ class ProductionPageFetcher:
             except (LookupError, TypeError):
                 html = body.decode("utf-8", errors="replace")
 
+            # urllib follows redirects inside the injected safe opener.  Use
+            # the final response URL when available so /share/... links are
+            # resolved against the actual Threads post URL rather than the
+            # redirecting share URL.  This also improves platform detection
+            # and relative-media URL resolution without bypassing redirects.
+            final_url = url
+            geturl = getattr(response, "geturl", None)
+            if callable(geturl):
+                try:
+                    candidate_url = geturl()
+                    if isinstance(candidate_url, str) and candidate_url.strip():
+                        parsed = urlparse(candidate_url)
+                        if parsed.scheme in {"http", "https"} and parsed.hostname:
+                            final_url = candidate_url
+                except Exception:
+                    final_url = url
+
             return FetchedPage(
-                url=url,
+                url=final_url,
                 html=html,
                 content_type=content_type,
                 status=status,
