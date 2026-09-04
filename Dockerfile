@@ -25,8 +25,8 @@ COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot tools/patch_runtime_features.py ./tools/patch_runtime_features.py
 
-# Fail the image build if the Threads plugin is not actually loadable.
-RUN python -m yt_dlp --list-extractors | grep -Fx 'Threads' \
+# Validate the plugin through yt-dlp's actual Python registry, not a fragile text grep.
+RUN python -c "import yt_dlp; names=[c.IE_NAME for c in yt_dlp.gen_extractor_classes() if 'thread' in c.IE_NAME.lower()]; print('Threads extractors:', names); assert names, 'Threads extractor plugin was not loaded'" \
     && python tools/patch_runtime_features.py \
     && python -m py_compile bot.py downloader/error_reporter.py
 
