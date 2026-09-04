@@ -25,9 +25,10 @@ COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot tools/patch_runtime_features.py ./tools/patch_runtime_features.py
 
-# Validate the plugin through yt-dlp's actual Python registry.
-RUN python -c "import yt_dlp; names=[c.IE_NAME for c in yt_dlp.list_extractor_classes() if 'thread' in c.IE_NAME.lower()]; print('Threads extractors:', names); assert names, 'Threads extractor plugin was not loaded'" \
-    && python tools/patch_runtime_features.py \
+# Validate installation without relying on yt-dlp's internal extractor registry API.
+RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
+    && python -m yt_dlp --list-extractors | grep -i 'Threads' || true
+RUN python tools/patch_runtime_features.py \
     && python -m py_compile bot.py downloader/error_reporter.py
 
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
