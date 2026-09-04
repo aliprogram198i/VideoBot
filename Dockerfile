@@ -25,6 +25,7 @@ COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot tools/patch_runtime_features.py ./tools/patch_runtime_features.py
 COPY --chown=videobot:videobot tools/apply_alibot_features.py ./tools/apply_alibot_features.py
+COPY --chown=videobot:videobot tools/fix_alibot_ui.py ./tools/fix_alibot_ui.py
 
 # Validate installation and apply runtime compatibility/features before startup.
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
@@ -35,6 +36,7 @@ RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
 RUN python -c "from pathlib import Path; p=Path('tools/apply_alibot_features.py'); s=p.read_text(encoding='utf-8'); old=\"end = text.find('\\\\n    \\\"share\\\":', start)\"; new=\"end = text.find('\\\\n    },', start)\"; assert old in s, 'legacy patcher anchor not found'; p.write_text(s.replace(old, new, 1), encoding='utf-8')"
 RUN python tools/patch_runtime_features.py \
     && python tools/apply_alibot_features.py \
+    && python tools/fix_alibot_ui.py \
     && python -m py_compile bot.py downloader/error_reporter.py
 
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
