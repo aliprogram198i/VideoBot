@@ -25,12 +25,14 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot downloader ./downloader
+COPY --chown=videobot:videobot plugins ./plugins
 COPY --chown=videobot:videobot tools/patch_runtime_features.py ./tools/patch_runtime_features.py
 COPY --chown=videobot:videobot tools/apply_alibot_features.py ./tools/apply_alibot_features.py
 COPY --chown=videobot:videobot tools/fix_alibot_ui.py ./tools/fix_alibot_ui.py
 COPY --chown=videobot:videobot tools/fix_instructions_back.py ./tools/fix_instructions_back.py
 COPY --chown=videobot:videobot tools/fix_admin_broadcast_media.py ./tools/fix_admin_broadcast_media.py
 COPY --chown=videobot:videobot tools/fix_instructions_full.py ./tools/fix_instructions_full.py
+COPY --chown=videobot:videobot tools/enable_internal_plugins.py ./tools/enable_internal_plugins.py
 
 # Validate installation and apply runtime compatibility/features before startup.
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
@@ -45,12 +47,14 @@ RUN python tools/patch_runtime_features.py \
     && python tools/fix_instructions_back.py \
     && python tools/fix_instructions_full.py \
     && python tools/fix_admin_broadcast_media.py \
-    && python -m py_compile bot.py downloader/error_reporter.py
+    && python tools/enable_internal_plugins.py \
+    && python -m py_compile bot.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py
 
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
+ENV ALIBOT_PLUGINS_ENABLED=1
 USER videobot
 
 CMD ["python", "-u", "bot.py"]
