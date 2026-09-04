@@ -19,6 +19,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=videobot:videobot bot.py .
+COPY --chown=videobot:videobot downloader ./downloader
 
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 
