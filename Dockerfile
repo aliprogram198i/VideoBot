@@ -24,11 +24,13 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot tools/patch_runtime_features.py ./tools/patch_runtime_features.py
+COPY --chown=videobot:videobot tools/apply_alibot_features.py ./tools/apply_alibot_features.py
 
-# Validate installation without relying on yt-dlp's internal extractor registry API.
+# Validate installation and apply runtime compatibility/features before startup.
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
     && python -m yt_dlp --list-extractors | grep -i 'Threads' || true
 RUN python tools/patch_runtime_features.py \
+    && python tools/apply_alibot_features.py \
     && python -m py_compile bot.py downloader/error_reporter.py
 
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
