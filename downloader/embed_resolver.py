@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from .page_fetcher import PageFetcher
 from .smart_extractor import MediaCandidate, extract_candidates
 from .threads_extractor import extract_threads_media
+from .threads_ytdlp import extract_threads_with_yt_dlp
 
 
 DEFAULT_MAX_DEPTH = 3
@@ -104,6 +105,32 @@ class EmbedResolver:
             )
 
             if is_threads:
+                # First ask the official installed yt-dlp plugin. It understands
+                # the current Threads server-rendered payload and /share/<id>
+                # URLs directly. This is deliberately limited to public URLs.
+                try:
+                    threads_ytdlp = extract_threads_with_yt_dlp(current_url)
+                    for candidate in threads_ytdlp:
+                        key = (candidate.url, candidate.kind)
+                        if key in seen_candidates:
+                            continue
+                        seen_candidates.add(key)
+                        all_candidates.append(
+                            MediaCandidate(
+                                url=candidate.url,
+                                kind=candidate.kind,
+                                source_page=current_url,
+                                discovered_by=candidate.discovered_by,
+                                depth=depth,
+                                score=candidate.confidence,
+                            )
+                        )
+                        if len(all_candidates) >= self.max_candidates:
+                            break
+                except Exception as exc:
+                    log = __import__("logging").getLogger(__name__)
+                    log.warning("Threads yt-dlp fallback error: %s", type(exc).__name__)
+
                 try:
                     threads_candidates = extract_threads_media(
                         fetched.html,
