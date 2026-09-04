@@ -29,6 +29,10 @@ COPY --chown=videobot:videobot tools/apply_alibot_features.py ./tools/apply_alib
 # Validate installation and apply runtime compatibility/features before startup.
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
     && python -m yt_dlp --list-extractors | grep -i 'Threads' || true
+
+# The feature patcher targets the language dictionaries by their closing delimiter.
+# Normalize its legacy anchor before executing it so builds remain deterministic.
+RUN python -c "from pathlib import Path; p=Path('tools/apply_alibot_features.py'); s=p.read_text(encoding='utf-8'); old=\"end = text.find('\\\\n    \\\"share\\\":', start)\"; new=\"end = text.find('\\\\n    },', start)\"; assert old in s, 'legacy patcher anchor not found'; p.write_text(s.replace(old, new, 1), encoding='utf-8')"
 RUN python tools/patch_runtime_features.py \
     && python tools/apply_alibot_features.py \
     && python -m py_compile bot.py downloader/error_reporter.py
