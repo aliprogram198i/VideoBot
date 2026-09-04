@@ -91,11 +91,17 @@ class EmbedResolver:
 
             visited.append(current_url)
 
-            # Threads pages frequently expose signed Meta CDN media URLs in
-            # embedded application data without a conventional .mp4 suffix.
-            # Run the platform-specific extractor before the generic parser.
+            # Threads share links can redirect to a canonical /@user/post/... URL.
+            # Keep current_url as the source identity so the share ID remains
+            # available to the platform-specific dynamic resolver, while using
+            # fetched.url as the base for media URLs discovered in the page.
             parsed_host = (urlparse(fetched.url).hostname or "").lower()
-            is_threads = parsed_host == "threads.com" or parsed_host.endswith(".threads.com") or parsed_host == "threads.net" or parsed_host.endswith(".threads.net")
+            is_threads = (
+                parsed_host == "threads.com"
+                or parsed_host.endswith(".threads.com")
+                or parsed_host == "threads.net"
+                or parsed_host.endswith(".threads.net")
+            )
 
             if is_threads:
                 try:
@@ -103,6 +109,7 @@ class EmbedResolver:
                         fetched.html,
                         fetched.url,
                         max_candidates=self.max_candidates,
+                        source_url=current_url,
                     )
                     for candidate in threads_candidates:
                         key = (candidate.url, candidate.kind)
