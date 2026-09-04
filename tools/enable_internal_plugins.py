@@ -4,6 +4,7 @@ from pathlib import Path
 
 TARGET = Path("bot.py")
 IMPORT = "from plugins import load_plugins\n"
+ENV_LINE = '    os.environ.setdefault("ALIBOT_PLUGINS_ENABLED", "1")\n'
 CALL = "    plugin_manager = load_plugins(app)\n"
 MARKER = "    # ========================================================\n    # معالج الأخطاء\n"
 
@@ -20,7 +21,8 @@ def main() -> None:
     if CALL not in text:
         if MARKER not in text:
             raise SystemExit("bot.py application anchor not found")
-        text = text.replace(MARKER, CALL + "\n" + MARKER, 1)
+        injection = ENV_LINE + CALL + "\n"
+        text = text.replace(MARKER, injection + MARKER, 1)
 
     TARGET.write_text(text, encoding="utf-8")
 
