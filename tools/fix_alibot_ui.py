@@ -44,17 +44,15 @@ if start_block not in text:
 
 text = text.replace(start_block, replacement, 1)
 
-# Register the instructions callback before the generic download callback.
-download_section = '''    # ========================================================
-    # التحميل
-    # ========================================================
-
-    app.add_handler(
+# Register the instructions callback immediately before the existing
+# download_media callback. Do not depend on surrounding comments.
+handler_anchor = '''    app.add_handler(
         CallbackQueryHandler(
             download_media,
-            pattern=r"^(video_|audio_|main_menu)"
-        )
-    )'''
+'''
+
+if handler_anchor not in text:
+    raise RuntimeError("download_media handler anchor missing")
 
 instructions_registration = '''    # ========================================================
     # تعليمات الاستخدام
@@ -67,12 +65,9 @@ instructions_registration = '''    # ===========================================
         )
     )
 
-''' + download_section
+''' + handler_anchor
 
-if download_section not in text:
-    raise RuntimeError("download handler anchor missing")
-
-text = text.replace(download_section, instructions_registration, 1)
+text = text.replace(handler_anchor, instructions_registration, 1)
 
 text += "\n" + MARKER + "\n"
 PATH.write_text(text, encoding="utf-8")
