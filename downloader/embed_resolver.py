@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
+from urllib.parse import urlparse
 
 from .page_fetcher import PageFetcher
 from .smart_extractor import MediaCandidate, extract_candidates
+from .threads_extractor import extract_threads_media
 
 
 DEFAULT_MAX_DEPTH = 3
@@ -83,14 +85,49 @@ class EmbedResolver:
                     max_bytes=max_html_bytes,
                 )
             except Exception as exc:
-                # A failed branch must not prevent other independent embeds
-                # from being inspected. Record only the first failure so a
-                # total resolution failure can be diagnosed by the caller.
                 if first_error is None:
                     first_error = exc
                 continue
 
             visited.append(current_url)
+
+            # Threads pages frequently expose signed Meta CDN media URLs in
+            # embedded application data without a conventional .mp4 suffix.
+            # Run the platform-specific extractor before the generic parser.
+            parsed_host = (urlparse(fetched.url).hostname or "").lower()
+            is_threads = parsed_host == "threads.com" or parsed_host.endswith(".threads.com") or parsed_host == "threads.net" or parsed_host.endswith(".threads.net")
+
+            if is_threads:
+                try:
+                    threads_candidates = extract_threads_media(
+                        fetched.html,
+                        fetched.url,
+                        max_candidates=self.max_candidates,
+                    )
+                    for candidate in threads_candidates:
+                        key = (candidate.url, candidate.kind)
+                        if key in seen_candidates:
+                            continue
+                        seen_candidates.add(key)
+                        all_candidates.append(
+                            MediaCandidate(
+                                url=candidate.url,
+                                kind=candidate.kind,
+                                source_page=fetched.url,
+                                discovered_by=candidate.discovered_by,
+                                depth=depth,
+                                score=candidate.confidence,
+                            )
+                        )
+                        if len(all_candidates) >= self.max_candidates:
+                            break
+                except (TypeError, ValueError):
+                    # Generic extraction remains available if platform parsing
+                    # receives malformed/unexpected page data.
+                    pass
+
+            if len(all_candidates) >= self.max_candidates:
+                break
 
             candidates = extract_candidates(
                 fetched.html,
@@ -122,7 +159,6 @@ class EmbedResolver:
             if len(all_candidates) >= self.max_candidates:
                 break
 
-        # Media sources should rank before iframe discovery nodes.
         all_candidates.sort(
             key=lambda item: (
                 -item.score,
