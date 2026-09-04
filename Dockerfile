@@ -19,7 +19,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /opt/yt-dlp-plugins/yt-dlp-threads/yt_dlp_plugins/extractor \
     && python -c "from importlib.metadata import distribution; from pathlib import Path; import shutil; src=Path(distribution('yt-dlp-threads').locate_file('yt_dlp_plugins/extractor/threads.py')); assert src.is_file(), 'yt-dlp-threads extractor file not found'; shutil.copy2(src, '/opt/yt-dlp-plugins/yt-dlp-threads/yt_dlp_plugins/extractor/threads.py')" \
-    && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
+    && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf \
+    && python -m yt_dlp --list-extractors | grep -Fx 'Threads'
 
 COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot downloader ./downloader
