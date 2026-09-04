@@ -193,6 +193,23 @@ def read_limited(response, max_bytes):
         chunks.append(chunk)
 
 
+def build_smart_extraction_stack():
+    """Build the deterministic smart-extraction stack using bot security primitives."""
+    from downloader.production_stack import build_production_smart_extraction_stack
+
+    return build_production_smart_extraction_stack(
+        url_validator=validate_public_http_url,
+        request_factory=Request,
+        open_function=safe_urlopen,
+        read_function=read_limited,
+        max_html_bytes=MAX_HTML_BYTES,
+        max_declared_bytes=max(
+            MAX_VIDEO_DOWNLOAD_BYTES,
+            MAX_AUDIO_DOWNLOAD_BYTES,
+        ),
+    )
+
+
 def final_output_from_yt_dlp(stdout_text, temp_dir, extensions):
     """Resolve the final yt-dlp artifact safely from explicit output first."""
     base = os.path.realpath(temp_dir) + os.sep
@@ -2442,6 +2459,210 @@ async def show_audio_menu(
 
 
 # ============================================================
+# Smart Extraction fallback
+# ============================================================
+
+async def download_with_smart_extraction(
+    url,
+    temp_dir,
+    output_template,
+    format_option,
+    is_audio=False,
+    attempt_id=None,
+    attempt_number=None,
+):
+    """
+    Use the deterministic Smart Extraction stack to discover,
+    validate, rank, and download the best public media candidate.
+
+    This function is fallback-only. It never replaces the primary
+    yt-dlp path and never runs unless explicitly called by the
+    caller after a primary failure.
+    """
+    if not attempt_id:
+        attempt_id = uuid.uuid4().hex
+
+    started_at = time.monotonic()
+
+    diagnostics = {
+        "attempt_id": attempt_id,
+        "attempt_number": attempt_number,
+        "candidate_count": 0,
+        "valid_candidate_count": 0,
+        "visited_pages": [],
+        "candidates": [],
+        "total_duration_ms": None,
+    }
+
+    try:
+        stack = build_smart_extraction_stack()
+
+        result = await asyncio.to_thread(
+            stack.engine.extract,
+            url,
+            timeout=30,
+            max_html_bytes=MAX_HTML_BYTES,
+            validation_timeout=15,
+            max_ranked_candidates=20,
+        )
+
+        diagnostics["candidate_count"] = result.candidate_count
+        diagnostics["valid_candidate_count"] = result.valid_candidate_count
+        diagnostics["visited_pages"] = list(result.visited_pages)
+        diagnostics["diagnostics"] = list(result.diagnostics)
+
+        if result.best_media is None:
+            diagnostics["error_message"] = (
+                "Smart Extraction found no valid media candidate."
+            )
+            return None, diagnostics
+
+        candidate = result.best_media.candidate
+
+        diagnostics["candidates"] = [
+            {
+                "url": redact_url(item.candidate.url),
+                "kind": item.candidate.kind,
+                "valid": item.valid,
+                "reason": item.reason,
+                "status": item.status,
+                "content_type": item.content_type,
+                "content_length": item.content_length,
+            }
+            for item in result.ranked_candidates
+        ]
+
+        # Never pass iframe pages directly to yt-dlp as a media file.
+        if candidate.kind == "iframe":
+            diagnostics["error_message"] = (
+                "Smart Extraction selected an iframe instead of media."
+            )
+            return None, diagnostics
+
+        command = [
+            "python",
+            "-m",
+            "yt_dlp",
+            "--no-playlist",
+            "-f",
+            format_option,
+            "--retries",
+            "3",
+            "--fragment-retries",
+            "3",
+            "--socket-timeout",
+            "60",
+            "--newline",
+            "--no-warnings",
+            "--max-filesize",
+            str(
+                MAX_AUDIO_DOWNLOAD_BYTES
+                if is_audio
+                else MAX_VIDEO_DOWNLOAD_BYTES
+            ),
+            "--print",
+            "after_move:filepath",
+            "-o",
+            output_template,
+        ]
+
+        if shutil.which("deno"):
+            command[3:3] = ["--js-runtimes", "deno"]
+
+        if is_audio:
+            command.extend([
+                "-x",
+                "--audio-format",
+                "mp3",
+            ])
+        else:
+            command.extend([
+                "--merge-output-format",
+                "mp4",
+            ])
+
+        command.append(candidate.url)
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await communicate_with_cleanup(
+            process,
+            DOWNLOAD_TIMEOUT,
+        )
+
+        stdout_text = stdout.decode(errors="ignore")
+        stderr_text = stderr.decode(errors="ignore")
+
+        allowed_extensions = (
+            (".mp3", ".m4a", ".opus", ".aac", ".wav")
+            if is_audio
+            else (".mp4", ".mkv", ".webm", ".mov")
+        )
+
+        final_path = final_output_from_yt_dlp(
+            stdout_text,
+            temp_dir,
+            allowed_extensions,
+        )
+
+        diagnostics["return_code"] = process.returncode
+        diagnostics["stdout_tail"] = sanitize_error_for_storage(
+            stdout_text[-2000:]
+        )
+        diagnostics["stderr_tail"] = sanitize_error_for_storage(
+            stderr_text[-2000:]
+        )
+
+        if process.returncode == 0 and final_path:
+            diagnostics["status"] = "success"
+            diagnostics["selected_candidate"] = redact_url(candidate.url)
+            diagnostics["selected_kind"] = candidate.kind
+            diagnostics["total_duration_ms"] = int(
+                (time.monotonic() - started_at) * 1000
+            )
+            return final_path, diagnostics
+
+        diagnostics["status"] = "failed"
+        diagnostics["error_message"] = sanitize_error_for_storage(
+            stderr_text[-4000:]
+            or stdout_text[-4000:]
+            or f"yt-dlp exited with code {process.returncode}"
+        )
+
+        return None, diagnostics
+
+    except asyncio.TimeoutError:
+        diagnostics["status"] = "timeout"
+        diagnostics["exception_type"] = "TimeoutError"
+        diagnostics["error_message"] = "Smart Extraction download timed out."
+        return None, diagnostics
+
+    except asyncio.CancelledError:
+        raise
+
+    except Exception as exc:
+        diagnostics["status"] = "exception"
+        diagnostics["exception_type"] = type(exc).__name__
+        diagnostics["error_message"] = sanitize_error_for_storage(
+            str(exc)
+        )
+        logger.warning(
+            "Smart Extraction fallback failed: %s",
+            type(exc).__name__,
+        )
+        return None, diagnostics
+
+    finally:
+        diagnostics["total_duration_ms"] = int(
+            (time.monotonic() - started_at) * 1000
+        )
+
+
+# ============================================================
 # استخراج مصادر الفيديو العامة من صفحات المواقع
 # ============================================================
 
@@ -4213,69 +4434,89 @@ async def download_media(
             }
 
             # ------------------------------------------------
-            # Yoinku fallback
-            # يتم تجربته قبل direct fallback لتقليل زمن الفشل.
+            # Smart Extraction fallback
+            # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
             # ------------------------------------------------
 
-            yoinku_attempted = True
-
-            yoinku_file, yoinku_diagnostics = await download_with_yoinku(
+            smart_file, smart_diagnostics = await download_with_smart_extraction(
                 url=url,
                 temp_dir=temp_dir,
+                output_template=output_template,
+                format_option=format_option,
                 is_audio=is_audio,
                 attempt_id=attempt_id,
                 attempt_number=attempt_number,
             )
 
-            # ------------------------------------------------
-            # محاولة استخراج مصدر مباشر من صفحة الموقع
-            # فقط إذا فشل Yoinku.
-            # ------------------------------------------------
-
-            if yoinku_file:
-                fallback_file = yoinku_file
-                fallback_diagnostics = {}
-            elif is_youtube:
+            if smart_file:
+                media_file = smart_file
                 fallback_file = None
-                fallback_diagnostics = {
-                    "candidate_count": 0,
-                    "skipped": "youtube_direct_fallback_not_applicable",
-                }
-                print(
-                    "ℹ️ Skipping generic direct-media fallback for YouTube"
-                )
+                fallback_diagnostics = {}
+                print()
+                print("===== SMART EXTRACTION FALLBACK SUCCESS =====")
+                print(f"File: {media_file}")
+                print("=============================================")
+                print()
             else:
-                fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
+                # ------------------------------------------------
+                # Yoinku fallback
+                # يتم تجربته فقط إذا فشل Smart Extraction.
+                # ------------------------------------------------
+
+                yoinku_attempted = True
+
+                yoinku_file, yoinku_diagnostics = await download_with_yoinku(
                     url=url,
                     temp_dir=temp_dir,
-                    output_template=output_template,
-                    format_option=format_option,
                     is_audio=is_audio,
                     attempt_id=attempt_id,
                     attempt_number=attempt_number,
                 )
 
-            if fallback_file:
-
-                media_file = fallback_file
-
-                print()
-
-                if yoinku_file:
-                    print("===== YOINKU FALLBACK SUCCESS =====")
-                else:
-                    print("✅ FALLBACK DOWNLOAD SUCCESS")
-
-                print(f"File: {media_file}")
+                # ------------------------------------------------
+                # محاولة استخراج مصدر مباشر من صفحة الموقع
+                # فقط إذا فشل Yoinku.
+                # ------------------------------------------------
 
                 if yoinku_file:
-                    print("===================================")
+                    fallback_file = yoinku_file
+                    fallback_diagnostics = {}
+                elif is_youtube:
+                    fallback_file = None
+                    fallback_diagnostics = {
+                        "candidate_count": 0,
+                        "skipped": "youtube_direct_fallback_not_applicable",
+                    }
+                    print(
+                        "ℹ️ Skipping generic direct-media fallback for YouTube"
+                    )
                 else:
-                    print("==============================")
+                    fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
+                        url=url,
+                        temp_dir=temp_dir,
+                        output_template=output_template,
+                        format_option=format_option,
+                        is_audio=is_audio,
+                        attempt_id=attempt_id,
+                        attempt_number=attempt_number,
+                    )
 
-                print()
+                if fallback_file:
+                    media_file = fallback_file
+                    print()
+                    if yoinku_file:
+                        print("===== YOINKU FALLBACK SUCCESS =====")
+                    else:
+                        print("✅ FALLBACK DOWNLOAD SUCCESS")
 
-            else:
+                    print(f"File: {media_file}")
+
+                    if yoinku_file:
+                        print("===================================")
+                    else:
+                        print("==============================")
+
+                    print()
 
                 # ------------------------------------------------
                 # Yoinku fallback
