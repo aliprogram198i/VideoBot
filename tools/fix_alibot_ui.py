@@ -17,19 +17,57 @@ if MARKER in text:
 # is not registered with python-telegram-bot. Apply only those two missing
 # integration points without touching download logic.
 
-start_button = '''                InlineKeyboardButton(\n                    "▶️ ابدأ الآن",\n                    callback_data="start_button"\n                )'''
+start_block = '''            [
+                InlineKeyboardButton(
+                    "▶️ ابدأ الآن",
+                    callback_data="start_button"
+                )
+            ]
+        ])'''
 
-if start_button not in text:
-    raise RuntimeError("start button anchor missing")
+replacement = '''            [
+                InlineKeyboardButton(
+                    "▶️ ابدأ الآن",
+                    callback_data="start_button"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    TEXTS[language]["instructions"],
+                    callback_data="instructions"
+                )
+            ]
+        ])'''
 
-start_button_with_instructions = start_button + ''',\n            ],\n            [\n                InlineKeyboardButton(\n                    TEXTS[language]["instructions"],\n                    callback_data="instructions"\n                )'''
+if start_block not in text:
+    raise RuntimeError("start screen keyboard anchor missing")
 
-text = text.replace(start_button + '\n            ]', start_button_with_instructions, 1)
+text = text.replace(start_block, replacement, 1)
 
 # Register the instructions callback before the generic download callback.
-download_section = '''    # ========================================================\n    # التحميل\n    # ========================================================\n\n    app.add_handler(\n        CallbackQueryHandler(\n            download_media,\n            pattern=r"^(video_|audio_|main_menu)"\n        )\n    )'''
+download_section = '''    # ========================================================
+    # التحميل
+    # ========================================================
 
-instructions_registration = '''    # ========================================================\n    # تعليمات الاستخدام\n    # ========================================================\n\n    app.add_handler(\n        CallbackQueryHandler(\n            instructions_callback,\n            pattern=r"^instructions(?:_(?:copy|share|search))?$"\n        )\n    )\n\n''' + download_section
+    app.add_handler(
+        CallbackQueryHandler(
+            download_media,
+            pattern=r"^(video_|audio_|main_menu)"
+        )
+    )'''
+
+instructions_registration = '''    # ========================================================
+    # تعليمات الاستخدام
+    # ========================================================
+
+    app.add_handler(
+        CallbackQueryHandler(
+            instructions_callback,
+            pattern=r"^instructions(?:_(?:copy|share|search))?$"
+        )
+    )
+
+''' + download_section
 
 if download_section not in text:
     raise RuntimeError("download handler anchor missing")
