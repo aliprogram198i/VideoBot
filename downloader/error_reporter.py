@@ -25,9 +25,11 @@ _PATTERNS = [
     ("TELEGRAM_SIZE", re.compile(r"entity too large|request entity too large|file is too big", re.I), "The resulting file exceeds Telegram's upload limit."),
 ]
 
+_URL_RE = re.compile(r"https?://[^\s\]\[)>'\"]+", re.I)
+
 
 def _safe_url(text: str) -> str | None:
-    for token in re.findall(r"https?://[^\s\]\[)>'\"]+", text or ""):
+    for token in _URL_RE.findall(text or ""):
         try:
             p = urlparse(token.rstrip(".,;"))
             if p.hostname:
@@ -35,6 +37,15 @@ def _safe_url(text: str) -> str | None:
         except Exception:
             pass
     return None
+
+
+def _redact_message(message: str) -> str:
+    """Remove URL query/fragment values before persisting diagnostic text."""
+    def replace_url(match: re.Match[str]) -> str:
+        safe = _safe_url(match.group(0))
+        return safe or "<redacted-url>"
+
+    return _URL_RE.sub(replace_url, message or "")[:2000]
 
 
 def classify(message: str) -> tuple[str, str]:
@@ -71,12 +82,12 @@ def record(level: str, message: str) -> None:
     if not message:
         return
     code, reason = classify(message)
-    # Avoid recursive logging: this function only writes to SQLite.
+    safe_message = _redact_message(message)
     try:
         conn = sqlite3.connect(_db_path())
         conn.execute(
             "INSERT INTO error_events(created_at,level,code,reason,message,url) VALUES(?,?,?,?,?,?)",
-            (datetime.now(timezone.utc).isoformat(), level, code, reason, message[:2000], _safe_url(message)),
+            (datetime.now(timezone.utc).isoformat(), level, code, reason, safe_message, _safe_url(message)),
         )
         conn.commit()
         conn.close()
