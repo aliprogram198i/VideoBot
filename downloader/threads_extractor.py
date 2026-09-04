@@ -1,8 +1,8 @@
 """Deterministic Threads media discovery from fetched HTML/JSON.
 
 Threads share URLs may render their actual post data only through client-side
-JavaScript.  This module therefore keeps normal HTML/JSON discovery first and
-uses a narrowly scoped public resolver fallback for /share/<id> URLs.
+JavaScript. This module keeps normal HTML/JSON discovery first and also uses a
+narrowly scoped public resolver fallback for /share/<id> URLs.
 
 No authentication, cookie theft, DRM bypass, or access-control bypass is
 performed. Resolver output is treated as untrusted data and is validated by
@@ -19,7 +19,6 @@ import os
 import re
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
-
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +43,6 @@ _MANIFEST_URL = re.compile(
     re.IGNORECASE,
 )
 _SHARE_PATH = re.compile(r"/share/([A-Za-z0-9_-]+)(?:/|$)", re.IGNORECASE)
-
 _DEFAULT_DYNAMIC_RESOLVER = "https://fx.akitsuki.me"
 _DYNAMIC_RESOLVER_TIMEOUT = 20
 _DYNAMIC_RESOLVER_MAX_BYTES = 2 * 1024 * 1024
@@ -84,14 +82,8 @@ def _kind(url: str) -> str | None:
     return None
 
 
-def _add(
-    result: list[ThreadsMedia],
-    seen: set[tuple[str, str]],
-    url: str,
-    kind: str,
-    source: str,
-    confidence: int,
-) -> None:
+def _add(result: list[ThreadsMedia], seen: set[tuple[str, str]], url: str,
+         kind: str, source: str, confidence: int) -> None:
     key = (url, kind)
     if key in seen:
         return
@@ -104,41 +96,26 @@ def _extract_meta_content(page: str) -> list[tuple[str, str]]:
     for tag in re.finditer(r"<meta\b[^>]*>", page, re.IGNORECASE):
         raw_tag = tag.group(0)
         property_match = re.search(
-            r"(?:property|name)\s*=\s*['\"]([^'\"]+)['\"]",
-            raw_tag,
-            re.IGNORECASE,
-        )
+            r"(?:property|name)\s*=\s*['\"]([^'\"]+)['\"]", raw_tag, re.IGNORECASE)
         content_match = re.search(
-            r"content\s*=\s*['\"]([^'\"]+)['\"]",
-            raw_tag,
-            re.IGNORECASE,
-        )
+            r"content\s*=\s*['\"]([^'\"]+)['\"]", raw_tag, re.IGNORECASE)
         if not property_match or not content_match:
             continue
         property_name = property_match.group(1).strip().lower()
         if property_name in {
-            "og:video", "og:video:url", "og:video:secure_url",
-            "twitter:player:stream",
+            "og:video", "og:video:url", "og:video:secure_url", "twitter:player:stream"
         }:
             results.append((property_name, content_match.group(1)))
     return results
 
 
-def _extract_json_urls(
-    value: object,
-    page_url: str,
-    result: list[ThreadsMedia],
-    seen: set[tuple[str, str]],
-    source: str,
-    confidence: int,
-) -> None:
-    """Recursively inspect resolver JSON without assuming one fixed schema."""
+def _extract_json_urls(value: object, page_url: str, result: list[ThreadsMedia],
+                       seen: set[tuple[str, str]], source: str, confidence: int) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             key_text = str(key).lower()
             media_context = bool(
-                _VIDEO_KEYS.search(key_text)
-                or key_text in {"url", "media_url", "source"}
+                _VIDEO_KEYS.search(key_text) or key_text in {"url", "media_url", "source"}
             )
             if isinstance(child, str) and media_context:
                 url = _absolute(child, page_url)
@@ -150,7 +127,6 @@ def _extract_json_urls(
         for item in value:
             _extract_json_urls(item, page_url, result, seen, source, confidence)
     elif isinstance(value, str):
-        # Some resolver versions return a JSON document encoded as a string.
         text = _decode(value)
         if text.startswith(("{", "[")):
             try:
@@ -197,18 +173,14 @@ def _resolver_endpoint(share_id: str, suffix: str) -> tuple[str, str] | None:
 
 
 def _fetch_dynamic_share_data(share_id: str) -> tuple[str, object] | None:
-    """Fetch FxThreads JSON. Its documented schema exposes medias[].url."""
     endpoint_data = _resolver_endpoint(share_id, "/api/share/")
     if not endpoint_data:
         return None
     _, endpoint = endpoint_data
-    request = Request(
-        endpoint,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-        },
-    )
+    request = Request(endpoint, headers={
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+    })
     try:
         with urlopen(request, timeout=_DYNAMIC_RESOLVER_TIMEOUT) as response:
             data = _read_response(response)
@@ -233,18 +205,14 @@ def _fetch_dynamic_share_data(share_id: str) -> tuple[str, object] | None:
 
 
 def _fetch_dynamic_share_html(share_id: str) -> tuple[str, str] | None:
-    """Fallback to FxThreads' rendered /share page, which exposes og:video."""
     endpoint_data = _resolver_endpoint(share_id, "/share/")
     if not endpoint_data:
         return None
     _, endpoint = endpoint_data
-    request = Request(
-        endpoint,
-        headers={
-            "Accept": "text/html,application/xhtml+xml",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
-        },
-    )
+    request = Request(endpoint, headers={
+        "Accept": "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+    })
     try:
         with urlopen(request, timeout=_DYNAMIC_RESOLVER_TIMEOUT) as response:
             data = _read_response(response)
@@ -269,15 +237,12 @@ def _dynamic_share_candidates(page_url: str) -> list[ThreadsMedia]:
     share_id = _share_id(page_url)
     if not share_id:
         return []
-
     result: list[ThreadsMedia] = []
     seen: set[tuple[str, str]] = set()
-
     fetched = _fetch_dynamic_share_data(share_id)
     if fetched:
         endpoint, payload = fetched
         _extract_json_urls(payload, endpoint, result, seen, "threads_dynamic_resolver", 130)
-
     if not result:
         fetched_html = _fetch_dynamic_share_html(share_id)
         if fetched_html:
@@ -285,26 +250,21 @@ def _dynamic_share_candidates(page_url: str) -> list[ThreadsMedia]:
             for _, raw_url in _extract_meta_content(html):
                 url = _absolute(raw_url, endpoint)
                 if url:
-                    _add(result, seen, url, _kind(url) or "progressive", "threads_dynamic_resolver_html", 128)
+                    _add(result, seen, url, _kind(url) or "progressive",
+                         "threads_dynamic_resolver_html", 128)
             for match in _MANIFEST_URL.finditer(html):
                 url = _absolute(match.group(0), endpoint)
                 if url:
                     kind = _kind(url)
                     if kind:
                         _add(result, seen, url, kind, "threads_dynamic_resolver_html", 126)
-
     result.sort(key=lambda item: (-item.confidence, item.kind, item.url))
     log.info("Threads dynamic resolver: share_id=%s candidates=%d", share_id, len(result))
     return result[:50]
 
 
-def extract_threads_media(
-    page: str,
-    page_url: str,
-    *,
-    max_candidates: int = 50,
-    source_url: str | None = None,
-) -> list[ThreadsMedia]:
+def extract_threads_media(page: str, page_url: str, *, max_candidates: int = 50,
+                           source_url: str | None = None) -> list[ThreadsMedia]:
     """Extract publicly exposed Threads video candidates from HTML/JSON text."""
     if not isinstance(page, str):
         raise TypeError("page must be a string")
@@ -313,7 +273,6 @@ def extract_threads_media(
         raise ValueError("page_url must be an absolute HTTP(S) URL")
     if max_candidates <= 0:
         raise ValueError("max_candidates must be greater than zero")
-
     original_page_url = source_url or page_url
     parsed_source = urlparse(original_page_url)
     if parsed_source.scheme not in {"http", "https"} or not parsed_source.hostname:
@@ -327,8 +286,7 @@ def extract_threads_media(
         r"[\"']?([A-Za-z0-9_]*(?:video_url|videoUrl|playback_url|playbackUrl|"
         r"video_src|videoSrc|progressive_url|progressiveUrl|contentUrl|"
         r"content_url|embedUrl|embed_url)[A-Za-z0-9_]*)[\"']?"
-        r"\s*[:=]\s*[\"']([^\"']+)[\"']",
-        re.IGNORECASE,
+        r"\s*[:=]\s*[\"']([^\"']+)[\"']", re.IGNORECASE,
     )
     for match in key_pattern.finditer(page):
         url = _absolute(match.group(2), page_url)
@@ -358,9 +316,14 @@ def extract_threads_media(
         if url:
             _add(result, seen, url, _kind(url) or "progressive", "open_graph", 112)
 
-    if not result:
+    # IMPORTANT: /share/<id> is resolved independently of static candidates.
+    # Static HTML can contain non-media URLs that previously prevented the
+    # dynamic resolver from running. Merge resolver candidates and let the
+    # production validator decide which URL is actually downloadable.
+    if _share_id(original_page_url):
         for candidate in _dynamic_share_candidates(original_page_url):
-            _add(result, seen, candidate.url, candidate.kind, candidate.discovered_by, candidate.confidence)
+            _add(result, seen, candidate.url, candidate.kind,
+                 candidate.discovered_by, candidate.confidence)
 
     result.sort(key=lambda item: (-item.confidence, item.kind, item.url))
     return result[:max_candidates]
