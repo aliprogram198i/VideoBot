@@ -1,29 +1,24 @@
 from pathlib import Path
 
 PATH = Path("bot.py")
-MARKER = "# ALIBOT_INSTRUCTIONS_BACK_V1"
+MARKER = "# ALIBOT_INSTRUCTIONS_BACK_V2"
 
 if not PATH.exists():
     raise SystemExit("bot.py not found")
 
 text = PATH.read_text(encoding="utf-8")
 if MARKER in text:
-    print("AliBot instructions back already fixed")
+    print("AliBot instructions navigation already fixed")
     raise SystemExit(0)
 
-# The instructions UI currently uses callback_data="main_menu" for its
-# return button. That callback was previously handled by download_media,
-# which expects a live video_url in context.user_data and therefore returns
-# the generic "request expired" message when the user is simply navigating.
-# Give navigation its own exact callback handler and leave download logic
-# untouched.
-
+# The instructions screen must return to the real home screen, not
+# show_main_menu(), which is intentionally the post-link download-type menu.
 function_anchor = '''async def download_media(\n    update: Update,\n    context: ContextTypes.DEFAULT_TYPE\n):\n'''
 
 if function_anchor not in text:
     raise RuntimeError("download_media function anchor missing")
 
-main_menu_callback = '''async def main_menu_callback(\n    update: Update,\n    context: ContextTypes.DEFAULT_TYPE\n):\n    query = update.callback_query\n    await query.answer()\n\n    user = update.effective_user\n    register_user(user)\n    language = get_language(user.id) or "ar"\n    await show_main_menu(query, language)\n\n\n'''
+main_menu_callback = '''async def main_menu_callback(\n    update: Update,\n    context: ContextTypes.DEFAULT_TYPE\n):\n    query = update.callback_query\n    await query.answer()\n\n    user = update.effective_user\n    if not user:\n        return\n\n    register_user(user)\n    language = get_language(user.id) or "ar"\n\n    # Clear only transient download/search state. Persistent user data and\n    # database records are intentionally untouched.\n    context.user_data.pop("video_url", None)\n    context.user_data.pop("smart_search_results", None)\n\n    keyboard = InlineKeyboardMarkup([\n        [InlineKeyboardButton("▶️ ابدأ الآن", callback_data="start_button")],\n        [InlineKeyboardButton(TEXTS[language]["instructions"], callback_data="instructions")],\n    ])\n\n    await query.edit_message_text(\n        TEXTS[language]["welcome"],\n        parse_mode="HTML",\n        reply_markup=keyboard,\n    )\n\n\n'''
 
 text = text.replace(function_anchor, main_menu_callback + function_anchor, 1)
 
@@ -37,4 +32,4 @@ replacement = '''    app.add_handler(\n        CallbackQueryHandler(\n          
 text = text.replace(handler_anchor, replacement, 1)
 text += "\n" + MARKER + "\n"
 PATH.write_text(text, encoding="utf-8")
-print("AliBot instructions back fixed successfully")
+print("AliBot instructions navigation fixed successfully")
