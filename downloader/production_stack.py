@@ -16,6 +16,7 @@ from .page_fetcher import PageFetcher
 from .production_network import SmartNetworkAdapter
 from .production_page_fetcher import ProductionPageFetcher
 from .smart_engine import SmartExtractionEngine
+from .smart_learning import get_telemetry_store
 
 
 DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024
@@ -118,10 +119,16 @@ def build_production_smart_extraction_stack(
 
     ranker = CandidateRanker()
 
+    # Telemetry is persistent and isolated from the extraction path. If its
+    # database cannot be initialized, the stack still fails fast here rather
+    # than silently pretending that learning data is durable.
+    telemetry_store = get_telemetry_store()
+
     engine = SmartExtractionEngine(
         resolver=resolver,
         validator=validator,
         ranker=ranker,
+        telemetry_store=telemetry_store,
     )
 
     return ProductionSmartExtractionStack(
