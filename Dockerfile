@@ -37,19 +37,16 @@ COPY --chown=videobot:videobot tools/audit_users_feature.py ./tools/audit_users_
 COPY --chown=videobot:videobot tools/add_admin_control_center.py ./tools/add_admin_control_center.py
 COPY --chown=videobot:videobot tools/add_retry_download.py ./tools/add_retry_download.py
 
-# Validate installation and apply runtime compatibility/features before startup.
+# Validate installation and apply idempotent build-time compatibility/features.
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
     && python -m yt_dlp --list-extractors | grep -i 'Threads' || true
 
-# The feature patcher targets the language dictionaries by their closing delimiter.
-# Normalize its legacy anchor before executing it so builds remain deterministic.
-RUN python -c "from pathlib import Path; p=Path('tools/apply_alibot_features.py'); s=p.read_text(encoding='utf-8'); old=\"end = text.find('\\\\n    \\\"share\\\":', start)\"; new=\"end = text.find('\\\\n    },', start)\"; assert old in s, 'legacy patcher anchor not found'; p.write_text(s.replace(old, new, 1), encoding='utf-8')"
 RUN python tools/patch_runtime_features.py \
     && python tools/apply_alibot_features.py \
     && python tools/fix_alibot_ui.py \
     && python tools/fix_instructions_back.py \
-    && python tools/fix_instructions_full.py \
     && python tools/fix_admin_broadcast_media.py \
+    && python tools/fix_instructions_full.py \
     && python tools/enable_internal_plugins.py \
     && python tools/audit_users_feature.py \
     && python tools/add_admin_control_center.py \
