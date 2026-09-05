@@ -3,6 +3,10 @@
 This engine coordinates page/embed resolution, candidate validation, and
 candidate ranking. It does not download media and does not implement
 domain-specific rules or authentication/DRM bypasses.
+
+When available, persistent telemetry is recorded after each extraction. The
+telemetry layer is best-effort: a telemetry storage failure must never change
+the extraction result or break the downloader.
 """
 
 from __future__ import annotations
@@ -10,10 +14,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
+import time
 
 from .candidate_ranker import CandidateRanker
 from .candidate_validator import CandidateValidator, ValidationResult
 from .embed_resolver import EmbedResolver
+from .smart_learning import SmartTelemetryStore, get_telemetry_store
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,7 @@ class ExtractionResult:
     valid_candidate_count: int
     invalid_candidate_count: int
     diagnostics: tuple[str, ...]
+    telemetry_id: int | None = None
 
 
 class SmartExtractionEngine:
@@ -38,6 +45,7 @@ class SmartExtractionEngine:
         resolver: EmbedResolver,
         validator: CandidateValidator,
         ranker: CandidateRanker,
+        telemetry_store: SmartTelemetryStore | None = None,
     ) -> None:
         if not isinstance(resolver, EmbedResolver):
             raise TypeError("resolver must be an EmbedResolver")
@@ -48,9 +56,40 @@ class SmartExtractionEngine:
         if not isinstance(ranker, CandidateRanker):
             raise TypeError("ranker must be a CandidateRanker")
 
+        if telemetry_store is not None and not isinstance(telemetry_store, SmartTelemetryStore):
+            raise TypeError("telemetry_store must be a SmartTelemetryStore or None")
+
         self.resolver = resolver
         self.validator = validator
         self.ranker = ranker
+        self.telemetry_store = telemetry_store
+
+    def _record_telemetry(self, result: ExtractionResult, started_at: float) -> ExtractionResult:
+        store = self.telemetry_store
+        if store is None:
+            return result
+        try:
+            policy_version, _ = store.production_policy()
+            telemetry_id = store.record_extraction(
+                result,
+                elapsed_ms=(time.perf_counter() - started_at) * 1000.0,
+                policy_version=policy_version,
+            )
+            return ExtractionResult(
+                source_url=result.source_url,
+                best_media=result.best_media,
+                ranked_candidates=result.ranked_candidates,
+                visited_pages=result.visited_pages,
+                candidate_count=result.candidate_count,
+                valid_candidate_count=result.valid_candidate_count,
+                invalid_candidate_count=result.invalid_candidate_count,
+                diagnostics=result.diagnostics,
+                telemetry_id=telemetry_id,
+            )
+        except Exception:
+            # Telemetry is observability/learning infrastructure, never a
+            # dependency of the production extraction path.
+            return result
 
     def extract(
         self,
@@ -80,6 +119,7 @@ class SmartExtractionEngine:
                 "max_ranked_candidates must be greater than zero"
             )
 
+        started_at = time.perf_counter()
         diagnostics: list[str] = []
 
         try:
@@ -98,7 +138,7 @@ class SmartExtractionEngine:
                 ]
             )
 
-            return ExtractionResult(
+            result = ExtractionResult(
                 source_url=source_url,
                 best_media=None,
                 ranked_candidates=(),
@@ -108,6 +148,7 @@ class SmartExtractionEngine:
                 invalid_candidate_count=0,
                 diagnostics=tuple(diagnostics),
             )
+            return self._record_telemetry(result, started_at)
 
         if resolution.resolution_error is not None:
             diagnostics.append(
@@ -192,7 +233,7 @@ class SmartExtractionEngine:
         if not best_media:
             diagnostics.append("no_valid_media_candidate")
 
-        return ExtractionResult(
+        result = ExtractionResult(
             source_url=source_url,
             best_media=best_media,
             ranked_candidates=tuple(ranked),
@@ -202,6 +243,7 @@ class SmartExtractionEngine:
             invalid_candidate_count=invalid_count,
             diagnostics=tuple(diagnostics),
         )
+        return self._record_telemetry(result, started_at)
 
     @staticmethod
     def summarize(result: ExtractionResult) -> dict[str, Any]:
@@ -221,4 +263,5 @@ class SmartExtractionEngine:
             "valid_candidate_count": result.valid_candidate_count,
             "invalid_candidate_count": result.invalid_candidate_count,
             "diagnostics": list(result.diagnostics),
+            "telemetry_id": result.telemetry_id,
         }
