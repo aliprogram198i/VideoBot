@@ -123,8 +123,6 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user = update.effective_user
 
-    # Admin messages that belong to an existing admin workflow must continue
-    # to the original admin router instead of being treated as searches.
     if user.id == bot_module.ADMIN_ID and any(
         context.user_data.get(key)
         for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
@@ -316,14 +314,15 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
     original_admin_keyboard = bot_module.admin_keyboard
 
     def admin_keyboard_with_recovery():
-        keyboard = original_admin_keyboard()
-        keyboard.inline_keyboard.append([
+        original_markup = original_admin_keyboard()
+        keyboard = [list(row) for row in original_markup.inline_keyboard]
+        keyboard.append([
             InlineKeyboardButton(
                 "🔄 استرداد المستخدمين",
                 callback_data="recover_users_menu",
             )
         ])
-        return keyboard
+        return InlineKeyboardMarkup(keyboard)
 
     bot_module.admin_keyboard = admin_keyboard_with_recovery
 
@@ -334,9 +333,6 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
             return
         await recover_users_command(update, context, bot_module, admin_id)
 
-    # Group -1 gives Smart Search priority over the original catch-all text
-    # handlers. ApplicationHandlerStop prevents a normal search from reaching
-    # handle_message/admin_text_router a second time.
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
