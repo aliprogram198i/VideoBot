@@ -15,7 +15,14 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
@@ -115,10 +122,19 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     user = update.effective_user
+
+    # Admin messages that belong to an existing admin workflow must continue
+    # to the original admin router instead of being treated as searches.
+    if user.id == bot_module.ADMIN_ID and any(
+        context.user_data.get(key)
+        for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
+    ):
+        return
+
     bot_module.register_user(user)
     if bot_module.is_banned(user.id):
         await update.message.reply_text(bot_module.TEXTS["ar"]["banned"])
-        return
+        raise ApplicationHandlerStop
 
     language = _lang(bot_module, user.id)
     if not bot_module.get_language(user.id):
@@ -126,24 +142,25 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             bot_module.TEXTS["ar"]["choose_language"],
             reply_markup=bot_module.language_keyboard(),
         )
-        return
+        raise ApplicationHandlerStop
 
     if len(text) < 2 or len(text) > 200:
         await update.message.reply_text("❌ اكتب عبارة بحث بين حرفين و200 حرف.")
-        return
+        raise ApplicationHandlerStop
 
     status = await update.message.reply_text(
         "🔎 جاري البحث الذكي...\n\nبدون AI — يتم ترتيب النتائج خوارزميًا."
     )
     try:
         results = await _youtube_search(text)
-    except Exception:
+    except Exception as exc:
+        print(f"Smart Search error: {exc}", flush=True)
         await status.edit_text("❌ تعذر تنفيذ البحث الآن. حاول مرة أخرى بعد قليل.")
-        return
+        raise ApplicationHandlerStop
 
     if not results:
         await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
-        return
+        raise ApplicationHandlerStop
 
     context.user_data["smart_search_results"] = [
         {"url": item["url"], "title": item["title"]} for item in results
@@ -171,6 +188,7 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    raise ApplicationHandlerStop
 
 
 async def smart_search_pick(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
@@ -316,9 +334,12 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
             return
         await recover_users_command(update, context, bot_module, admin_id)
 
+    # Group -1 gives Smart Search priority over the original catch-all text
+    # handlers. ApplicationHandlerStop prevents a normal search from reaching
+    # handle_message/admin_text_router a second time.
     app.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND & ~filters.User(admin_id),
+            filters.TEXT & ~filters.COMMAND,
             lambda update, context: smart_search_handler(update, context, bot_module),
         ),
         group=-1,
@@ -327,6 +348,7 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
         CallbackQueryHandler(
             lambda update, context: smart_search_pick(update, context, bot_module),
             pattern=r"^smart_search_pick_\d+$",
+            block=False,
         ),
     )
     app.add_handler(
