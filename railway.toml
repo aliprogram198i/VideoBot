@@ -6,3 +6,5 @@ startCommand = "python -u bot.py"
 preDeployCommand = []
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+
+# Stable production startup configuration; no pre-deploy source mutation.
