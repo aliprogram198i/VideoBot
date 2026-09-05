@@ -34,7 +34,6 @@ COPY --chown=videobot:videobot tools/fix_admin_broadcast_media.py ./tools/fix_ad
 COPY --chown=videobot:videobot tools/fix_instructions_full.py ./tools/fix_instructions_full.py
 COPY --chown=videobot:videobot tools/enable_internal_plugins.py ./tools/enable_internal_plugins.py
 COPY --chown=videobot:videobot tools/audit_users_feature.py ./tools/audit_users_feature.py
-COPY --chown=videobot:videobot tools/fix_admin_control_center.py ./tools/fix_admin_control_center.py
 
 # Validate installation and apply runtime compatibility/features before startup.
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
@@ -51,7 +50,6 @@ RUN python tools/patch_runtime_features.py \
     && python tools/fix_admin_broadcast_media.py \
     && python tools/enable_internal_plugins.py \
     && python tools/audit_users_feature.py \
-    && python tools/fix_admin_control_center.py \
     && python -m py_compile bot.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py
 
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
