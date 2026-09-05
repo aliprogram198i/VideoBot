@@ -1,0 +1,242 @@
+name: Apply Facebook Reliability Fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !startsWith(github.event.head_commit.message, 'fix: Facebook reliability guard') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply guarded reliability patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          path = Path('bot.py')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          marker = '''# ============================================================
+          # تحديد المنصة
+          # ============================================================
+          
+          def detect_website(url):
+          '''
+          insert = '''# ============================================================
+          # Facebook access/login-wall detection
+          # ============================================================
+          
+          def is_facebook_url(url):
+              try:
+                  host = (urlparse(url).hostname or '').lower().rstrip('.')
+              except Exception:
+                  return False
+              return (
+                  host == 'facebook.com'
+                  or host.endswith('.facebook.com')
+                  or host == 'fb.watch'
+                  or host.endswith('.fb.watch')
+              )
+          
+          
+          def facebook_login_wall_detected(text):
+              """Detect Facebook authentication walls without personal cookies."""
+              if not text:
+                  return False
+              value = str(text).lower()
+              markers = (
+                  'facebook.com/login',
+                  '/login/?',
+                  'login/?next=',
+                  'login to facebook',
+                  'log into facebook',
+                  'you must log in',
+                  'you need to log in',
+                  'log in to continue',
+                  'login to continue',
+              )
+              return any(marker in value for marker in markers)
+          
+          
+          def facebook_access_required(url, *texts):
+              if not is_facebook_url(url):
+                  return False
+              return any(
+                  facebook_login_wall_detected(text)
+                  for text in texts
+                  if text
+              )
+          
+          
+          # ============================================================
+          # تحديد المنصة
+          # ============================================================
+          
+          def detect_website(url):
+          '''
+          if marker not in text:
+              raise SystemExit('Facebook helper insertion marker not found')
+          text = text.replace(marker, insert, 1)
+
+          old_retry = '''            if getattr(exc, "code", None) == 429:
+                  break
+          
+              if time.monotonic() >= fetch_deadline:
+                  break
+          
+              if attempt < 2:
+                  remaining_time = (
+                      fetch_deadline - time.monotonic()
+                  )
+          
+                  if remaining_time <= 0:
+                      break
+          
+                  await asyncio.sleep(
+                      min(2 ** attempt, remaining_time)
+                  )
+          '''
+          new_retry = '''            status = getattr(exc, "code", None)
+          
+              # 422 is non-retryable: retrying wastes quota and adds latency.
+              if status == 422:
+                  diagnostics["retryable"] = False
+                  diagnostics["failure_class"] = "unprocessable_entity"
+                  break
+          
+              # 429 is transient. Honor Retry-After when valid, otherwise
+              # use bounded exponential backoff.
+              if status == 429:
+                  diagnostics["retryable"] = True
+                  if time.monotonic() >= fetch_deadline or attempt >= 2:
+                      break
+          
+                  try:
+                      delay = (
+                          float(retry_after)
+                          if retry_after is not None
+                          else (2 ** attempt)
+                      )
+                  except (TypeError, ValueError):
+                      delay = 2 ** attempt
+          
+                  delay = max(1.0, min(delay, 15.0))
+                  remaining_time = fetch_deadline - time.monotonic()
+                  if remaining_time <= 0:
+                      break
+                  await asyncio.sleep(min(delay, remaining_time))
+                  continue
+          
+              # Other HTTP failures are not assumed retryable.
+              diagnostics["retryable"] = False
+              break
+          '''
+          if old_retry not in text:
+              raise SystemExit('Yoinku retry block not found')
+          text = text.replace(old_retry, new_retry, 1)
+
+          needle = '''            print("===================================")
+              print()
+          
+              # ------------------------------------------------
+              # Fallback policy
+          '''
+          replacement = '''            print("===================================")
+              print()
+          
+              # Facebook login-wall fast failure. Do not cascade through
+              # Smart Extraction/Yoinku when the source is already known to
+              # require authentication; those paths cannot create a valid
+              # authenticated session and only add latency/external requests.
+              if facebook_access_required(url, stdout_text, stderr_text):
+                  last_error_stage = "facebook_access"
+                  last_error_type = "facebook_login_required"
+                  last_error_message = (
+                      "Facebook redirected the request to an authentication/login wall."
+                  )
+          
+                  log_download_error(
+                      user_id=query.from_user.id if query.from_user else None,
+                      username=query.from_user.username if query.from_user else None,
+                      url=url,
+                      website=website,
+                      media_type="audio" if is_audio else "video",
+                      stage=last_error_stage,
+                      error_type=last_error_type,
+                      error_message=last_error_message,
+                      traceback_text=None,
+                      yoinku_used=False,
+                      attempt_id=attempt_id,
+                      attempt_number=attempt_number,
+                      duration_ms=int((time.monotonic() - attempt_started_at) * 1000),
+                      return_code=process.returncode,
+                      exception_type="FacebookLoginRequired",
+                      details={
+                          "fast_failure": True,
+                          "reason": "login_wall_detected",
+                      },
+                  )
+          
+                  localized_facebook_error = {
+                      "ar": (
+                          "❌ تعذر تحميل فيديو Facebook.\\n\\n"
+                          "🔐 يبدو أن Facebook طلب تسجيل الدخول للوصول إلى هذا المحتوى.\\n"
+                          "جرّب رابطًا عامًا يمكن الوصول إليه بدون تسجيل دخول."
+                      ),
+                      "en": (
+                          "❌ Facebook could not provide this video.\\n\\n"
+                          "🔐 Facebook appears to require login to access this content.\\n"
+                          "Please try a public link that is accessible without signing in."
+                      ),
+                      "tr": (
+                          "❌ Facebook videosu indirilemedi.\\n\\n"
+                          "🔐 Facebook bu içeriğe erişmek için giriş istiyor olabilir.\\n"
+                          "Giriş gerektirmeyen herkese açık bir bağlantı deneyin."
+                      ),
+                      "de": (
+                          "❌ Das Facebook-Video konnte nicht heruntergeladen werden.\\n\\n"
+                          "🔐 Facebook verlangt offenbar eine Anmeldung für diesen Inhalt.\\n"
+                          "Bitte versuchen Sie einen öffentlichen Link ohne Anmeldung."
+                      ),
+                  }.get(
+                      language,
+                      "❌ Facebook يتطلب تسجيل الدخول للوصول إلى هذا المحتوى."
+                  )
+          
+                  await query.edit_message_text(localized_facebook_error)
+                  return
+          
+              # ------------------------------------------------
+              # Fallback policy
+          '''
+          if needle not in text:
+              raise SystemExit('Fallback policy insertion marker not found')
+          text = text.replace(needle, replacement, 1)
+
+          if text == original:
+              raise SystemExit('Patch produced no changes')
+
+          path.write_text(text, encoding='utf-8')
+
+          subprocess.run(['python', '-m', 'py_compile', 'bot.py'], check=True)
+          subprocess.run(['git', 'diff', '--check'], check=True)
+
+          print('PATCH_OK')
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py
+          git commit -m "fix: Facebook reliability guard" || exit 0
+          git push
