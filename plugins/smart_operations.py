@@ -3,8 +3,8 @@
 Read-only diagnostics: it never modifies or deletes existing user/download data.
 """
 
+import html
 import os
-import shutil
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -88,9 +88,16 @@ def collect_smart_operations(get_db):
         success_rate = None
         if "downloads" in tables:
             cols = _column_names(conn, "downloads")
-            status_col = next((c for c in ("status", "result", "download_status") if c in cols), None)
+            status_col = next(
+                (c for c in ("status", "result", "download_status") if c in cols),
+                None,
+            )
             if status_col:
-                total = _safe_count(conn, f"SELECT COUNT(*) FROM downloads WHERE created_at >= ?", (_today_prefix(),))
+                total = _safe_count(
+                    conn,
+                    "SELECT COUNT(*) FROM downloads WHERE created_at >= ?",
+                    (_today_prefix(),),
+                )
                 success = _safe_count(
                     conn,
                     f"SELECT COUNT(*) FROM downloads WHERE created_at >= ? AND LOWER(CAST({status_col} AS TEXT)) IN ('success','successful','ok','completed','done','1')",
@@ -102,22 +109,38 @@ def collect_smart_operations(get_db):
         # Discover an existing error table without creating one or changing the DB.
         error_summary = None
         error_count = 0
+        error_monitoring = False
         error_table = next(
-            (name for name in tables if name.lower() in {"errors", "error_logs", "ai_errors", "bot_errors"}),
+            (
+                name
+                for name in tables
+                if name.lower() in {"errors", "error_logs", "ai_errors", "bot_errors"}
+            ),
             None,
         )
         if error_table:
             cols = _column_names(conn, error_table)
-            message_col = next((c for c in ("error", "message", "error_message", "details") if c in cols), None)
-            time_col = next((c for c in ("created_at", "timestamp", "occurred_at") if c in cols), None)
+            message_col = next(
+                (c for c in ("error", "message", "error_message", "details") if c in cols),
+                None,
+            )
+            time_col = next(
+                (c for c in ("created_at", "timestamp", "occurred_at") if c in cols),
+                None,
+            )
             if message_col:
+                error_monitoring = True
                 where = f"WHERE {time_col} >= ?" if time_col else ""
                 params = (_today_prefix(),) if time_col else ()
                 row = conn.execute(
                     f"SELECT {message_col}, COUNT(*) AS count FROM {error_table} {where} GROUP BY {message_col} ORDER BY count DESC LIMIT 1",
                     params,
                 ).fetchone()
-                error_count = _safe_count(conn, f"SELECT COUNT(*) FROM {error_table} {where}", params) or 0
+                error_count = _safe_count(
+                    conn,
+                    f"SELECT COUNT(*) FROM {error_table} {where}",
+                    params,
+                ) or 0
                 if row:
                     error_summary = str(row[0])[:120]
 
@@ -130,6 +153,7 @@ def collect_smart_operations(get_db):
             "success_rate": success_rate,
             "error_summary": error_summary,
             "error_count": error_count,
+            "error_monitoring": error_monitoring,
             "ai_configured": bool(os.getenv("GEMINI_API_KEY")),
         }
     finally:
@@ -146,15 +170,20 @@ def _keyboard():
 
 
 def render_smart_operations(data):
-    status = "🟢 مستقر"
-    ai_status = "🟢 تعمل" if data["ai_configured"] else "🟠 غير مهيأة"
-    success = f"{data['success_rate']}%" if data["success_rate"] is not None else "غير متاح — لا يوجد حقل نتيجة موثوق"
+    # This reflects the dashboard's own read health, not the bot's overall health.
+    status = "🟢 قراءة البيانات مستقرة"
+    monitoring = "🟢 تعمل" if data["error_monitoring"] else "🟠 غير مهيأة"
+    success = (
+        f"{data['success_rate']}%"
+        if data["success_rate"] is not None
+        else "غير متاح — لا يوجد حقل نتيجة موثوق"
+    )
 
     text = (
         "🤖 <b>Smart Operations</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         f"{status}\n"
-        f"🧠 مراقبة الأخطاء     {ai_status}\n"
+        f"🧠 مراقبة الأخطاء     {monitoring}\n"
         f"📥 تحميلات اليوم      {data['downloads_today']}\n"
         f"✅ معدل النجاح        {success}\n"
         f"👥 مستخدمون نشطون     {data['active_today']}\n\n"
@@ -164,22 +193,29 @@ def render_smart_operations(data):
 
     if data["error_count"]:
         text += f"🟠 أخطاء مسجلة اليوم: {data['error_count']}\n"
-    else:
+    elif data["error_monitoring"]:
         text += "🟢 لا توجد مشاكل حرجة مسجلة\n"
+    else:
+        text += "🟠 لا يوجد سجل أخطاء مهيأ للمراقبة\n"
 
     text += "\n━━━━━━━━━━━━━━━━━━\n\n"
     text += "🌐 <b>المنصة الأكثر استخدامًا</b>\n"
     if data["website"]:
-        text += f"{data['website']} — {data['platform_pct']}%\n"
+        text += f"{html.escape(str(data['website']))} — {data['platform_pct']}%\n"
     else:
         text += "لا توجد بيانات اليوم\n"
 
     text += "\n⚠️ <b>أكثر خطأ متكرر</b>\n"
-    text += (data["error_summary"] + "\n") if data["error_summary"] else "لا توجد بيانات أخطاء مسجلة\n"
+    if data["error_summary"]:
+        text += html.escape(str(data["error_summary"])) + "\n"
+    else:
+        text += "لا توجد بيانات أخطاء مسجلة\n"
 
     text += "\n🧠 <b>تحليل ذكي</b>\n"
-    if data["error_summary"]:
-        text += "النظام يرصد الخطأ المسجل ويعرضه للتحليل والمتابعة.\n"
+    if data["error_summary"] and data["ai_configured"]:
+        text += "تم رصد الخطأ، والذكاء الاصطناعي مهيأ لتحليله عند استخدام مسار التحليل.\n"
+    elif data["error_summary"]:
+        text += "تم رصد الخطأ وعرضه للمتابعة؛ التحليل الذكي غير مهيأ حاليًا.\n"
     elif data["ai_configured"]:
         text += "لا توجد مشكلة مسجلة حاليًا تحتاج إلى تحليل.\n"
     else:
@@ -189,14 +225,23 @@ def render_smart_operations(data):
     return text
 
 
-async def smart_operations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, admin_id):
+async def smart_operations_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    get_db,
+    admin_id,
+):
     query = update.callback_query
     await query.answer()
     if not update.effective_user or update.effective_user.id != admin_id:
         return
     try:
         data = collect_smart_operations(get_db)
-        await query.edit_message_text(render_smart_operations(data), parse_mode="HTML", reply_markup=_keyboard())
+        await query.edit_message_text(
+            render_smart_operations(data),
+            parse_mode="HTML",
+            reply_markup=_keyboard(),
+        )
     except Exception:
         await query.edit_message_text(
             "🤖 <b>Smart Operations</b>\n━━━━━━━━━━━━━━━━━━\n\n🔴 تعذر قراءة بيانات المراقبة حاليًا.\n\nℹ️ لم يتم تعديل قاعدة البيانات.",
