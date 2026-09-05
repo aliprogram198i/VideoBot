@@ -13,7 +13,6 @@ from telegram.ext import (
     filters,
 )
 
-
 MAX_BROADCAST_LENGTH = 4000
 
 
@@ -44,10 +43,7 @@ def register_broadcast_media(app, bot_module, admin_id):
 
         kind = _kind(message)
         if kind is None:
-            await message.reply_text(
-                "❌ نوع غير مدعوم.\n\n"
-                "أرسل نصًا أو رابطًا، أو صورة، أو فيديو، أو صوتًا/رسالة صوتية."
-            )
+            await message.reply_text("❌ أرسل نصًا أو رابطًا، أو صورة، أو فيديو، أو صوتًا/رسالة صوتية.")
             return
 
         if kind == "text":
@@ -57,6 +53,7 @@ def register_broadcast_media(app, bot_module, admin_id):
                 return
             if len(content) > MAX_BROADCAST_LENGTH:
                 await message.reply_text(f"❌ الحد الأقصى للإعلان {MAX_BROADCAST_LENGTH} حرف.")
+                return
             log_message = content
         else:
             caption = (message.caption or "").strip()
@@ -71,10 +68,7 @@ def register_broadcast_media(app, bot_module, admin_id):
         try:
             cur = conn.cursor()
             cur.execute(
-                """
-                INSERT INTO broadcast_logs (admin_id, message, sent_count, failed_count, created_at)
-                VALUES (?, ?, 0, 0, ?)
-                """,
+                "INSERT INTO broadcast_logs (admin_id, message, sent_count, failed_count, created_at) VALUES (?, ?, 0, 0, ?)",
                 (admin_id, log_message, datetime.now().isoformat()),
             )
             broadcast_id = cur.lastrowid
@@ -115,10 +109,7 @@ def register_broadcast_media(app, bot_module, admin_id):
 
         conn = bot_module.get_db()
         try:
-            conn.execute(
-                "UPDATE broadcast_logs SET sent_count = ?, failed_count = ? WHERE id = ?",
-                (sent, failed, broadcast_id),
-            )
+            conn.execute("UPDATE broadcast_logs SET sent_count = ?, failed_count = ? WHERE id = ?", (sent, failed, broadcast_id))
             conn.commit()
         finally:
             conn.close()
@@ -139,13 +130,8 @@ def register_broadcast_media(app, bot_module, admin_id):
         await update.effective_message.reply_text(
             "📢 إرسال إعلان\n\n"
             "أرسل الآن أحد الأنواع التالية:\n"
-            "• 📝 نص\n"
-            "• 🔗 رابط\n"
-            "• 🖼️ صورة\n"
-            "• 🎥 فيديو\n"
-            "• 🎵 صوت أو رسالة صوتية\n\n"
-            "يمكنك إضافة Caption للصورة أو الفيديو أو الصوت.\n\n"
-            "❌ للإلغاء استخدم /cancel"
+            "• 📝 نص\n• 🔗 رابط\n• 🖼️ صورة\n• 🎥 فيديو\n• 🎵 صوت أو رسالة صوتية\n\n"
+            "يمكنك إضافة Caption للصورة أو الفيديو أو الصوت.\n\n❌ للإلغاء استخدم /cancel"
         )
         raise ApplicationHandlerStop
 
@@ -158,8 +144,7 @@ def register_broadcast_media(app, bot_module, admin_id):
         await query.edit_message_text(
             "📢 إرسال إعلان\n\n"
             "أرسل الآن نصًا أو رابطًا أو صورة أو فيديو أو صوتًا/رسالة صوتية.\n"
-            "يمكنك إضافة Caption للوسائط.\n\n"
-            "❌ للإلغاء استخدم /cancel"
+            "يمكنك إضافة Caption للوسائط.\n\n❌ للإلغاء استخدم /cancel"
         )
         raise ApplicationHandlerStop
 
