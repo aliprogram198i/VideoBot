@@ -1,28 +1,31 @@
 """Production entrypoint for AliBot.
 
-Provides the local single-instance lock and a small, explicit bootstrap hook
-for optional restored features. Telegram-side token ownership is unchanged.
+Provides a local single-instance guard plus a short startup grace period so
+Railway can terminate the previous polling process before Telegram polling
+starts. Telegram-side token ownership is unchanged.
 """
 
 import fcntl
 import importlib
+import os
 import sys
+import time
 
 from telegram.ext import Application
 
-LOCK_PATH = "/tmp/alibot-single-instance.lock"
+LOCK_PATH = "/app/data/alibot-single-instance.lock" if os.path.isdir("/app/data") else "/tmp/alibot-single-instance.lock"
+STARTUP_GRACE_SECONDS = 15
 
 
 def main() -> None:
     lock_file = open(LOCK_PATH, "w", encoding="utf-8")
-    try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print(
-            "❌ AliBot startup blocked: another local instance is already running.",
-            flush=True,
-        )
-        sys.exit(75)
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+    print(
+        f"🛡️ Single-instance guard acquired; waiting {STARTUP_GRACE_SECONDS}s before Telegram polling.",
+        flush=True,
+    )
+    time.sleep(STARTUP_GRACE_SECONDS)
 
     bot_module = importlib.import_module("bot")
     register_features = importlib.import_module(
