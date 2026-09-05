@@ -46,7 +46,7 @@ def capture_download_id_and_add_button(text):
 
 
 def register_handler(text):
-    anchor = '''    app.add_handler(\n        CallbackQueryHandler(\n            download_media,\n            pattern=r"^(video_|audio_|main_menu)"\n        )\n    )'''
+    anchor = '''    app.add_handler(\n        CallbackQueryHandler(\n            download_media,'''
 
     new = '''    app.add_handler(\n        CallbackQueryHandler(\n            retry_download_callback,\n            pattern=r"^retry_download_[0-9]+$"\n        )\n    )\n\n''' + anchor
 
