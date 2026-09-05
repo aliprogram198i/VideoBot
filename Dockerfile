@@ -27,7 +27,7 @@ COPY --chown=videobot:videobot entrypoint.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot plugins ./plugins
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
-    && python -m py_compile bot.py entrypoint.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py plugins/admin_control_center.py
+    && python -m py_compile bot.py entrypoint.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py plugins/admin_control_center.py plugins/broadcast_media.py plugins/group_broadcast.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
