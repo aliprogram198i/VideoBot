@@ -2,4 +2,4 @@
 builder = "RAILPACK"
 
 [deploy]
-startCommand = "python tools/enable_internal_plugins.py && python -u bot.py"
+startCommand = "python tools/enable_internal_plugins.py && python tools/audit_users_feature.py && python -u bot.py"
