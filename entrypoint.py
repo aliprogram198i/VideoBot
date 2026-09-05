@@ -50,6 +50,18 @@ def main() -> None:
     )
     time.sleep(STARTUP_GRACE_SECONDS)
 
+    # Apply the idempotent production reliability migration before bot.py is
+    # imported. This keeps the change isolated from user data and avoids
+    # storing Facebook account cookies or credentials anywhere.
+    from plugins.reliability_guard import apply_reliability_patch
+
+    changed = apply_reliability_patch("bot.py")
+    print(
+        "🛡️ Reliability guard: "
+        + ("APPLIED" if changed else "already applied"),
+        flush=True,
+    )
+
     bot_module = importlib.import_module("bot")
     register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
     register_broadcast = importlib.import_module("plugins.broadcast_media").register_broadcast_media
