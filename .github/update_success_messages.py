@@ -4,7 +4,7 @@ from pathlib import Path
 path = Path('bot.py')
 text = path.read_text(encoding='utf-8')
 
-updates = {
+messages = {
     'ar': {
         'video_done': '''        "video_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\\n"
@@ -95,7 +95,7 @@ updates = {
     }
 }
 
-for lang, keys in updates.items():
+for lang, keys in messages.items():
     start = text.find(f'    "{lang}": {{')
     if start < 0:
         raise RuntimeError(f'Missing language block: {lang}')
@@ -104,8 +104,8 @@ for lang, keys in updates.items():
         end = len(text)
     block = text[start:end]
     for key, replacement in keys.items():
-        pattern = rf'        "{re.escape(key)}":\n(?:            .*\n)+?'
-        match = re.search(pattern, block)
+        pattern = rf'        "{re.escape(key)}":.*?(?=\n        "[^\"]+":)'
+        match = re.search(pattern, block, flags=re.DOTALL)
         if not match:
             raise RuntimeError(f'Missing {lang}.{key}')
         block = block[:match.start()] + replacement + block[match.end():]
