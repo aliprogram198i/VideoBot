@@ -30,6 +30,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
+from plugins.smart_operations import register_smart_operations
 
 try:
     from google import genai
@@ -5178,6 +5179,12 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton(
+                "🤖 Smart Operations",
+                callback_data="admin_smart_operations"
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 "🗑️ مسح الإعلانات المرسلة",
                 callback_data="admin_delete_broadcasts"
             )
@@ -8345,6 +8352,16 @@ def main():
     print("🔗 Admin link handling: FIXED")
     print("====================================")
     print()
+
+    # ========================================================
+    # Smart Operations — read-only operational dashboard
+    # ========================================================
+
+    register_smart_operations(
+        app,
+        get_db,
+        ADMIN_ID
+    )
 
     app.run_polling(
         drop_pending_updates=True
