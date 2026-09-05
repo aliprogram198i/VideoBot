@@ -10,10 +10,34 @@ import importlib
 import os
 import time
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 
 LOCK_PATH = "/app/data/alibot-single-instance.lock" if os.path.isdir("/app/data") else "/tmp/alibot-single-instance.lock"
 STARTUP_GRACE_SECONDS = 15
+
+
+def _install_admin_panel_buttons(bot_module):
+    """Make restored admin actions visible in the actual production panel."""
+    original = bot_module.admin_keyboard
+
+    def admin_keyboard_with_group_broadcast():
+        markup = original()
+        rows = [list(row) for row in markup.inline_keyboard]
+        if not any(
+            button.callback_data == "group_broadcast_panel"
+            for row in rows
+            for button in row
+        ):
+            rows.append([
+                InlineKeyboardButton(
+                    "📢 إعلان المجموعات",
+                    callback_data="group_broadcast_panel",
+                )
+            ])
+        return InlineKeyboardMarkup(rows)
+
+    bot_module.admin_keyboard = admin_keyboard_with_group_broadcast
 
 
 def main() -> None:
@@ -38,6 +62,7 @@ def main() -> None:
         nonlocal registered
         if not registered:
             register_features(self, bot_module, bot_module.ADMIN_ID)
+            _install_admin_panel_buttons(bot_module)
             register_broadcast(self, bot_module, bot_module.ADMIN_ID)
             register_group_broadcast(self, bot_module, bot_module.ADMIN_ID)
             registered = True
