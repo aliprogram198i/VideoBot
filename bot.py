@@ -49,6 +49,7 @@ ADMIN_ID = 1486412391
 LOCAL_DB_FILE = "bot_stats.db"
 
 # Railway Volume: /app/data
+# ALIBOT_SUCCESS_MESSAGES_V1
 # ============================================================
 # قاعدة البيانات
 # ============================================================
@@ -375,27 +376,25 @@ TEXTS = {
 
         "video_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎬 <b>تم تحميل الفيديو بنجاح!</b>\n"
+            "       🎬 تم تحميل الفيديو بنجاح!\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 <b>مرحباً {username}</b> 🤍\n\n"
-            "🎚 <b>الجودة:</b> {quality}\n"
-            "📥 <b>الحالة:</b> جاهز للإرسال ✅\n\n"
+            "👤 مرحباً {username} 🤍\n\n"
+            "🎚 الجودة: {quality}\n"
+            "📥 الحالة: جاهز ✓\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🙏 شكراً لاستخدامك <b>بوت AliBot</b>\n"
-            "❤️ نتمنى أن تستمتع بالخدمة\n\n"
-            "🔗 شارك البوت مع أصدقائك ليستفيد الجميع 🌍",
+            "🚀 استمتع بالفيديو!\n"
+            "🔗 أرسل رابطاً آخر لبدء تحميل جديد.",
 
         "audio_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎵 <b>تم تحميل الصوت بنجاح!</b>\n"
+            "       🎵 تم تحميل الصوت بنجاح!\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 <b>مرحباً {username}</b> 🤍\n\n"
-            "🎚 <b>الجودة:</b> {quality}\n"
-            "📥 <b>الحالة:</b> جاهز للإرسال ✅\n\n"
+            "👤 مرحباً {username} 🤍\n\n"
+            "🎚 الجودة: {quality}\n"
+            "📥 الحالة: جاهز ✓\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🙏 شكراً لاستخدامك <b>بوت AliBot</b>\n"
-            "❤️ نتمنى أن تستمتع بالخدمة\n\n"
-            "🔗 شارك البوت مع أصدقائك ليستفيد الجميع 🌍",
+            "🎧 استمتع بالصوت!\n"
+            "🔗 أرسل رابطاً آخر لبدء تحميل جديد.",
 
         "download_error":
             "❌ تعذر تحميل هذا الرابط.\n\n"
@@ -524,14 +523,26 @@ TEXTS = {
             "📤 Sending the file...",
 
         "video_done":
-            "🎬 Video downloaded successfully!\n"
-            "🎚 Quality: {quality}\n\n"
-            "❤️ Don't forget to share the bot with your friends!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎬 Video downloaded successfully!\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 Welcome {username} 🤍\n\n"
+            "🎚 Quality: {quality}\n"
+            "📥 Status: Ready ✓\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🚀 Enjoy your video!\n"
+            "🔗 Send another link to start a new download.",
 
         "audio_done":
-            "🎵 Audio downloaded successfully!\n"
-            "🎚 Quality: {quality}\n\n"
-            "❤️ Share the bot with your friends!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎵 Audio downloaded successfully!\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 Welcome {username} 🤍\n\n"
+            "🎚 Quality: {quality}\n"
+            "📥 Status: Ready ✓\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🎧 Enjoy your audio!\n"
+            "🔗 Send another link to start a new download.",
 
         "download_error":
             "❌ Unable to download this link.",
@@ -656,14 +667,26 @@ TEXTS = {
             "📤 Dosya gönderiliyor...",
 
         "video_done":
-            "🎬 Video başarıyla indirildi!\n"
-            "🎚 Kalite: {quality}\n\n"
-            "❤️ Botu arkadaşlarınızla paylaşmayı unutmayın!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎬 Video başarıyla indirildi!\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 Hoş geldin {username} 🤍\n\n"
+            "🎚 Kalite: {quality}\n"
+            "📥 Durum: Hazır ✓\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🚀 Videonuzun keyfini çıkarın!\n"
+            "🔗 Yeni bir indirme için başka bir bağlantı gönderin.",
 
         "audio_done":
-            "🎵 Ses başarıyla indirildi!\n"
-            "🎚 Kalite: {quality}\n\n"
-            "❤️ Botu arkadaşlarınızla paylaşmayı unutmayın!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎵 Ses başarıyla indirildi!\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 Hoş geldin {username} 🤍\n\n"
+            "🎚 Kalite: {quality}\n"
+            "📥 Durum: Hazır ✓\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🎧 Sesinizin keyfini çıkarın!\n"
+            "🔗 Yeni bir indirme için başka bir bağlantı gönderin.",
 
         "download_error":
             "❌ Bu bağlantı indirilemedi.",
@@ -787,14 +810,26 @@ TEXTS = {
             "📤 Datei wird gesendet...",
 
         "video_done":
-            "🎬 Video erfolgreich heruntergeladen!\n"
-            "🎚 Qualität: {quality}\n\n"
-            "❤️ Vergessen Sie nicht, den Bot mit Freunden zu teilen!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎬 Video erfolgreich heruntergeladen!\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 Willkommen {username} 🤍\n\n"
+            "🎚 Qualität: {quality}\n"
+            "📥 Status: Bereit ✓\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🚀 Viel Spaß mit Ihrem Video!\n"
+            "🔗 Senden Sie einen weiteren Link für einen neuen Download.",
 
         "audio_done":
-            "🎵 Audio erfolgreich heruntergeladen!\n"
-            "🎚 Qualität: {quality}\n\n"
-            "❤️ Teilen Sie den Bot mit Ihren Freunden!",
+            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
+            "       🎵 Audio erfolgreich heruntergeladen!\n"
+            "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+            "👤 Willkommen {username} 🤍\n\n"
+            "🎚 Qualität: {quality}\n"
+            "📥 Status: Bereit ✓\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🎧 Viel Spaß mit Ihrem Audio!\n"
+            "🔗 Senden Sie einen weiteren Link für einen neuen Download.",
 
         "download_error":
             "❌ Dieser Link konnte nicht heruntergeladen werden.",
