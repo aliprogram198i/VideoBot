@@ -10,6 +10,8 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from plugins.media_input import register_media_input
+
 
 CALLBACK = "admin_smart_operations"
 
@@ -84,7 +86,6 @@ def collect_smart_operations(get_db):
         total_today = downloads or 0
         platform_pct = round((website_count / total_today) * 100, 1) if total_today else 0
 
-        # Only calculate success rate when a real status/result column exists.
         success_rate = None
         if "downloads" in tables:
             cols = _column_names(conn, "downloads")
@@ -106,7 +107,6 @@ def collect_smart_operations(get_db):
                 if total:
                     success_rate = round((success or 0) * 100 / total, 1)
 
-        # Discover an existing error table without creating one or changing the DB.
         error_summary = None
         error_count = 0
         error_monitoring = False
@@ -170,7 +170,6 @@ def _keyboard():
 
 
 def render_smart_operations(data):
-    # This reflects the dashboard's own read health, not the bot's overall health.
     status = "🟢 قراءة البيانات مستقرة"
     monitoring = "🟢 تعمل" if data["error_monitoring"] else "🟠 غير مهيأة"
     success = (
@@ -251,7 +250,8 @@ async def smart_operations_callback(
 
 
 def register_smart_operations(app, get_db, admin_id):
-    """Register the isolated Smart Operations callback."""
+    """Register Smart Operations and the isolated media input layer."""
+    register_media_input(app)
     app.add_handler(
         CallbackQueryHandler(
             lambda update, context: smart_operations_callback(update, context, get_db, admin_id),
