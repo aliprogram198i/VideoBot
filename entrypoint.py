@@ -8,7 +8,6 @@ starts. Telegram-side token ownership is unchanged.
 import fcntl
 import importlib
 import os
-import sys
 import time
 
 from telegram.ext import Application
@@ -31,6 +30,9 @@ def main() -> None:
     register_features = importlib.import_module(
         "plugins.recovered_features"
     ).register_recovered_features
+    register_broadcast = importlib.import_module(
+        "plugins.broadcast_media"
+    ).register_broadcast_media
 
     original_run_polling = Application.run_polling
     registered = False
@@ -39,6 +41,7 @@ def main() -> None:
         nonlocal registered
         if not registered:
             register_features(self, bot_module, bot_module.ADMIN_ID)
+            register_broadcast(self, bot_module, bot_module.ADMIN_ID)
             registered = True
         return original_run_polling(self, *args, **kwargs)
 
