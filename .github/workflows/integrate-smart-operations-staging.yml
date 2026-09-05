@@ -65,3 +65,5 @@ jobs:
           fi
           git commit -m "feat(admin): integrate Smart Operations [smart-ops-integrated]"
           git push
+
+# SAFE_TRIGGER: 2026-09-05
