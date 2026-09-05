@@ -27,12 +27,9 @@ def main() -> None:
     time.sleep(STARTUP_GRACE_SECONDS)
 
     bot_module = importlib.import_module("bot")
-    register_features = importlib.import_module(
-        "plugins.recovered_features"
-    ).register_recovered_features
-    register_broadcast = importlib.import_module(
-        "plugins.broadcast_media"
-    ).register_broadcast_media
+    register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
+    register_broadcast = importlib.import_module("plugins.broadcast_media").register_broadcast_media
+    register_group_broadcast = importlib.import_module("plugins.group_broadcast").register_group_broadcast
 
     original_run_polling = Application.run_polling
     registered = False
@@ -42,6 +39,7 @@ def main() -> None:
         if not registered:
             register_features(self, bot_module, bot_module.ADMIN_ID)
             register_broadcast(self, bot_module, bot_module.ADMIN_ID)
+            register_group_broadcast(self, bot_module, bot_module.ADMIN_ID)
             registered = True
         return original_run_polling(self, *args, **kwargs)
 
