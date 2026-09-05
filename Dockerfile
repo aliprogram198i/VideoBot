@@ -8,8 +8,9 @@ RUN apt-get update \
     && useradd --system --create-home --uid 10001 videobot \
     && curl -fsSL "https://dl.deno.land/release/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
     && curl -fsSL "https://dl.deno.land/release/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip.sha256sum" -o /tmp/deno.sha256 \
-    && cd /tmp \
-    && sha256sum -c deno.sha256 \
+    && expected="$(awk '{print $1}' /tmp/deno.sha256)" \
+    && actual="$(sha256sum /tmp/deno.zip | awk '{print $1}')" \
+    && test "$actual" = "$expected" \
     && unzip -q /tmp/deno.zip -d /usr/local/bin \
     && chmod +x /usr/local/bin/deno \
     && rm -f /tmp/deno.zip /tmp/deno.sha256 \
