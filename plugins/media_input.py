@@ -46,11 +46,9 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     message = update.effective_message
     if not message:
         return
-
     media, media_type = _message_media(message)
     if media is None:
         return
-
     if _declared_size(media) > MAX_MEDIA_BYTES:
         await message.reply_text("❌ الملف أكبر من الحد المسموح به (500 MB).\n\nأرسل ملفًا أصغر وحاول مرة أخرى.")
         return
@@ -58,13 +56,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     async with _MEDIA_SEMAPHORE:
         temp_dir = tempfile.mkdtemp(prefix="alibot_media_")
         try:
-            defaults = {
-                "video": "video.mp4",
-                "voice": "voice.ogg",
-                "audio": "audio",
-                "document_video": "video",
-                "document_audio": "audio",
-            }
+            defaults = {"video": "video.mp4", "voice": "voice.ogg", "audio": "audio", "document_video": "video", "document_audio": "audio"}
             target = Path(temp_dir) / _safe_name(getattr(media, "file_name", None), defaults[media_type])
             await message.reply_text("⏳ استلمت الملف، جاري تجهيزه وإرساله...")
             telegram_file = await media.get_file()
