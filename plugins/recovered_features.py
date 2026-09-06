@@ -1,16 +1,15 @@
 """Restored AliBot user-facing features.
 
 Contains two isolated features:
-- Smart Search: natural-language YouTube search without AI.
+- Smart Search: deterministic YouTube search/ranking without AI.
 - User Recovery: admin-only re-engagement of inactive users.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
+import html
 import re
-import shutil
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -24,6 +23,8 @@ from telegram.ext import (
     filters,
 )
 
+from plugins.smart_search_engine import search_youtube
+
 
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 SEARCH_PICK_RE = re.compile(r"^smart_search_pick_(\d+)$")
@@ -36,75 +37,6 @@ def _lang(bot_module: Any, user_id: int) -> str:
 
 def _looks_like_url(text: str) -> bool:
     return bool(URL_RE.match(text.strip()))
-
-
-def _normalize(text: str) -> str:
-    return re.sub(r"[^\w\s]", " ", text.lower(), flags=re.UNICODE)
-
-
-def _score(query: str, entry: dict[str, Any]) -> float:
-    title = str(entry.get("title") or "")
-    q = _normalize(query).split()
-    t = _normalize(title).split()
-    if not q or not t:
-        return 0.0
-    overlap = len(set(q) & set(t)) / max(1, len(set(q)))
-    phrase = 1.0 if _normalize(query).strip() in _normalize(title) else 0.0
-    duration = entry.get("duration")
-    duration_bonus = 0.1 if isinstance(duration, (int, float)) and 1 <= duration <= 1800 else 0.0
-    return overlap * 2.0 + phrase + duration_bonus
-
-
-async def _youtube_search(query: str) -> list[dict[str, Any]]:
-    command = [
-        "python", "-m", "yt_dlp",
-        "--flat-playlist",
-        "--dump-single-json",
-        "--skip-download",
-        "--no-warnings",
-        "--playlist-end", "5",
-        f"ytsearch5:{query}",
-    ]
-    if shutil.which("deno"):
-        command[4:4] = ["--js-runtimes", "deno"]
-
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.communicate()
-        raise RuntimeError("search_timeout")
-
-    if process.returncode != 0:
-        raise RuntimeError((stderr or b"").decode("utf-8", "ignore")[-500:])
-
-    payload = json.loads(stdout.decode("utf-8", "ignore"))
-    entries = payload.get("entries") if isinstance(payload, dict) else []
-    results = []
-    for entry in entries or []:
-        if not isinstance(entry, dict):
-            continue
-        url = entry.get("webpage_url") or entry.get("url")
-        if not url and entry.get("id"):
-            url = f"https://www.youtube.com/watch?v={entry['id']}"
-        title = str(entry.get("title") or "").strip()
-        if not url or not title:
-            continue
-        item = {
-            "url": url,
-            "title": title,
-            "channel": str(entry.get("channel") or entry.get("uploader") or "").strip(),
-            "duration": entry.get("duration"),
-        }
-        item["score"] = _score(query, item)
-        results.append(item)
-    results.sort(key=lambda item: (-item["score"], item["title"].lower()))
-    return results[:5]
 
 
 def _duration(value: Any) -> str:
@@ -150,7 +82,7 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         "🔎 جاري البحث الذكي...\n\nبدون AI — يتم ترتيب النتائج خوارزميًا."
     )
     try:
-        results = await _youtube_search(text)
+        results = await search_youtube(text)
     except Exception as exc:
         print(f"Smart Search error: {exc}", flush=True)
         await status.edit_text("❌ تعذر تنفيذ البحث الآن. حاول مرة أخرى بعد قليل.")
@@ -161,22 +93,32 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         raise ApplicationHandlerStop
 
     context.user_data["smart_search_results"] = [
-        {"url": item["url"], "title": item["title"]} for item in results
+        {
+            "url": item["url"],
+            "title": item["title"],
+            "channel": item.get("channel", ""),
+            "duration": item.get("duration"),
+            "score": item.get("score", 0.0),
+        }
+        for item in results
     ]
+
     keyboard = []
     lines = ["🔎 <b>نتائج البحث الذكي</b>", "━━━━━━━━━━━━━━━━━━", ""]
     for index, item in enumerate(results):
+        title = html.escape(str(item["title"])[:80])
         meta = []
         if item.get("channel"):
-            meta.append(item["channel"][:40])
+            meta.append(html.escape(str(item["channel"])[:40]))
         duration = _duration(item.get("duration"))
         if duration:
             meta.append(duration)
         suffix = f" — {' • '.join(meta)}" if meta else ""
-        lines.append(f"{index + 1}. {item['title'][:80]}{suffix}")
+        lines.append(f"{index + 1}. {title}{suffix}")
+        button_title = str(item["title"]).replace("\n", " ").strip()[:45]
         keyboard.append([
             InlineKeyboardButton(
-                f"{index + 1}️⃣ {item['title'][:45]}",
+                f"{index + 1}️⃣ {button_title}",
                 callback_data=f"smart_search_pick_{index}",
             )
         ])
@@ -216,8 +158,9 @@ async def smart_search_pick(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         [InlineKeyboardButton(bot_module.TEXTS[language]["audio_type"], callback_data="audio_menu")],
         [InlineKeyboardButton(bot_module.TEXTS[language]["back"], callback_data="main_menu")],
     ])
+    safe_title = html.escape(str(selected["title"])[:200])
     await query.edit_message_text(
-        f"🎯 <b>تم اختيار:</b>\n{selected['title'][:200]}\n\nاختر نوع التحميل:",
+        f"🎯 <b>تم اختيار:</b>\n{safe_title}\n\nاختر نوع التحميل:",
         parse_mode="HTML",
         reply_markup=keyboard,
     )
