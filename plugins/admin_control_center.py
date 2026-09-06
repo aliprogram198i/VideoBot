@@ -5,6 +5,8 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from .admin_user_history import register_admin_user_history
+
 
 def _now():
     return datetime.now().isoformat(timespec="seconds")
@@ -12,6 +14,7 @@ def _now():
 
 def register_admin_control_center(app, get_db, owner_id):
     init_admin_control_center(get_db, owner_id)
+    register_admin_user_history(app, get_db, owner_id)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
         pattern=r"^admin_control_center$",
@@ -82,6 +85,7 @@ def _authorized(update, owner_id):
 
 def _keyboard():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
         [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
