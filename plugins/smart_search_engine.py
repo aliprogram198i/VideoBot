@@ -17,6 +17,7 @@ import math
 import re
 import shutil
 import unicodedata
+from datetime import datetime, timezone
 from typing import Any
 
 MAX_RESULTS = 5
@@ -124,16 +125,20 @@ def _normalize_url(url: str) -> str:
 
 def _to_item(entry: dict[str, Any]) -> dict[str, Any] | None:
     video_id = str(entry.get("id") or "").strip()
-    url = entry.get("webpage_url") or entry.get("url")
-    if not url and video_id:
+    raw_url = str(entry.get("webpage_url") or entry.get("url") or "").strip()
+    if raw_url.startswith("http://") or raw_url.startswith("https://"):
+        url = raw_url
+    elif video_id:
         url = f"https://www.youtube.com/watch?v={video_id}"
+    else:
+        return None
 
     title = str(entry.get("title") or "").strip()
-    if not url or not title:
+    if not title:
         return None
 
     return {
-        "url": str(url),
+        "url": url,
         "title": title,
         "channel": str(entry.get("channel") or entry.get("uploader") or "").strip(),
         "duration": entry.get("duration"),
@@ -165,13 +170,29 @@ def _query_intent(query: str) -> dict[str, bool]:
     }
 
 
-def _popularity_score(value: Any) -> float:
+def _safe_int(value: Any) -> int:
     try:
-        views = max(0, int(value or 0))
+        return max(0, int(value or 0))
     except (TypeError, ValueError):
-        views = 0
+        return 0
+
+
+def _popularity_score(value: Any) -> float:
+    views = _safe_int(value)
     denominator = math.log1p(100_000_000)
     return min(1.0, math.log1p(views) / denominator) if views else 0.0
+
+
+def _freshness_score(value: Any) -> float:
+    raw = str(value or "").strip()
+    if len(raw) != 8 or not raw.isdigit():
+        return 0.0
+    try:
+        published = datetime.strptime(raw, "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return 0.0
+    age_days = max(0.0, (datetime.now(timezone.utc) - published).total_seconds() / 86400)
+    return max(0.0, 1.0 - min(age_days, 3650.0) / 3650.0)
 
 
 def relevance_score(query: str, item: dict[str, Any]) -> float:
@@ -188,10 +209,11 @@ def relevance_score(query: str, item: dict[str, Any]) -> float:
     phrase = 1.0 if normalize_text(query) in normalize_text(item.get("title", "")) else 0.0
 
     score = (
-        title_overlap * 0.58
-        + phrase * 0.20
+        title_overlap * 0.55
+        + phrase * 0.18
         + channel_overlap * 0.07
-        + _popularity_score(item.get("view_count")) * 0.10
+        + _popularity_score(item.get("view_count")) * 0.08
+        + _freshness_score(item.get("upload_date")) * 0.07
     )
 
     intent = _query_intent(query)
@@ -236,7 +258,7 @@ def rank_results(query: str, results: list[dict[str, Any]]) -> list[dict[str, An
     filtered.sort(
         key=lambda item: (
             -float(item.get("score", 0.0)),
-            -int(item.get("view_count") or 0),
+            -_safe_int(item.get("view_count")),
             str(item.get("title", "")).lower(),
         )
     )
