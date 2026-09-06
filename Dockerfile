@@ -24,13 +24,14 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
 COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot entrypoint.py .
+COPY --chown=videobot:videobot stats_entrypoint.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot plugins ./plugins
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
-    && python -m py_compile bot.py entrypoint.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py plugins/admin_control_center.py
+    && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py plugins/admin_control_center.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 ENV ALIBOT_PLUGINS_ENABLED=1
 USER videobot
-CMD ["python", "-u", "bot.py"]
+CMD ["python", "-u", "entrypoint.py"]
