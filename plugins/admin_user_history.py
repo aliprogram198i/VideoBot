@@ -17,7 +17,9 @@ from telegram.ext import CallbackQueryHandler, ContextTypes
 
 
 _USERS_RE = re.compile(r"^admin_users_page_(\d+)$")
+_LEGACY_USERS_RE = re.compile(r"^admin_users_(\d+)$")
 _USER_RE = re.compile(r"^admin_user_view_(\d+)$")
+_LEGACY_USER_RE = re.compile(r"^user_(\d+)$")
 _CLEAR_RE = re.compile(r"^admin_user_clear_(\d+)$")
 _CONFIRM_RE = re.compile(r"^admin_user_clear_confirm_(\d+)$")
 _CANCEL_RE = re.compile(r"^admin_user_clear_cancel_(\d+)$")
@@ -56,14 +58,28 @@ def _user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 def register_admin_user_history(app: Any, get_db, owner_id: int) -> None:
-    """Register isolated user-history management callbacks with admin priority."""
+    """Register isolated user-history callbacks with priority over legacy admin UI.
+
+    The legacy dashboard still emits ``admin_users_<page>`` and ``user_<id>``.
+    Those routes are intentionally bridged here so both old and new navigation
+    paths land on the same user-history screen and expose the clear-history
+    action consistently.
+    """
     app.add_handler(CallbackQueryHandler(
         lambda u, c: users_callback(u, c, get_db, owner_id),
         pattern=r"^admin_users_page_\d+$",
     ), group=-1)
     app.add_handler(CallbackQueryHandler(
+        lambda u, c: legacy_users_callback(u, c, get_db, owner_id),
+        pattern=r"^admin_users_\d+$",
+    ), group=-1)
+    app.add_handler(CallbackQueryHandler(
         lambda u, c: user_view_callback(u, c, get_db, owner_id),
         pattern=r"^admin_user_view_\d+$",
+    ), group=-1)
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: legacy_user_view_callback(u, c, get_db, owner_id),
+        pattern=r"^user_\d+$",
     ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: clear_prompt_callback(u, c, get_db, owner_id),
@@ -77,6 +93,28 @@ def register_admin_user_history(app: Any, get_db, owner_id: int) -> None:
         lambda u, c: clear_cancel_callback(u, c, get_db, owner_id),
         pattern=r"^admin_user_clear_cancel_\d+$",
     ), group=-1)
+
+
+async def legacy_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
+    """Bridge the legacy users-list callback to the isolated users screen."""
+    query = update.callback_query
+    match = _LEGACY_USERS_RE.match(query.data or "")
+    if not match:
+        return
+    page = max(0, int(match.group(1)))
+    # The legacy list used page numbers; the isolated screen uses row offsets.
+    query.data = f"admin_users_page_{page * _PAGE_SIZE}"
+    await users_callback(update, context, get_db, owner_id)
+
+
+async def legacy_user_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
+    """Bridge the legacy user-detail callback to the isolated detail screen."""
+    query = update.callback_query
+    match = _LEGACY_USER_RE.match(query.data or "")
+    if not match:
+        return
+    query.data = f"admin_user_view_{int(match.group(1))}"
+    await user_view_callback(update, context, get_db, owner_id)
 
 
 async def users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -239,6 +277,7 @@ async def clear_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         return
     await query.answer("تم الإلغاء")
+    query.data = f"admin_user_view_{int(match.group(1))}"
     await user_view_callback(update, context, get_db, owner_id)
 
 
