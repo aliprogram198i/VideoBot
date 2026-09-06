@@ -17,13 +17,14 @@ from .admin_control_center import register_admin_control_center
 
 
 def _admin_keyboard() -> InlineKeyboardMarkup:
+    """Stable top-level admin navigation, grouped by operational purpose."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
-        [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
+         InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
+        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
+         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
-        [InlineKeyboardButton("📊 لوحة الإحصائيات", callback_data="admin_dashboard_30")],
-        [InlineKeyboardButton("🤖 Smart Operations", callback_data="admin_smart_operations")],
     ])
 
 
@@ -53,13 +54,7 @@ async def _admin_entry(
 
 
 def _remove_legacy_hebaali_handlers(app: Any) -> int:
-    """Remove the legacy /hebaali route before installing the owned route.
-
-    bot.py still contains the historical command registration because it also
-    owns the legacy admin surface. The bootstrap layer is the sole owner of
-    the active /hebaali entry point, so remove only that exact command handler
-    at runtime. No other command or callback handler is touched.
-    """
+    """Remove only the historical /hebaali command before installing the owned route."""
     removed = 0
     handlers_by_group = getattr(app, "handlers", {})
     for group, handlers in list(handlers_by_group.items()):
@@ -76,7 +71,7 @@ def _remove_legacy_hebaali_handlers(app: Any) -> int:
 
 
 def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
-    """Register admin components with one active owner per route."""
+    """Register the admin layer with one owner for the /hebaali route."""
     removed = _remove_legacy_hebaali_handlers(app)
     if removed:
         print("🧩 Legacy /hebaali handler removed; admin layer owns the route", flush=True)
@@ -84,15 +79,11 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_control_center(app, bot_module.get_db, admin_id)
 
     # Group -1 gives the owner route priority over unrelated legacy routers.
-    # The legacy /hebaali handler is removed above, so this route is unique.
+    # The legacy /hebaali handler is removed above, so this command is unique.
     app.add_handler(
         CommandHandler(
             "hebaali",
-            lambda update, context: _admin_entry(
-                update,
-                context,
-                admin_id,
-            ),
+            lambda update, context: _admin_entry(update, context, admin_id),
         ),
         group=-1,
     )
