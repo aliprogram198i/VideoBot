@@ -56,27 +56,27 @@ def _user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 def register_admin_user_history(app: Any, get_db, owner_id: int) -> None:
-    """Register isolated user-history management callbacks."""
+    """Register isolated user-history management callbacks with admin priority."""
     app.add_handler(CallbackQueryHandler(
         lambda u, c: users_callback(u, c, get_db, owner_id),
         pattern=r"^admin_users_page_\d+$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: user_view_callback(u, c, get_db, owner_id),
         pattern=r"^admin_user_view_\d+$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: clear_prompt_callback(u, c, get_db, owner_id),
         pattern=r"^admin_user_clear_\d+$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: clear_confirm_callback(u, c, get_db, owner_id),
         pattern=r"^admin_user_clear_confirm_\d+$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: clear_cancel_callback(u, c, get_db, owner_id),
         pattern=r"^admin_user_clear_cancel_\d+$",
-    ))
+    ), group=-1)
 
 
 async def users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -231,12 +231,14 @@ async def clear_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def clear_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
     query = update.callback_query
-    await query.answer("تم الإلغاء")
     if not _authorized(update, owner_id):
+        await query.answer()
         return
     match = _CANCEL_RE.match(query.data or "")
     if not match:
+        await query.answer()
         return
+    await query.answer("تم الإلغاء")
     await user_view_callback(update, context, get_db, owner_id)
 
 
