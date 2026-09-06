@@ -6,6 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from .admin_user_history import register_admin_user_history
+from .admin_global_history import register_admin_global_history
 
 
 def _now():
@@ -15,6 +16,7 @@ def _now():
 def register_admin_control_center(app, get_db, owner_id):
     init_admin_control_center(get_db, owner_id)
     register_admin_user_history(app, get_db, owner_id)
+    register_admin_global_history(app, get_db, owner_id)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
         pattern=r"^admin_control_center$",
@@ -89,6 +91,7 @@ def _keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
          InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
         [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
         [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
          InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
