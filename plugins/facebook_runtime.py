@@ -5,9 +5,16 @@ public posts, an anonymous request is redirected through /login/?next=...
 although the target itself is a normal public video/reel URL. This module
 resolves that wrapper before yt-dlp sees it.
 
+It also removes the application's legacy forced YouTube client profile from
+yt-dlp commands. Current yt-dlp releases maintain their own YouTube client
+selection and forcing ``android,web`` can select clients that are challenged
+by YouTube, especially for audio extraction. The shim deliberately removes
+only that exact application-level override and otherwise leaves yt-dlp's
+maintained defaults untouched.
+
 It never supplies credentials, cookies, or authentication and therefore does
-not bypass private/restricted content. If Facebook still requires login, the
-original URL is left untouched and the normal failure path remains active.
+not bypass private/restricted content. If a platform still requires login,
+the normal failure path remains active.
 """
 
 from __future__ import annotations
@@ -18,6 +25,16 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 _FACEBOOK_SHARE_MARKERS = ("/share/v/", "/share/r/", "/share/p/")
+_YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+    "www.youtu.be",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+}
 
 
 def _is_facebook_host(hostname: str | None) -> bool:
@@ -42,6 +59,40 @@ def is_facebook_share_url(value: str) -> bool:
     except Exception:
         return False
     return any(marker in path for marker in _FACEBOOK_SHARE_MARKERS)
+
+
+def _is_youtube_url(value: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        host = (urlparse(value).hostname or "").lower().rstrip(".")
+    except Exception:
+        return False
+    return host in _YOUTUBE_HOSTS
+
+
+def _remove_legacy_youtube_client_override(command: list) -> list:
+    """Remove only the bot's legacy ``youtube:player_client=android,web`` flag."""
+    if not command or not _is_youtube_url(str(command[-1])):
+        return command
+
+    cleaned = []
+    index = 0
+
+    while index < len(command):
+        if (
+            command[index] == "--extractor-args"
+            and index + 1 < len(command)
+            and str(command[index + 1]).strip().lower()
+            == "youtube:player_client=android,web"
+        ):
+            index += 2
+            continue
+
+        cleaned.append(command[index])
+        index += 1
+
+    return cleaned
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -124,6 +175,8 @@ def install_yt_dlp_facebook_resolver() -> None:
         command = list(args)
 
         if len(command) >= 4 and command[:3] == ["python", "-m", "yt_dlp"]:
+            command = _remove_legacy_youtube_client_override(command)
+
             candidate = command[-1]
             if is_facebook_share_url(candidate):
                 try:
