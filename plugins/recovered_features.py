@@ -123,6 +123,8 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user = update.effective_user
 
+    # Admin messages that belong to an existing admin workflow must continue
+    # to the original admin router instead of being treated as searches.
     if user.id == bot_module.ADMIN_ID and any(
         context.user_data.get(key)
         for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
