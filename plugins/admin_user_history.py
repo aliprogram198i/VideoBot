@@ -96,34 +96,38 @@ def register_admin_user_history(app: Any, get_db, owner_id: int) -> None:
 
 
 async def legacy_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
-    """Bridge the legacy users-list callback to the isolated users screen."""
+    """Bridge the legacy users-list callback without modifying CallbackQuery."""
     query = update.callback_query
     match = _LEGACY_USERS_RE.match(query.data or "")
     if not match:
         return
     page = max(0, int(match.group(1)))
-    # The legacy list used page numbers; the isolated screen uses row offsets.
-    query.data = f"admin_users_page_{page * _PAGE_SIZE}"
-    await users_callback(update, context, get_db, owner_id)
+    await users_callback(update, context, get_db, owner_id, callback_data=f"admin_users_page_{page * _PAGE_SIZE}")
 
 
 async def legacy_user_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
-    """Bridge the legacy user-detail callback to the isolated detail screen."""
+    """Bridge the legacy user-detail callback without modifying CallbackQuery."""
     query = update.callback_query
     match = _LEGACY_USER_RE.match(query.data or "")
     if not match:
         return
-    query.data = f"admin_user_view_{int(match.group(1))}"
-    await user_view_callback(update, context, get_db, owner_id)
+    await user_view_callback(update, context, get_db, owner_id, callback_data=f"admin_user_view_{int(match.group(1))}")
 
 
-async def users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
+async def users_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    get_db,
+    owner_id: int,
+    callback_data: str | None = None,
+) -> None:
     query = update.callback_query
     await query.answer()
     if not _authorized(update, owner_id):
         return
 
-    match = _USERS_RE.match(query.data or "")
+    data = callback_data if callback_data is not None else (query.data or "")
+    match = _USERS_RE.match(data)
     offset = int(match.group(1)) if match else 0
     offset = max(0, offset)
 
@@ -168,13 +172,20 @@ async def users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get
     _audit(get_db, owner_id, "view_admin_users", details=f"offset={offset}")
 
 
-async def user_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
+async def user_view_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    get_db,
+    owner_id: int,
+    callback_data: str | None = None,
+) -> None:
     query = update.callback_query
     await query.answer()
     if not _authorized(update, owner_id):
         return
 
-    match = _USER_RE.match(query.data or "")
+    data = callback_data if callback_data is not None else (query.data or "")
+    match = _USER_RE.match(data)
     if not match:
         return
     user_id = int(match.group(1))
@@ -277,8 +288,7 @@ async def clear_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         return
     await query.answer("تم الإلغاء")
-    query.data = f"admin_user_view_{int(match.group(1))}"
-    await user_view_callback(update, context, get_db, owner_id)
+    await user_view_callback(update, context, get_db, owner_id, callback_data=f"admin_user_view_{int(match.group(1))}")
 
 
 async def clear_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
