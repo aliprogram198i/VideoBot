@@ -35,4 +35,4 @@ ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 ENV ALIBOT_PLUGINS_ENABLED=1
 USER videobot
-CMD ["python", "-u", "bot.py"]
+CMD ["python", "-u", "entrypoint.py"]
