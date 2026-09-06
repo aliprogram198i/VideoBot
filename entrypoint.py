@@ -51,6 +51,11 @@ def main() -> None:
     time.sleep(STARTUP_GRACE_SECONDS)
 
     bot_module = importlib.import_module("bot")
+    install_facebook_resolver = importlib.import_module(
+        "plugins.facebook_runtime"
+    ).install_yt_dlp_facebook_resolver
+    install_facebook_resolver()
+
     register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
     register_broadcast = importlib.import_module("plugins.broadcast_media").register_broadcast_media
     register_group_broadcast = importlib.import_module("plugins.group_broadcast").register_group_broadcast
