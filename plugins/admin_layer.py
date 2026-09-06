@@ -1,9 +1,9 @@
 """Isolated administration layer for AliBot.
 
-This module is the single bootstrap boundary for the admin UI. It does not
-own downloader logic or user state; it only connects the existing admin
-control-center callbacks to the running Telegram application and provides a
-safe /hebaali entry route.
+This module is the bootstrap boundary for the admin UI. It does not own
+ downloader logic or user state; it only connects the existing admin
+ control-center callbacks to the running Telegram application and provides
+ a safe /hebaali entry route.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes
 
 from .admin_control_center import register_admin_control_center
-from .smart_operations import register_smart_operations
 
 
 def _admin_keyboard() -> InlineKeyboardMarkup:
@@ -54,9 +53,8 @@ async def _admin_entry(
 
 
 def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
-    """Register the admin layer at the application boundary."""
+    """Register only the admin components not already owned by bot.py."""
     register_admin_control_center(app, bot_module.get_db, admin_id)
-    register_smart_operations(app, bot_module.get_db, admin_id)
 
     # Group -1 gives the owner route priority over the legacy command router.
     app.add_handler(
