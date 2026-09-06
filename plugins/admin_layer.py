@@ -18,6 +18,7 @@ from .admin_control_center import register_admin_control_center
 
 def _admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
         [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
