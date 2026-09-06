@@ -35,5 +35,7 @@ RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 ENV ALIBOT_PLUGINS_ENABLED=1
+# Railway private DNS endpoint for the dedicated bgutil PO-token provider.
+ENV YOUTUBE_POT_PROVIDER_URL=http://youtube-pot-provider.railway.internal:4416
 USER videobot
 CMD ["python", "-u", "entrypoint.py"]
