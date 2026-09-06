@@ -24,6 +24,7 @@ from telegram.ext import ContextTypes, MessageHandler, filters
 
 ENV_URL = "ALIBOT_MINI_APP_URL"
 MAX_PAYLOAD_BYTES = 4096
+_HOOK_MARKER = "_alibot_miniapp_hooks_installed"
 
 
 def _miniapp_url() -> str:
@@ -46,6 +47,8 @@ def install_message_hooks(bot_module: Any) -> None:
     """Add the Mini App launch button after existing start flows."""
     if not _miniapp_url().startswith("https://"):
         return
+    if getattr(bot_module, _HOOK_MARKER, False):
+        return
 
     async def _after(original, update, context):
         await original(update, context)
@@ -54,7 +57,10 @@ def install_message_hooks(bot_module: Any) -> None:
         markup = miniapp_keyboard()
         if user and message and markup:
             try:
-                await message.reply_text("🌐 يمكنك استخدام الواجهة الاحترافية أيضاً:", reply_markup=markup)
+                await message.reply_text(
+                    "🌐 يمكنك استخدام الواجهة الاحترافية أيضاً:",
+                    reply_markup=markup,
+                )
             except Exception:
                 pass
 
@@ -74,6 +80,7 @@ def install_message_hooks(bot_module: Any) -> None:
     bot_module.start = start_wrapper
     bot_module.start_button_callback = start_button_wrapper
     bot_module.language_callback = language_wrapper
+    setattr(bot_module, _HOOK_MARKER, True)
 
 
 async def web_app_data_handler(
@@ -176,7 +183,6 @@ async def web_app_data_handler(
 def register_miniapp(app: Any, bot_module: Any) -> None:
     if not _miniapp_url().startswith("https://"):
         return
-    install_message_hooks(bot_module)
     app.add_handler(
         MessageHandler(
             filters.StatusUpdate.WEB_APP_DATA,
