@@ -12,6 +12,10 @@ by YouTube, especially for audio extraction. The shim deliberately removes
 only that exact application-level override and otherwise leaves yt-dlp's
 maintained defaults untouched.
 
+When configured, it also injects the bgutil HTTP PO-token provider endpoint
+into YouTube yt-dlp calls. The provider supplies fresh, video-bound PO tokens
+without storing user credentials or cookies in the bot.
+
 It never supplies credentials, cookies, or authentication and therefore does
 not bypass private/restricted content. If a platform still requires login,
 the normal failure path remains active.
@@ -20,6 +24,7 @@ the normal failure path remains active.
 from __future__ import annotations
 
 import asyncio
+import os
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -93,6 +98,28 @@ def _remove_legacy_youtube_client_override(command: list) -> list:
         index += 1
 
     return cleaned
+
+
+def _add_youtube_pot_provider(command: list) -> list:
+    """Attach the configured bgutil HTTP PO-token provider to YouTube calls."""
+    if not command or not _is_youtube_url(str(command[-1])):
+        return command
+
+    base_url = os.getenv("YOUTUBE_POT_PROVIDER_URL", "").strip().rstrip("/")
+    if not base_url:
+        return command
+
+    # Avoid duplicate extractor arguments if a future caller already supplies it.
+    for index, value in enumerate(command[:-1]):
+        if value == "--extractor-args" and index + 1 < len(command):
+            if str(command[index + 1]).startswith("youtubepot-bgutilhttp:"):
+                return command
+
+    command.extend([
+        "--extractor-args",
+        f"youtubepot-bgutilhttp:base_url={base_url}",
+    ])
+    return command
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -175,7 +202,11 @@ def install_yt_dlp_facebook_resolver() -> None:
         command = list(args)
 
         if len(command) >= 4 and command[:3] == ["python", "-m", "yt_dlp"]:
+            target_url = str(command[-1])
             command = _remove_legacy_youtube_client_override(command)
+
+            if _is_youtube_url(target_url):
+                _add_youtube_pot_provider(command)
 
             candidate = command[-1]
             if is_facebook_share_url(candidate):
