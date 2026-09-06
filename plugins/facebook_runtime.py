@@ -76,17 +76,34 @@ def _remove_legacy_youtube_client_override(command: list) -> list:
 
 
 def _add_youtube_pot_provider(command: list) -> list:
+    """Use the current yt-dlp-recommended mweb + external PO-token flow."""
     if not command or not _is_youtube_url(str(command[-1])):
         return command
     base_url = os.getenv("YOUTUBE_POT_PROVIDER_URL", "").strip().rstrip("/")
     if not base_url:
         return command
+
+    provider_configured = False
+    youtube_configured = False
     for index, value in enumerate(command[:-1]):
-        if str(value) == "--extractor-args" and index + 1 < len(command):
-            if str(command[index + 1]).startswith("youtubepot-bgutilhttp:"):
-                return command
-    command.extend(["--extractor-args", f"youtubepot-bgutilhttp:base_url={base_url}"])
-    print("[yt-dlp] bgutil PO-token provider attached", flush=True)
+        if str(value) != "--extractor-args" or index + 1 >= len(command):
+            continue
+        extractor_args = str(command[index + 1])
+        provider_configured = provider_configured or extractor_args.startswith("youtubepot-bgutilhttp:")
+        youtube_configured = youtube_configured or extractor_args.startswith("youtube:")
+
+    if not youtube_configured:
+        command.extend([
+            "--extractor-args",
+            "youtube:player_client=mweb;fetch_pot=always",
+        ])
+
+    if not provider_configured:
+        command.extend([
+            "--extractor-args",
+            f"youtubepot-bgutilhttp:base_url={base_url};disable_innertube=1",
+        ])
+        print("[yt-dlp] bgutil PO-token provider attached (mweb/legacy-Innertube mode)", flush=True)
     return command
 
 
