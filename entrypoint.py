@@ -54,6 +54,12 @@ def main() -> None:
     register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
     register_broadcast = importlib.import_module("plugins.broadcast_media").register_broadcast_media
     register_group_broadcast = importlib.import_module("plugins.group_broadcast").register_group_broadcast
+    miniapp_module = importlib.import_module("plugins.miniapp")
+
+    # The start-flow wrappers must be installed before bot.main() creates
+    # handler bindings. They are idempotent and activate only when a valid
+    # HTTPS Mini App URL is configured.
+    miniapp_module.install_message_hooks(bot_module)
 
     original_run_polling = Application.run_polling
     registered = False
@@ -65,6 +71,7 @@ def main() -> None:
             _install_admin_panel_buttons(bot_module)
             register_broadcast(self, bot_module, bot_module.ADMIN_ID)
             register_group_broadcast(self, bot_module, bot_module.ADMIN_ID)
+            miniapp_module.register_miniapp(self, bot_module)
             registered = True
         return original_run_polling(self, *args, **kwargs)
 
