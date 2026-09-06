@@ -18,19 +18,19 @@ def register_admin_control_center(app, get_db, owner_id):
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
         pattern=r"^admin_control_center$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_health_callback(u, c, get_db, owner_id),
         pattern=r"^admin_health$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_audit_callback(u, c, get_db, owner_id),
         pattern=r"^admin_audit$",
-    ))
+    ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_roles_callback(u, c, get_db, owner_id),
         pattern=r"^admin_roles$",
-    ))
+    ), group=-1)
 
 
 def init_admin_control_center(get_db, owner_id):
@@ -59,11 +59,12 @@ def init_admin_control_center(get_db, owner_id):
         "CREATE INDEX IF NOT EXISTS idx_admin_audit_created_at "
         "ON admin_audit_logs(created_at DESC)"
     )
-    cur.execute("""
-        INSERT INTO admin_roles (user_id, role, permissions, created_at, updated_at)
+    cur.execute(
+        """INSERT INTO admin_roles (user_id, role, permissions, created_at, updated_at)
         VALUES (?, 'owner', ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET role='owner', updated_at=excluded.updated_at
-    """, (owner_id, json.dumps({'*': True}), _now(), _now()))
+        ON CONFLICT(user_id) DO UPDATE SET role='owner', updated_at=excluded.updated_at""",
+        (owner_id, json.dumps({'*': True}), _now(), _now()),
+    )
     conn.commit()
     conn.close()
 
@@ -84,13 +85,14 @@ def _authorized(update, owner_id):
 
 
 def _keyboard():
+    """Keep the same ordering as /hebaali for predictable navigation."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
-        [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
+         InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
+        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
+         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
-        [InlineKeyboardButton("📊 لوحة الإحصائيات", callback_data="admin_dashboard_30")],
-        [InlineKeyboardButton("🔙 لوحة الإدارة", callback_data="admin_home")],
     ])
 
 
