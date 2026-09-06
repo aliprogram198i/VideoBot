@@ -14,6 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes
 
 from .admin_control_center import register_admin_control_center
+from .admin_global_history import global_history_button, register_admin_global_history
 
 
 def _admin_keyboard() -> InlineKeyboardMarkup:
@@ -21,6 +22,7 @@ def _admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
          InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
         [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
         [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
          InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
@@ -77,6 +79,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
         print("🧩 Legacy /hebaali handler removed; admin layer owns the route", flush=True)
 
     register_admin_control_center(app, bot_module.get_db, admin_id)
+    register_admin_global_history(app, bot_module.get_db, admin_id)
 
     # Group -1 gives the owner route priority over unrelated legacy routers.
     # The legacy /hebaali handler is removed above, so this command is unique.
