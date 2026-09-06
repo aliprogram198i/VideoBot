@@ -123,8 +123,6 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user = update.effective_user
 
-    # Admin messages that belong to an existing admin workflow must continue
-    # to the original admin router instead of being treated as searches.
     if user.id == bot_module.ADMIN_ID and any(
         context.user_data.get(key)
         for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
@@ -317,13 +315,17 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
 
     def admin_keyboard_with_recovery():
         keyboard = original_admin_keyboard()
-        keyboard.inline_keyboard.append([
+        # python-telegram-bot exposes inline_keyboard as an immutable tuple.
+        # Build a new markup instead of mutating it. This keeps /hebaali and
+        # all existing admin buttons intact while adding User Recovery.
+        rows = [list(row) for row in keyboard.inline_keyboard]
+        rows.append([
             InlineKeyboardButton(
                 "🔄 استرداد المستخدمين",
                 callback_data="recover_users_menu",
             )
         ])
-        return keyboard
+        return InlineKeyboardMarkup(rows)
 
     bot_module.admin_keyboard = admin_keyboard_with_recovery
 
