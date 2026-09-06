@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <title>AliBot</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">ALIBOT</div>
+        <h1 id="greeting">حمّل بسهولة</h1>
+      </div>
+      <div class="avatar" id="avatar">A</div>
+    </header>
+
+    <section class="hero card">
+      <div class="hero-icon">⬇️</div>
+      <div>
+        <h2>تنزيل سريع ومرتب</h2>
+        <p>أرسل رابط الفيديو أو ابحث عن المحتوى، وسيكمل AliBot العملية داخل المحادثة.</p>
+      </div>
+    </section>
+
+    <section class="card input-card">
+      <label for="urlInput">رابط المحتوى</label>
+      <div class="input-wrap">
+        <input id="urlInput" type="url" inputmode="url" autocomplete="off" placeholder="https://..." dir="ltr">
+        <button id="pasteBtn" class="icon-btn" type="button" aria-label="لصق">📋</button>
+      </div>
+      <button id="downloadBtn" class="primary-btn" type="button">🚀 بدء التحميل</button>
+      <p id="error" class="error" hidden></p>
+    </section>
+
+    <section class="card search-card">
+      <div class="section-head">
+        <div>
+          <span class="badge">SMART</span>
+          <h2>البحث الذكي</h2>
+        </div>
+        <span class="muted">بدون AI</span>
+      </div>
+      <div class="input-wrap">
+        <input id="searchInput" type="search" placeholder="اكتب اسم الفيديو أو الأغنية" autocomplete="off">
+      </div>
+      <button id="searchBtn" class="secondary-btn" type="button">🔎 بحث في YouTube</button>
+    </section>
+
+    <section class="card history-card">
+      <div class="section-head">
+        <h2>آخر الطلبات</h2>
+        <button id="clearHistory" class="text-btn" type="button">مسح</button>
+      </div>
+      <div id="history" class="history-list"></div>
+      <div id="emptyHistory" class="empty">ستظهر روابطك الأخيرة هنا على هذا الجهاز.</div>
+    </section>
+
+    <footer>
+      <span>AliBot</span><span>•</span><span>سريع · بسيط · مجاني</span>
+    </footer>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>
