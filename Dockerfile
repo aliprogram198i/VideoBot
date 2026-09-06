@@ -21,7 +21,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir --upgrade --pre "yt-dlp[default]" \
     && mkdir -p /opt/yt-dlp-plugins/yt_dlp_plugins/extractor \
-    && python -c "from importlib.metadata import distribution; from pathlib import Path; import shutil; src=Path(distribution('yt-dlp-threads').locate_file('yt_dlp_plugins/extractor/threads.py')); assert src.is_file(), 'yt-dlp-threads extractor file not found'; shutil.copy2(src, '/opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py')" \
+    && python -c "from importlib.metadata import distribution; from pathlib import Path; import shutil; src=Path(distribution('yt-dlp-threads').locate_file('yt_dlp_plugins/extractor/threads.py')); assert src.is_file(), 'yt-dlp-threads extractor file not found'; shutil.copy2(src, '/opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py'); bg=Path(distribution('bgutil-ytdlp-pot-provider').locate_file('yt_dlp_plugins')); assert bg.is_dir(), 'bgutil yt_dlp_plugins directory not found'; shutil.copytree(bg, '/opt/yt-dlp-plugins/yt_dlp_plugins', dirs_exist_ok=True)" \
     && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf \
     && python -m yt_dlp --version
 COPY --chown=videobot:videobot bot.py .
@@ -29,6 +29,7 @@ COPY --chown=videobot:videobot entrypoint.py .
 COPY --chown=videobot:videobot downloader ./downloader
 COPY --chown=videobot:videobot plugins ./plugins
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
+    && test -n "$(find /opt/yt-dlp-plugins/yt_dlp_plugins -type f -name '*bgutil*' -print -quit)" \
     && python -m py_compile bot.py entrypoint.py plugins/facebook_runtime.py downloader/error_reporter.py plugins/manager.py plugins/core_runtime.py plugins/admin_control_center.py plugins/broadcast_media.py plugins/group_broadcast.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 ENV TMPDIR=/app/tmp
