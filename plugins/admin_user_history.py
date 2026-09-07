@@ -45,7 +45,7 @@ def _users_keyboard(offset: int, has_next: bool) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton("⬅️ السابق", callback_data=f"admin_users_page_{max(0, offset - _PAGE_SIZE)}")])
     if has_next:
         rows.append([InlineKeyboardButton("➡️ التالي", callback_data=f"admin_users_page_{offset + _PAGE_SIZE}")])
-    rows.append([InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")])
+    rows.append([InlineKeyboardButton("🏠 الرئيسية", callback_data="admin_home")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -53,7 +53,7 @@ def _user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧹 مسح سجل التحميلات", callback_data=f"admin_user_clear_{user_id}")],
         [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+        [InlineKeyboardButton("🏠 الرئيسية", callback_data="admin_home")],
     ])
 
 
