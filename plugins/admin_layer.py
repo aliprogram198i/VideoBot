@@ -10,23 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes
 
-from .admin_control_center import register_admin_control_center
-
-
-def _admin_keyboard() -> InlineKeyboardMarkup:
-    """Stable top-level admin navigation, grouped by operational purpose."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
-         InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
-        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
-        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
-         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
-        [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
-    ])
+from .admin_control_center import admin_keyboard, register_admin_control_center
 
 
 async def _admin_entry(
@@ -44,12 +31,12 @@ async def _admin_entry(
         "🎛️ <b>مركز التحكم الإداري</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "🟢 النظام الإداري يعمل\n"
-        "🔐 الوصول محمي بمالك البوت\n"
+        "🔐 الوصول محمي بنظام صلاحيات مركزي\n"
         "🧾 التدقيق الإداري مفعّل\n"
-        "🛡️ نظام الأدوار جاهز للتوسع\n\n"
+        "🛡️ الأدوار والصلاحيات جاهزة للتوسع\n\n"
         "اختر القسم المطلوب:",
         parse_mode="HTML",
-        reply_markup=_admin_keyboard(),
+        reply_markup=admin_keyboard(),
     )
     raise ApplicationHandlerStop
 
