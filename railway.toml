@@ -2,7 +2,7 @@
 builder = "DOCKERFILE"
 
 [deploy]
-startCommand = "python -u bot.py"
+startCommand = "python -u entrypoint.py"
 preDeployCommand = []
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
