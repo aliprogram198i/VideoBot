@@ -20,12 +20,20 @@ def admin_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
          InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
-        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
-        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
-         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
-        [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
+        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations"),
+         InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
+        [InlineKeyboardButton("🗂️ السجلات والبيانات", callback_data="admin_records")],
+        [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit"),
+         InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
         [InlineKeyboardButton("🔄 استرداد المستخدمين", callback_data="recover_users_menu")],
+    ])
+
+
+def _records_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
+        [InlineKeyboardButton("👥 إدارة سجلات مستخدم", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
     ])
 
 
@@ -37,6 +45,10 @@ def register_admin_control_center(app, get_db, owner_id):
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
         pattern=r"^admin_control_center$",
+    ), group=-1)
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: admin_records_callback(u, c, get_db, owner_id),
+        pattern=r"^admin_records$",
     ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_health_callback(u, c, get_db, owner_id),
@@ -109,9 +121,19 @@ def _home_text():
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "🟢 النظام الإداري يعمل\n"
         "🔐 الوصول محمي بنظام صلاحيات مركزي\n"
-        "🧾 التدقيق الإداري مفعّل\n"
-        "🛡️ الأدوار والصلاحيات جاهزة للتوسع\n\n"
+        "🧾 التدقيق الإداري مفعّل\n\n"
         "اختر القسم المطلوب:"
+    )
+
+
+def _records_text():
+    return (
+        "🗂️ <b>السجلات والبيانات</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📥 إدارة سجل التحميلات\n"
+        "👥 السجل الفردي للمستخدمين\n"
+        "🧹 عمليات الحذف الحساسة تتطلب تأكيدًا\n\n"
+        "اختر العملية المطلوبة:"
     )
 
 
@@ -122,6 +144,15 @@ async def admin_control_center_callback(update: Update, context: ContextTypes.DE
         return
     audit(get_db, owner_id, "open_control_center")
     await query.edit_message_text(_home_text(), parse_mode="HTML", reply_markup=admin_keyboard())
+
+
+async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id, "center.view"):
+        return
+    audit(get_db, owner_id, "open_records_center")
+    await query.edit_message_text(_records_text(), parse_mode="HTML", reply_markup=_records_keyboard())
 
 
 async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
