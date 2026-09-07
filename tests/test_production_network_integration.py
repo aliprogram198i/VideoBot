@@ -25,6 +25,10 @@ class ProductionNetworkIntegrationTests(unittest.TestCase):
     def test_real_public_url_validation(self):
         validate_public_http_url(self.URL)
 
+    @unittest.skipUnless(
+        RUN_LIVE_NETWORK_INTEGRATION,
+        "live network integration tests require ALIBOT_RUN_NETWORK_INTEGRATION=1",
+    )
     def test_real_safe_html_fetch(self):
         request = Request(
             self.URL,
