@@ -5,12 +5,26 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from .admin_common import authorize
 from .admin_user_history import register_admin_user_history
 from .admin_global_history import register_admin_global_history
 
 
 def _now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def admin_keyboard():
+    """Single source of truth for the top-level admin navigation."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
+         InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
+        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
+        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
+         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
+        [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
+    ])
 
 
 def register_admin_control_center(app, get_db, owner_id):
@@ -82,21 +96,8 @@ def audit(get_db, admin_id, action, target_id=None, details=None):
     conn.close()
 
 
-def _authorized(update, owner_id):
-    return bool(update.effective_user and update.effective_user.id == owner_id)
-
-
-def _keyboard():
-    """Keep the same ordering as /hebaali for predictable navigation."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
-         InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
-        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
-        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
-         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
-        [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
-    ])
+def _authorized(update, get_db, owner_id, permission="center.view"):
+    return authorize(update, get_db, owner_id, permission)
 
 
 def _home_text():
@@ -104,9 +105,9 @@ def _home_text():
         "🎛️ <b>مركز التحكم الإداري</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "🟢 النظام الإداري يعمل\n"
-        "🔐 الوصول محمي بمالك البوت\n"
+        "🔐 الوصول محمي بنظام صلاحيات مركزي\n"
         "🧾 التدقيق الإداري مفعّل\n"
-        "🛡️ نظام الأدوار جاهز للتوسع\n\n"
+        "🛡️ الأدوار والصلاحيات جاهزة للتوسع\n\n"
         "اختر القسم المطلوب:"
     )
 
@@ -114,16 +115,16 @@ def _home_text():
 async def admin_control_center_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, owner_id):
+    if not _authorized(update, get_db, owner_id, "center.view"):
         return
     audit(get_db, owner_id, "open_control_center")
-    await query.edit_message_text(_home_text(), parse_mode="HTML", reply_markup=_keyboard())
+    await query.edit_message_text(_home_text(), parse_mode="HTML", reply_markup=admin_keyboard())
 
 
 async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, owner_id):
+    if not _authorized(update, get_db, owner_id, "system.health"):
         return
     conn = None
     try:
@@ -161,7 +162,7 @@ async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, owner_id):
+    if not _authorized(update, get_db, owner_id, "audit.view"):
         return
     conn = get_db()
     rows = conn.execute(
@@ -187,7 +188,7 @@ async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, owner_id):
+    if not _authorized(update, get_db, owner_id, "roles.view"):
         return
     conn = get_db()
     rows = conn.execute(
