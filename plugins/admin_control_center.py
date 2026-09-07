@@ -42,9 +42,16 @@ def register_admin_control_center(app, get_db, owner_id):
     register_admin_user_history(app, get_db, owner_id)
     register_admin_global_history(app, get_db, owner_id)
     register_smart_operations(app, get_db, owner_id)
+
+    # admin_home is a compatibility alias used by the user-management screen.
+    # It gets an earlier handler group so no legacy dashboard can intercept it.
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
-        pattern=r"^(admin_control_center|admin_home)$",
+        pattern=r"^admin_home$",
+    ), group=-100)
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
+        pattern=r"^admin_control_center$",
     ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_records_callback(u, c, get_db, owner_id),
