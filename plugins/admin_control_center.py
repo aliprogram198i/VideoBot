@@ -44,7 +44,7 @@ def register_admin_control_center(app, get_db, owner_id):
     register_smart_operations(app, get_db, owner_id)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
-        pattern=r"^admin_control_center$",
+        pattern=r"^(admin_control_center|admin_home)$",
     ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_records_callback(u, c, get_db, owner_id),
