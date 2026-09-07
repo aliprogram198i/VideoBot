@@ -55,6 +55,9 @@ def main() -> None:
         register_features = importlib.import_module(
             "plugins.recovered_features"
         ).register_recovered_features
+        register_smart_search_pro = importlib.import_module(
+            "plugins.smart_search_pro"
+        ).register_smart_search_pro
         register_admin_layer = importlib.import_module(
             "plugins.admin_layer"
         ).register_admin_layer
@@ -65,6 +68,11 @@ def main() -> None:
         def run_polling_with_restored_features(self, *args, **kwargs):
             nonlocal registered
             if not registered:
+                # Smart Search Pro is intentionally registered first at group -2.
+                # It stops ordinary text updates before the legacy catch-all search
+                # handler at group -1 can process them. Admin workflows explicitly
+                # bypass Pro search and continue to the existing admin router.
+                register_smart_search_pro(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 try:
                     register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
