@@ -61,6 +61,13 @@ def main() -> None:
         register_admin_layer = importlib.import_module(
             "plugins.admin_layer"
         ).register_admin_layer
+        install_yoinku_compat = importlib.import_module(
+            "plugins.yoinku_compat"
+        ).install
+
+        # Keep the existing downloader pipeline intact while correcting only
+        # the obsolete Yoinku audio format identifier.
+        install_yoinku_compat(bot_module)
 
         original_run_polling = Application.run_polling
         registered = False
@@ -68,18 +75,12 @@ def main() -> None:
         def run_polling_with_restored_features(self, *args, **kwargs):
             nonlocal registered
             if not registered:
-                # Smart Search Pro is intentionally registered first at group -2.
-                # It stops ordinary text updates before the legacy catch-all search
-                # handler at group -1 can process them. Admin workflows explicitly
-                # bypass Pro search and continue to the existing admin router.
                 register_smart_search_pro(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 try:
                     register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
                     print("🛡️ Admin layer registered", flush=True)
                 except Exception as exc:
-                    # Administration is optional at runtime; a dashboard failure
-                    # must never prevent the downloader bot from starting.
                     print(
                         f"⚠️ Admin layer registration failed: {type(exc).__name__}",
                         flush=True,
