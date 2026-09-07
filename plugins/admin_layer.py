@@ -13,7 +13,7 @@ from typing import Any
 from telegram import Update
 from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes
 
-from .admin_control_center import admin_keyboard, register_admin_control_center
+from .admin_control_center import _home_text, admin_keyboard, register_admin_control_center
 
 
 async def _admin_entry(
@@ -21,20 +21,14 @@ async def _admin_entry(
     context: ContextTypes.DEFAULT_TYPE,
     admin_id: int,
 ) -> None:
-    """Open the isolated admin control center for the owner only."""
+    """Open the exact same admin home view used by every Home navigation path."""
     user = update.effective_user
     message = update.effective_message
     if not user or not message or user.id != admin_id:
         return
 
     await message.reply_text(
-        "🎛️ <b>مركز التحكم الإداري</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🟢 النظام الإداري يعمل\n"
-        "🔐 الوصول محمي بنظام صلاحيات مركزي\n"
-        "🧾 التدقيق الإداري مفعّل\n"
-        "🛡️ الأدوار والصلاحيات جاهزة للتوسع\n\n"
-        "اختر القسم المطلوب:",
+        _home_text(),
         parse_mode="HTML",
         reply_markup=admin_keyboard(),
     )
