@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes
 from .admin_common import authorize
 from .admin_user_history import register_admin_user_history
 from .admin_global_history import register_admin_global_history
+from .smart_operations import register_smart_operations
 
 
 def _now():
@@ -24,6 +25,7 @@ def admin_keyboard():
         [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
          InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
+        [InlineKeyboardButton("🔄 استرداد المستخدمين", callback_data="recover_users_menu")],
     ])
 
 
@@ -31,6 +33,7 @@ def register_admin_control_center(app, get_db, owner_id):
     init_admin_control_center(get_db, owner_id)
     register_admin_user_history(app, get_db, owner_id)
     register_admin_global_history(app, get_db, owner_id)
+    register_smart_operations(app, get_db, owner_id)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: admin_control_center_callback(u, c, get_db, owner_id),
         pattern=r"^admin_control_center$",
