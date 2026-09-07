@@ -1,13 +1,13 @@
 import os
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from plugins.manager import PluginManager, PluginSpec, plugins_enabled
 
 
 class PluginManagerTests(unittest.TestCase):
     def test_disabled_manager_has_no_side_effects(self):
-        app = Mock()
+        app = MagicMock()
         manager = PluginManager(app, enabled=False)
         self.assertEqual(manager.discover(), 0)
         self.assertEqual(manager.activate(), 0)
