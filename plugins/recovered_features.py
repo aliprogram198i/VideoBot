@@ -24,7 +24,6 @@ from telegram.ext import (
     filters,
 )
 
-
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 SEARCH_PICK_RE = re.compile(r"^smart_search_pick_(\d+)$")
 RECOVER_DAYS_RE = re.compile(r"^recover_users_(30|60|90)$")
@@ -57,21 +56,14 @@ def _score(query: str, entry: dict[str, Any]) -> float:
 
 async def _youtube_search(query: str) -> list[dict[str, Any]]:
     command = [
-        "python", "-m", "yt_dlp",
-        "--flat-playlist",
-        "--dump-single-json",
-        "--skip-download",
-        "--no-warnings",
-        "--playlist-end", "5",
-        f"ytsearch5:{query}",
+        "python", "-m", "yt_dlp", "--flat-playlist", "--dump-single-json",
+        "--skip-download", "--no-warnings", "--playlist-end", "5", f"ytsearch5:{query}",
     ]
     if shutil.which("deno"):
         command[4:4] = ["--js-runtimes", "deno"]
 
     process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
@@ -120,11 +112,7 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     text = (update.message.text or "").strip()
     if not text or _looks_like_url(text) or text.startswith("/"):
         return
-
     user = update.effective_user
-
-    # Admin messages that belong to an existing admin workflow must continue
-    # to the original admin router instead of being treated as searches.
     if user.id == bot_module.ADMIN_ID and any(
         context.user_data.get(key)
         for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
@@ -139,8 +127,7 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     language = _lang(bot_module, user.id)
     if not bot_module.get_language(user.id):
         await update.message.reply_text(
-            bot_module.TEXTS["ar"]["choose_language"],
-            reply_markup=bot_module.language_keyboard(),
+            bot_module.TEXTS["ar"]["choose_language"], reply_markup=bot_module.language_keyboard(),
         )
         raise ApplicationHandlerStop
 
@@ -148,9 +135,7 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ اكتب عبارة بحث بين حرفين و200 حرف.")
         raise ApplicationHandlerStop
 
-    status = await update.message.reply_text(
-        "🔎 جاري البحث الذكي...\n\nبدون AI — يتم ترتيب النتائج خوارزميًا."
-    )
+    status = await update.message.reply_text("🔎 جاري البحث الذكي...\n\nبدون AI — يتم ترتيب النتائج خوارزميًا.")
     try:
         results = await _youtube_search(text)
     except Exception as exc:
@@ -162,9 +147,7 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
         raise ApplicationHandlerStop
 
-    context.user_data["smart_search_results"] = [
-        {"url": item["url"], "title": item["title"]} for item in results
-    ]
+    context.user_data["smart_search_results"] = [{"url": item["url"], "title": item["title"]} for item in results]
     keyboard = []
     lines = ["🔎 <b>نتائج البحث الذكي</b>", "━━━━━━━━━━━━━━━━━━", ""]
     for index, item in enumerate(results):
@@ -176,18 +159,9 @@ async def smart_search_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             meta.append(duration)
         suffix = f" — {' • '.join(meta)}" if meta else ""
         lines.append(f"{index + 1}. {item['title'][:80]}{suffix}")
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{index + 1}️⃣ {item['title'][:45]}",
-                callback_data=f"smart_search_pick_{index}",
-            )
-        ])
+        keyboard.append([InlineKeyboardButton(f"{index + 1}️⃣ {item['title'][:45]}", callback_data=f"smart_search_pick_{index}")])
     lines.append("\n👇 اختر النتيجة التي تريد تحميلها.")
-    await status.edit_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await status.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     raise ApplicationHandlerStop
 
 
@@ -220,8 +194,7 @@ async def smart_search_pick(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     ])
     await query.edit_message_text(
         f"🎯 <b>تم اختيار:</b>\n{selected['title'][:200]}\n\nاختر نوع التحميل:",
-        parse_mode="HTML",
-        reply_markup=keyboard,
+        parse_mode="HTML", reply_markup=keyboard,
     )
 
 
@@ -241,19 +214,17 @@ async def recover_users_command(update: Update, context: ContextTypes.DEFAULT_TY
     finally:
         conn.close()
     text = (
-        "🔄 <b>استرداد المستخدمين غير النشطين</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
+        "🔄 <b>استرداد المستخدمين غير النشطين</b>\n━━━━━━━━━━━━━━━━━━\n\n"
         f"🟡 أكثر من 30 يوم: {rows[0]}\n"
         f"🟠 أكثر من 60 يوم: {rows[1]}\n"
         f"🔴 أكثر من 90 يوم: {rows[2]}\n\n"
-        "اختر الفئة لإرسال رسالة تذكير.\n"
-        "لن يتم حذف أي مستخدم أو تعديل بياناته."
+        "اختر الفئة لإرسال رسالة تذكير.\nلن يتم حذف أي مستخدم أو تعديل بياناته."
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🟡 استرداد +30 يوم", callback_data="recover_users_30")],
         [InlineKeyboardButton("🟠 استرداد +60 يوم", callback_data="recover_users_60")],
         [InlineKeyboardButton("🔴 استرداد +90 يوم", callback_data="recover_users_90")],
-        [InlineKeyboardButton("🔙 لوحة الإدارة", callback_data="admin_home")],
+        [InlineKeyboardButton("🔙 مركز التحكم الإداري", callback_data="admin_control_center")],
     ])
     if update.callback_query:
         await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
@@ -284,10 +255,7 @@ async def recover_users_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("🟢 لا يوجد مستخدمون ضمن هذه الفئة حاليًا.")
         return
 
-    await query.edit_message_text(
-        f"⏳ جاري محاولة استرداد {len(rows)} مستخدم...\n\n"
-        "سيتم تجاهل الحسابات التي لم يعد البوت قادرًا على مراسلتها."
-    )
+    await query.edit_message_text(f"⏳ جاري محاولة استرداد {len(rows)} مستخدم...\n\nسيتم تجاهل الحسابات التي لم يعد البوت قادرًا على مراسلتها.")
     sent = 0
     failed = 0
     message = (
@@ -303,8 +271,7 @@ async def recover_users_callback(update: Update, context: ContextTypes.DEFAULT_T
             failed += 1
         await asyncio.sleep(0.08)
     await query.edit_message_text(
-        "✅ انتهت محاولة الاسترداد.\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
+        "✅ انتهت محاولة الاسترداد.\n━━━━━━━━━━━━━━━━━━\n\n"
         f"📨 تم التواصل بنجاح: {sent}\n"
         f"⚠️ تعذر التواصل: {failed}\n"
         f"👥 الفئة المستهدفة: {len(rows)}"
@@ -317,16 +284,8 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
 
     def admin_keyboard_with_recovery():
         keyboard = original_admin_keyboard()
-        # python-telegram-bot exposes inline_keyboard as an immutable tuple.
-        # Build a new markup instead of mutating it. This keeps /hebaali and
-        # all existing admin buttons intact while adding User Recovery.
         rows = [list(row) for row in keyboard.inline_keyboard]
-        rows.append([
-            InlineKeyboardButton(
-                "🔄 استرداد المستخدمين",
-                callback_data="recover_users_menu",
-            )
-        ])
+        rows.append([InlineKeyboardButton("🔄 استرداد المستخدمين", callback_data="recover_users_menu")])
         return InlineKeyboardMarkup(rows)
 
     bot_module.admin_keyboard = admin_keyboard_with_recovery
@@ -338,39 +297,18 @@ def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> Non
             return
         await recover_users_command(update, context, bot_module, admin_id)
 
-    # Group -1 gives Smart Search priority over the original catch-all text
-    # handlers. ApplicationHandlerStop prevents a normal search from reaching
-    # handle_message/admin_text_router a second time.
     app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            lambda update, context: smart_search_handler(update, context, bot_module),
-        ),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: smart_search_handler(update, context, bot_module)),
         group=-1,
     )
     app.add_handler(
-        CallbackQueryHandler(
-            lambda update, context: smart_search_pick(update, context, bot_module),
-            pattern=r"^smart_search_pick_\d+$",
-            block=False,
-        ),
+        CallbackQueryHandler(lambda update, context: smart_search_pick(update, context, bot_module), pattern=r"^smart_search_pick_\d+$", block=False),
     )
     app.add_handler(
-        CommandHandler(
-            "recover_users",
-            lambda update, context: recover_users_command(update, context, bot_module, admin_id),
-        ),
+        CommandHandler("recover_users", lambda update, context: recover_users_command(update, context, bot_module, admin_id)),
     )
     app.add_handler(
-        CallbackQueryHandler(
-            lambda update, context: recover_users_callback(update, context, bot_module, admin_id),
-            pattern=r"^recover_users_(30|60|90)$",
-        ),
+        CallbackQueryHandler(lambda update, context: recover_users_callback(update, context, bot_module, admin_id), pattern=r"^recover_users_(30|60|90)$"),
     )
-    app.add_handler(
-        CallbackQueryHandler(
-            recover_menu_callback,
-            pattern=r"^recover_users_menu$",
-        ),
-    )
+    app.add_handler(CallbackQueryHandler(recover_menu_callback, pattern=r"^recover_users_menu$"))
     print("🧩 Restored features: Smart Search + User Recovery ENABLED", flush=True)
