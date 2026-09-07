@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from telegram import Update
-from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes
+from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes, CallbackQueryHandler
 
 from .admin_control_center import _home_text, admin_keyboard, register_admin_control_center
 
@@ -52,11 +52,60 @@ def _remove_legacy_hebaali_handlers(app: Any) -> int:
     return removed
 
 
+def _remove_legacy_admin_callback_handlers(app: Any) -> int:
+    """Remove only callback routes now exclusively owned by the isolated admin layer.
+
+    This is deliberately prefix based and runs before the new admin modules are
+    registered. Unrelated admin features such as the existing statistics route
+    remain untouched, while duplicate Home/users/user-history routes are removed
+    so Telegram cannot dispatch the same callback into two dashboards.
+    """
+    prefixes = (
+        r"^admin_home$",
+        r"^admin_users_",
+        r"^user_",
+        r"^admin_user_view_",
+        r"^admin_user_clear_",
+        r"^admin_global_history_reset$",
+        r"^admin_control_center$",
+        r"^admin_records$",
+        r"^admin_health$",
+        r"^admin_audit$",
+        r"^admin_roles$",
+        r"^admin_smart_operations$",
+    )
+
+    removed = 0
+    handlers_by_group = getattr(app, "handlers", {})
+    for group, handlers in list(handlers_by_group.items()):
+        kept = []
+        for handler in handlers:
+            if not isinstance(handler, CallbackQueryHandler):
+                kept.append(handler)
+                continue
+
+            pattern = getattr(handler, "pattern", None)
+            pattern_text = getattr(pattern, "pattern", None) or (pattern if isinstance(pattern, str) else "")
+            if any(pattern_text == prefix or pattern_text.startswith(prefix[:-1]) for prefix in prefixes):
+                removed += 1
+                continue
+            kept.append(handler)
+        handlers_by_group[group] = kept
+    return removed
+
+
 def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     """Register the admin layer with one owner for the /hebaali route."""
-    removed = _remove_legacy_hebaali_handlers(app)
-    if removed:
+    removed_command = _remove_legacy_hebaali_handlers(app)
+    removed_callbacks = _remove_legacy_admin_callback_handlers(app)
+
+    if removed_command:
         print("🧩 Legacy /hebaali handler removed; admin layer owns the route", flush=True)
+    if removed_callbacks:
+        print(
+            f"🧩 Removed {removed_callbacks} legacy admin callback handler(s); isolated admin layer owns those routes",
+            flush=True,
+        )
 
     # The control center owns registration of all admin callbacks, including
     # the global-history reset. Keeping a single registration point prevents
