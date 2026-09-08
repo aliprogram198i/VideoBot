@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 from typing import Any
+from urllib.parse import urlparse
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler
@@ -24,13 +25,23 @@ def _user_label(row: Any) -> str:
     return html.escape(name[:60] or f"ID {row['user_id']}")
 
 
-def _keyboard(offset: int, has_next: bool) -> InlineKeyboardMarkup:
+def _valid_http_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _keyboard(offset: int, has_next: bool, link_buttons: list[InlineKeyboardButton]) -> InlineKeyboardMarkup:
     nav = []
     if offset:
         nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"admin_download_log_{max(0, offset - _PAGE_SIZE)}"))
     if has_next:
         nav.append(InlineKeyboardButton("➡️ التالي", callback_data=f"admin_download_log_{offset + _PAGE_SIZE}"))
-    rows = [nav] if nav else []
+    rows = [[button] for button in link_buttons]
+    if nav:
+        rows.append(nav)
     rows += [
         [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
@@ -66,6 +77,8 @@ async def _render(update: Update, get_db, owner_id: int, offset: int) -> None:
         f"📄 عرض: <b>{offset + 1 if rows else 0}–{offset + len(rows)}</b>",
         "",
     ]
+    link_buttons: list[InlineKeyboardButton] = []
+
     if not rows:
         lines.append("لا توجد عمليات تحميل مسجلة.")
     else:
@@ -73,7 +86,6 @@ async def _render(update: Update, get_db, owner_id: int, offset: int) -> None:
             raw_url = str(row["url"] or "").strip()
             if not raw_url:
                 continue
-            safe_url = html.escape(raw_url, quote=True)
             website = html.escape(str(row["website"] or "غير معروف"))
             title = html.escape(str(row["title"] or "العنوان غير متوفر"))
             media = html.escape(str(row["media_type"] or ""))
@@ -84,18 +96,20 @@ async def _render(update: Update, get_db, owner_id: int, offset: int) -> None:
                 f"<b>{index}. {title}</b>\n"
                 f"   👤 المستخدم: {user} (<code>{int(row['user_id'])}</code>)\n"
                 f"   🌐 المنصة: {website}\n"
-                f"   🔗 <a href=\"{safe_url}\">فتح الرابط</a>\n"
+                f"   🔗 الرابط متاح عبر الزر أدناه\n"
                 f"   ⚙️ {media} • {quality} • 🕒 {created}\n\n"
             )
             if len("\n".join(lines)) + len(candidate) > _MAX_TEXT:
                 break
             lines.append(candidate)
+            if _valid_http_url(raw_url):
+                link_buttons.append(InlineKeyboardButton(f"🔗 فتح الرابط #{index}", url=raw_url))
 
     await query.edit_message_text(
         "\n".join(lines)[:_MAX_TEXT],
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=_keyboard(offset, has_next),
+        reply_markup=_keyboard(offset, has_next, link_buttons),
     )
 
 
