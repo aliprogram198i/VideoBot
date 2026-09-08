@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -18,7 +19,10 @@ def _user_keyboard(user_id: int, banned: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🟢 فك الحظر" if banned else "🚫 حظر المستخدم", callback_data=f"unban_{user_id}" if banned else f"ban_{user_id}")],
         [InlineKeyboardButton("📢 إرسال رسالة", callback_data=f"message_user_{user_id}")],
         [InlineKeyboardButton("🗑️ حذف المستخدم", callback_data=f"delete_user_{user_id}")],
+        [InlineKeyboardButton("🔗 روابط التحميل", callback_data=f"admin_user_links_{user_id}_0")],
+        [InlineKeyboardButton("🧹 مسح سجل التحميلات", callback_data=f"admin_user_clear_{user_id}")],
         [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("🏠 الرئيسية", callback_data="admin_home")],
     ])
 
 
@@ -45,6 +49,22 @@ async def _render_user(update: Update, get_db, owner_id: int, user_id: int) -> N
         f"🚦 الحالة: {'🚫 محظور' if row['is_banned'] else '🟢 نشط'}"
     )
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=_user_keyboard(user_id, bool(row["is_banned"])))
+
+
+async def user_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
+    """Render the canonical user-management workspace.
+
+    This handler is registered before the history bridge, so the shared
+    ``admin_user_view_<id>`` route always lands on the management workspace.
+    """
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, owner_id):
+        return
+    match = re.fullmatch(r"admin_user_view_(\d+)", query.data or "")
+    if not match:
+        return
+    await _render_user(update, get_db, owner_id, int(match.group(1)))
 
 
 async def ban_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -192,3 +212,4 @@ def register_admin_users(app: Any, get_db, owner_id: int) -> None:
     app.add_handler(CallbackQueryHandler(lambda u, c: confirm_delete_callback(u, c, get_db, owner_id), pattern=r"^confirm_delete_\d+$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: message_user_callback(u, c, owner_id), pattern=r"^message_user_\d+$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: search_callback(u, c, owner_id), pattern=r"^admin_search$"), group=-1)
+    app.add_handler(CallbackQueryHandler(lambda u, c: user_view_callback(u, c, get_db, owner_id), pattern=r"^admin_user_view_\d+$"), group=-1)
