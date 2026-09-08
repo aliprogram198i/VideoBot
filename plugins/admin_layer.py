@@ -17,6 +17,7 @@ from .admin_broadcast import process_broadcast
 from .admin_users import process_user_message, process_search
 from .admin_users_plus import register_admin_users_plus
 from .admin_download_log import register_admin_download_log
+from .download_log_enrichment import register_download_log_enrichment
 
 
 async def _admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int) -> None:
@@ -100,9 +101,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     if removed_callbacks:
         print(f"🧩 Removed {removed_callbacks} legacy admin callback handler(s)", flush=True)
 
-    # Register the enhanced users workspace at a higher priority than the
-    # history module. Its unique admin_users_plus_* callbacks then hand off to
-    # the existing detail/history owner without replacing destructive actions.
+    register_download_log_enrichment(bot_module)
     register_admin_users_plus(app, bot_module.get_db, admin_id)
     register_admin_control_center(app, bot_module.get_db, admin_id)
     register_admin_download_log(app, bot_module.get_db, admin_id)
