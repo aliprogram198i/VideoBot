@@ -176,6 +176,38 @@ def _home_text(get_db=None):
     )
 
 
+def _records_text(get_db):
+    """Render the top-level downloads/data workspace without relying on a missing helper."""
+    conn = None
+    try:
+        conn = get_db()
+        total_downloads = int(conn.execute("SELECT COUNT(*) FROM downloads").fetchone()[0])
+        total_users = int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+        today = _now()[:10]
+        today_downloads = int(conn.execute(
+            "SELECT COUNT(*) FROM downloads WHERE substr(created_at,1,10)=?", (today,)
+        ).fetchone()[0])
+        websites = int(conn.execute(
+            "SELECT COUNT(DISTINCT website) FROM downloads WHERE website IS NOT NULL AND TRIM(website) <> ''"
+        ).fetchone()[0])
+    except Exception:
+        total_downloads = today_downloads = websites = 0
+        total_users = 0
+    finally:
+        if conn:
+            conn.close()
+
+    return (
+        "📥 <b>التنزيلات والبيانات</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📥 إجمالي عمليات التحميل: <b>{total_downloads}</b>\n"
+        f"📅 تحميلات اليوم: <b>{today_downloads}</b>\n"
+        f"🌐 المنصات المسجلة: <b>{websites}</b>\n"
+        f"👥 المستخدمون المسجلون: <b>{total_users}</b>\n\n"
+        "اختر أداة البيانات المطلوبة:"
+    )
+
+
 async def admin_control_center_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
@@ -192,7 +224,8 @@ async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_T
     if not _authorized(update, get_db, owner_id, "history.view"):
         return
     audit(get_db, owner_id, "open_records_center")
-    await query.edit_message_text(_records_text(), parse_mode="HTML", reply_markup=_records_keyboard())
+    await query.edit_message_text(_records_text(get_db), parse_mode="HTML", reply_markup=_records_keyboard())
+    raise ApplicationHandlerStop
 
 
 def _check_binary(command):
