@@ -1,8 +1,8 @@
 """Admin user-detail download links owner.
 
 The user-detail route is shared with the legacy history layer. This module
-makes the links view the single owner of both legacy and current user-detail
-callbacks so another handler cannot overwrite the rendered message.
+renders the explicit download-links pagination route without attempting to
+replace the history layer's user-detail ownership.
 """
 
 from __future__ import annotations
@@ -17,9 +17,6 @@ from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTy
 _LINK_PAGE_RE = re.compile(r"^admin_user_links_(\d+)_([0-9]+)$")
 _PAGE_SIZE = 5
 _MAX_TEXT = 3900
-_DETAIL_PATTERNS = (
-    r"^(?:admin_user_view|user)_\d+$",
-)
 
 
 def _authorized(update: Update, owner_id: int) -> bool:
@@ -43,26 +40,6 @@ def _keyboard(user_id: int, offset: int, has_next: bool) -> InlineKeyboardMarkup
     rows.append([InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")])
     rows.append([InlineKeyboardButton("🏠 الرئيسية", callback_data="admin_home")])
     return InlineKeyboardMarkup(rows)
-
-
-def _remove_competing_detail_handlers(app: Any) -> int:
-    """Remove every pre-existing user-detail callback before taking ownership."""
-    removed = 0
-    handlers_by_group = getattr(app, "handlers", {})
-    for group, handlers in list(handlers_by_group.items()):
-        kept = []
-        for handler in handlers:
-            if not isinstance(handler, CallbackQueryHandler):
-                kept.append(handler)
-                continue
-            pattern = getattr(handler, "pattern", None)
-            pattern_text = getattr(pattern, "pattern", None) or (pattern if isinstance(pattern, str) else "")
-            if pattern_text in _DETAIL_PATTERNS:
-                removed += 1
-                continue
-            kept.append(handler)
-        handlers_by_group[group] = kept
-    return removed
 
 
 async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int, user_id: int, offset: int = 0) -> None:
