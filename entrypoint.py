@@ -10,6 +10,8 @@ import importlib
 import os
 import time
 
+from telegram.ext import Application
+
 LOCK_PATH = "/tmp/alibot-single-instance.lock"
 STARTUP_GRACE_SECONDS = 15
 LOCK_TIMEOUT_SECONDS = 45
