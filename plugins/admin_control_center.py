@@ -3,7 +3,7 @@ import shutil
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes
 
 from .admin_common import authorize
 from .admin_user_history import register_admin_user_history
@@ -151,6 +151,7 @@ async def admin_control_center_callback(update: Update, context: ContextTypes.DE
         return
     audit(get_db, owner_id, "open_control_center")
     await query.edit_message_text(_home_text(), parse_mode="HTML", reply_markup=admin_keyboard())
+    raise ApplicationHandlerStop
 
 
 async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
