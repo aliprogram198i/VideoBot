@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime, timedelta
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -13,16 +14,22 @@ def _authorized(update: Update, owner_id: int) -> bool:
     return bool(update.effective_user and update.effective_user.id == owner_id)
 
 
-def _stats(get_db) -> dict[str, Any]:
+def _stats(get_db, days: int | None = None) -> dict[str, Any]:
     conn = get_db()
     try:
         row = conn.execute("SELECT COUNT(*) AS users, SUM(CASE WHEN is_banned = 1 THEN 1 ELSE 0 END) AS banned FROM users").fetchone()
-        downloads = conn.execute("SELECT COUNT(*) AS count FROM downloads").fetchone()["count"]
-        videos = conn.execute("SELECT COUNT(*) AS count FROM downloads WHERE media_type = 'video'").fetchone()["count"]
-        audio = conn.execute("SELECT COUNT(*) AS count FROM downloads WHERE media_type = 'audio'").fetchone()["count"]
+        download_where = ""
+        params: tuple[str, ...] = ()
+        if days in {1, 7, 30}:
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            download_where = " WHERE created_at >= ?"
+            params = (cutoff,)
+        downloads = conn.execute(f"SELECT COUNT(*) AS count FROM downloads{download_where}", params).fetchone()["count"]
+        videos = conn.execute(f"SELECT COUNT(*) AS count FROM downloads{download_where} AND media_type = 'video'" if download_where else "SELECT COUNT(*) AS count FROM downloads WHERE media_type = 'video'", params if download_where else ()).fetchone()["count"]
+        audio = conn.execute(f"SELECT COUNT(*) AS count FROM downloads{download_where} AND media_type = 'audio'" if download_where else "SELECT COUNT(*) AS count FROM downloads WHERE media_type = 'audio'", params if download_where else ()).fetchone()["count"]
         phones = conn.execute("SELECT COUNT(*) AS count FROM users WHERE phone IS NOT NULL AND phone != ''").fetchone()["count"]
         locations = conn.execute("SELECT COUNT(*) AS count FROM users WHERE latitude IS NOT NULL AND longitude IS NOT NULL").fetchone()["count"]
-        websites = conn.execute("SELECT website, COUNT(*) AS count FROM downloads GROUP BY website ORDER BY count DESC LIMIT 10").fetchall()
+        websites = conn.execute(f"SELECT website, COUNT(*) AS count FROM downloads{download_where} GROUP BY website ORDER BY count DESC LIMIT 10", params).fetchall()
         languages = conn.execute("SELECT language, COUNT(*) AS count FROM users GROUP BY language ORDER BY count DESC").fetchall()
         genders = conn.execute("SELECT gender, COUNT(*) AS count FROM users WHERE gender IS NOT NULL AND gender != '' GROUP BY gender").fetchall()
         return {"users": int(row["users"] or 0), "banned": int(row["banned"] or 0), "downloads": int(downloads or 0), "videos": int(videos or 0), "audio": int(audio or 0), "phones": int(phones or 0), "locations": int(locations or 0), "websites": websites, "languages": languages, "genders": genders}
@@ -62,7 +69,7 @@ async def dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
         days = 30
     if days not in {1, 7, 30}:
         days = 30
-    await query.edit_message_text(_render(_stats(get_db), days), parse_mode="HTML", reply_markup=_keyboard(days))
+    await query.edit_message_text(_render(_stats(get_db, days), days), parse_mode="HTML", reply_markup=_keyboard(days))
 
 
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -128,9 +135,9 @@ async def top_websites_callback(update: Update, context: ContextTypes.DEFAULT_TY
     conn = get_db()
     try:
         rows = conn.execute("SELECT website, COUNT(*) AS count FROM downloads GROUP BY website ORDER BY count DESC LIMIT 20").fetchall()
+        total = conn.execute("SELECT COUNT(*) AS count FROM downloads").fetchone()["count"] or 1
     finally:
         conn.close()
-    total = sum(int(r['count']) for r in rows) or 1
     lines = ["🌐 <b>أكثر المنصات استخداماً</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
     for i, row in enumerate(rows, 1):
         pct = int(row['count']) * 100 / total
