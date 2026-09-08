@@ -7,14 +7,29 @@ behavior are otherwise unchanged.
 
 import fcntl
 import importlib
+import os
 import time
-
-from telegram.ext import Application
 
 LOCK_PATH = "/tmp/alibot-single-instance.lock"
 STARTUP_GRACE_SECONDS = 15
 LOCK_TIMEOUT_SECONDS = 45
 LOCK_RETRY_SECONDS = 1
+
+
+def normalize_runtime_environment():
+    """Normalize deployment-provided secrets before importing the bot module.
+
+    Railway/environment editors can preserve a trailing CR/LF when a secret is
+    pasted from another terminal or text source. python-telegram-bot then sees
+    that character as part of the Telegram API URL and raises InvalidURL.
+    Never log the secret itself.
+    """
+    token = os.getenv("BOT_TOKEN")
+    if token is not None:
+        normalized = token.strip()
+        if normalized != token:
+            os.environ["BOT_TOKEN"] = normalized
+            print("🧹 Runtime environment: normalized BOT_TOKEN whitespace.", flush=True)
 
 
 def acquire_single_instance_lock():
@@ -38,6 +53,7 @@ def acquire_single_instance_lock():
 
 
 def main() -> None:
+    normalize_runtime_environment()
     lock_file = acquire_single_instance_lock()
     try:
         bot_module = importlib.import_module("bot")
