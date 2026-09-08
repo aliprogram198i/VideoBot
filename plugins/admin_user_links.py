@@ -13,7 +13,6 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
-_USER_RE = re.compile(r"^(?:admin_user_view|user)_(\d+)$")
 _LINK_PAGE_RE = re.compile(r"^admin_user_links_(\d+)_([0-9]+)$")
 _PAGE_SIZE = 5
 _MAX_TEXT = 3900
@@ -103,17 +102,6 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
     )
 
 
-async def _view(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
-    query = update.callback_query
-    if not _authorized(update, owner_id):
-        await query.answer()
-        return
-    await query.answer()
-    match = _USER_RE.match(query.data or "")
-    if match:
-        await _render(update, context, get_db, owner_id, int(match.group(1)), 0)
-
-
 async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
     query = update.callback_query
     if not _authorized(update, owner_id):
@@ -126,12 +114,11 @@ async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
 
 
 def register_admin_user_links(app, get_db, owner_id: int) -> None:
-    """Register before the existing admin user-detail handler."""
+    """Register only the explicit user-download-links route."""
     app.add_handler(
-        CallbackQueryHandler(lambda u, c: _view(u, c, get_db, owner_id), pattern=r"^(?:admin_user_view|user)_\d+$"),
-        group=-2,
-    )
-    app.add_handler(
-        CallbackQueryHandler(lambda u, c: _page(u, c, get_db, owner_id), pattern=r"^admin_user_links_\d+_[0-9]+$"),
+        CallbackQueryHandler(
+            lambda u, c: _page(u, c, get_db, owner_id),
+            pattern=r"^admin_user_links_\d+_[0-9]+$",
+        ),
         group=-2,
     )

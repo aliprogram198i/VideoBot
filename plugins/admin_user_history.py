@@ -51,6 +51,7 @@ def _users_keyboard(offset: int, has_next: bool) -> InlineKeyboardMarkup:
 
 def _user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 روابط التحميل", callback_data=f"admin_user_links_{user_id}_0")],
         [InlineKeyboardButton("🧹 مسح سجل التحميلات", callback_data=f"admin_user_clear_{user_id}")],
         [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("🏠 الرئيسية", callback_data="admin_home")],
