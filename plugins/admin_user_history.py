@@ -59,12 +59,11 @@ def _user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 def register_admin_user_history(app: Any, get_db, owner_id: int) -> None:
-    """Register isolated user-history callbacks with priority over legacy admin UI.
+    """Register isolated user-history callbacks and legacy compatibility bridges.
 
-    The legacy dashboard still emits ``admin_users_<page>`` and ``user_<id>``.
-    Those routes are intentionally bridged here so both old and new navigation
-    paths land on the same user-history screen and expose the clear-history
-    action consistently.
+    The canonical ``admin_user_view_<id>`` route is owned by ``admin_users``.
+    This module therefore registers only the users-list, legacy bridges, and
+    history-specific clear actions to avoid duplicate callback ownership.
     """
     app.add_handler(CallbackQueryHandler(
         lambda u, c: users_callback(u, c, get_db, owner_id),
@@ -73,10 +72,6 @@ def register_admin_user_history(app: Any, get_db, owner_id: int) -> None:
     app.add_handler(CallbackQueryHandler(
         lambda u, c: legacy_users_callback(u, c, get_db, owner_id),
         pattern=r"^admin_users_\d+$",
-    ), group=-1)
-    app.add_handler(CallbackQueryHandler(
-        lambda u, c: user_view_callback(u, c, get_db, owner_id),
-        pattern=r"^admin_user_view_\d+$",
     ), group=-1)
     app.add_handler(CallbackQueryHandler(
         lambda u, c: legacy_user_view_callback(u, c, get_db, owner_id),
