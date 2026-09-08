@@ -1,3 +1,4 @@
+import os
 import unittest
 from urllib.request import Request
 
@@ -10,12 +11,24 @@ from bot import (
 from downloader.production_network import build_smart_network_adapter
 
 
+RUN_LIVE_NETWORK_INTEGRATION = os.getenv("ALIBOT_RUN_NETWORK_INTEGRATION", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
 class ProductionNetworkIntegrationTests(unittest.TestCase):
     URL = "https://example.com/"
 
     def test_real_public_url_validation(self):
         validate_public_http_url(self.URL)
 
+    @unittest.skipUnless(
+        RUN_LIVE_NETWORK_INTEGRATION,
+        "live network integration tests require ALIBOT_RUN_NETWORK_INTEGRATION=1",
+    )
     def test_real_safe_html_fetch(self):
         request = Request(
             self.URL,
@@ -42,6 +55,10 @@ class ProductionNetworkIntegrationTests(unittest.TestCase):
 
         self.assertGreater(len(body), 0)
 
+    @unittest.skipUnless(
+        RUN_LIVE_NETWORK_INTEGRATION,
+        "live network integration tests require ALIBOT_RUN_NETWORK_INTEGRATION=1",
+    )
     def test_real_production_probe_adapter(self):
         adapter = build_smart_network_adapter(
             url_validator=validate_public_http_url,

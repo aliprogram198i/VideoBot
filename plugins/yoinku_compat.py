@@ -20,6 +20,11 @@ from urllib.request import Request
 def install(bot_module):
     """Install the Yoinku compatibility implementation into bot.py."""
 
+    # Telegram currently accepts up to 50 MB for multipart uploads.
+    # Keep the actual split target below that ceiling for safety.
+    if not hasattr(bot_module, "MAX_TELEGRAM_VIDEO_BYTES"):
+        bot_module.MAX_TELEGRAM_VIDEO_BYTES = 50 * 1024 * 1024
+
     async def download_with_yoinku(
         url,
         temp_dir,

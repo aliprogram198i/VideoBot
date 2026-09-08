@@ -178,9 +178,25 @@ async def smart_operations_callback(update: Update, context: ContextTypes.DEFAUL
         )
 
 
+def _has_smart_operations_handler(app):
+    """Return True when this callback route is already registered."""
+    handlers_by_group = getattr(app, "handlers", {})
+    for handlers in handlers_by_group.values():
+        for handler in handlers:
+            if not isinstance(handler, CallbackQueryHandler):
+                continue
+            pattern = getattr(handler, "pattern", None)
+            pattern_text = getattr(pattern, "pattern", None) or (pattern if isinstance(pattern, str) else "")
+            if pattern_text == rf"^{CALLBACK}$":
+                return True
+    return False
+
+
 def register_smart_operations(app, get_db, admin_id):
-    """Register the isolated Smart Operations callback."""
+    """Register Smart Operations once, even when legacy bootstrap calls it too."""
+    if _has_smart_operations_handler(app):
+        return
     app.add_handler(CallbackQueryHandler(
         lambda update, context: smart_operations_callback(update, context, get_db, admin_id),
-        pattern=r"^" + CALLBACK + r"$",
+        pattern=rf"^{CALLBACK}$",
     ))

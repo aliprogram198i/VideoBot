@@ -1,8 +1,9 @@
-"""Production entrypoint for AliBot.
+from pathlib import Path
+"""Staged runtime entrypoint for AliBot.
 
-Provides a bounded single-instance guard plus a short startup grace period so
-Railway can terminate the previous polling process before Telegram polling
-starts. Telegram-side token ownership is unchanged.
+Keeps the legacy bot implementation intact while composing isolated runtime
+layers before polling starts. Production configuration and Telegram polling
+behavior are otherwise unchanged.
 """
 
 import fcntl
@@ -12,23 +13,35 @@ import time
 
 from telegram.ext import Application
 
-LOCK_PATH = "/tmp/alibot-single-instance.lock"
+LOCK_PATH = str(Path(__file__).resolve().parent / ".alibot-single-instance.lock")
 STARTUP_GRACE_SECONDS = 15
 LOCK_TIMEOUT_SECONDS = 45
 LOCK_RETRY_SECONDS = 1
 
 
+def normalize_runtime_environment():
+    """Normalize deployment-provided secrets before importing the bot module.
+
+    Railway/environment editors can preserve CR/LF or tab characters when a
+    secret is pasted from another terminal or text source. A control character
+    embedded inside BOT_TOKEN is not removed by ``strip()`` and can therefore
+    reach the Telegram API URL and make httpx reject it as an invalid URL.
+    Never log the secret itself.
+    """
+    token = os.getenv("BOT_TOKEN")
+    if token is not None:
+        normalized = token.replace("\r", "").replace("\n", "").replace("\t", "").strip()
+        if normalized != token:
+            os.environ["BOT_TOKEN"] = normalized
+            print("🧹 Runtime environment: normalized BOT_TOKEN control characters.", flush=True)
+
+
 def acquire_single_instance_lock():
-    """Acquire the local process lock without ever blocking indefinitely."""
+    """Acquire the local process lock without blocking indefinitely."""
     lock_file = open(LOCK_PATH, "w", encoding="utf-8")
     deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-
-    print(
-        f"🛡️ Startup guard: waiting {STARTUP_GRACE_SECONDS}s before lock acquisition.",
-        flush=True,
-    )
+    print(f"🛡️ Startup guard: waiting {STARTUP_GRACE_SECONDS}s before lock acquisition.", flush=True)
     time.sleep(STARTUP_GRACE_SECONDS)
-
     while True:
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -38,57 +51,53 @@ def acquire_single_instance_lock():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 lock_file.close()
-                raise RuntimeError(
-                    "Another AliBot polling process is still running; startup lock timeout exceeded."
-                )
-            print(
-                f"⏳ Another AliBot process is active; retrying for up to {int(remaining)}s.",
-                flush=True,
-            )
+                raise RuntimeError("Another AliBot polling process is still running; startup lock timeout exceeded.")
+            print(f"⏳ Another AliBot process is active; retrying for up to {int(remaining)}s.", flush=True)
             time.sleep(min(LOCK_RETRY_SECONDS, remaining))
 
 
 def main() -> None:
+    normalize_runtime_environment()
     lock_file = acquire_single_instance_lock()
     try:
         bot_module = importlib.import_module("bot")
-        register_features = importlib.import_module(
-            "plugins.recovered_features"
-        ).register_recovered_features
-        register_smart_search_pro = importlib.import_module(
-            "plugins.smart_search_pro"
-        ).register_smart_search_pro
-        register_admin_layer = importlib.import_module(
-            "plugins.admin_layer"
-        ).register_admin_layer
-        install_yoinku_compat = importlib.import_module(
-            "plugins.yoinku_compat"
-        ).install
+        runtime_config = importlib.import_module("plugins.runtime_config")
+        register_user_activity = importlib.import_module("plugins.user_activity").register_user_activity
+        register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
+        register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
+        register_admin_layer = importlib.import_module("plugins.admin_layer").register_admin_layer
+        register_admin_user_links = importlib.import_module("plugins.admin_user_links").register_admin_user_links
+        install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
+        install_download_guards = importlib.import_module("security.download_guard").install_download_guards
 
-        # Keep the existing downloader pipeline intact while correcting only
-        # the obsolete Yoinku audio format identifier.
+        runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
+        install_download_guards(bot_module)
 
         original_run_polling = Application.run_polling
         registered = False
 
-        def run_polling_with_restored_features(self, *args, **kwargs):
+        def run_polling_with_layers(self, *args, **kwargs):
             nonlocal registered
             if not registered:
+                register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
-                try:
-                    register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
-                    print("🛡️ Admin layer registered", flush=True)
-                except Exception as exc:
-                    print(
-                        f"⚠️ Admin layer registration failed: {type(exc).__name__}",
-                        flush=True,
-                    )
+
+                # Admin layer must run before the user-links overlay. The admin
+                # layer removes legacy callback routes, including the historical
+                # admin_user_view/user patterns. Registering user-links first
+                # would therefore remove the new handler we intend to keep.
+                register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
+                register_admin_user_links(self, bot_module.get_db, bot_module.ADMIN_ID)
+
+                print("🛡️ Admin layer registered", flush=True)
+                print("🔗 Admin user download-links layer registered", flush=True)
+                print("👤 User activity middleware registered", flush=True)
                 registered = True
             return original_run_polling(self, *args, **kwargs)
 
-        Application.run_polling = run_polling_with_restored_features
+        Application.run_polling = run_polling_with_layers
         bot_module.main()
     finally:
         try:

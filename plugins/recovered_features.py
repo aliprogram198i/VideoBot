@@ -280,16 +280,6 @@ async def recover_users_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 def register_recovered_features(app: Any, bot_module: Any, admin_id: int) -> None:
     """Register restored features through an isolated bootstrap hook."""
-    original_admin_keyboard = bot_module.admin_keyboard
-
-    def admin_keyboard_with_recovery():
-        keyboard = original_admin_keyboard()
-        rows = [list(row) for row in keyboard.inline_keyboard]
-        rows.append([InlineKeyboardButton("🔄 استرداد المستخدمين", callback_data="recover_users_menu")])
-        return InlineKeyboardMarkup(rows)
-
-    bot_module.admin_keyboard = admin_keyboard_with_recovery
-
     async def recover_menu_callback(update, context):
         query = update.callback_query
         await query.answer()

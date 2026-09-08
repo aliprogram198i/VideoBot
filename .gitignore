@@ -8,3 +8,5 @@ bot_stats.db
 
 # Local backup files
 bot.py.before_*
+
+.alibot-single-instance.lock
