@@ -1,3 +1,4 @@
+from pathlib import Path
 """Staged runtime entrypoint for AliBot.
 
 Keeps the legacy bot implementation intact while composing isolated runtime
@@ -12,7 +13,7 @@ import time
 
 from telegram.ext import Application
 
-LOCK_PATH = "/tmp/alibot-single-instance.lock"
+LOCK_PATH = str(Path(__file__).resolve().parent / ".alibot-single-instance.lock")
 STARTUP_GRACE_SECONDS = 15
 LOCK_TIMEOUT_SECONDS = 45
 LOCK_RETRY_SECONDS = 1
