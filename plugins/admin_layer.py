@@ -16,6 +16,7 @@ from .admin_control_center import _home_text, admin_keyboard, register_admin_con
 from .admin_broadcast import process_broadcast
 from .admin_users import process_user_message, process_search
 from .admin_users_plus import register_admin_users_plus
+from .admin_download_log import register_admin_download_log
 
 
 async def _admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int) -> None:
@@ -104,6 +105,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     # the existing detail/history owner without replacing destructive actions.
     register_admin_users_plus(app, bot_module.get_db, admin_id)
     register_admin_control_center(app, bot_module.get_db, admin_id)
+    register_admin_download_log(app, bot_module.get_db, admin_id)
 
     bot_module.process_broadcast = lambda update, context: process_broadcast(update, context, bot_module.get_db, admin_id)
     bot_module.process_user_message = lambda update, context: process_user_message(update, context, admin_id)
