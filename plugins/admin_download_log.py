@@ -1,9 +1,4 @@
-"""Owner-only global download-link history viewer.
-
-Uses the existing downloads table so no destructive migration is required.
-Each entry shows the original link as a clickable title plus the Telegram user
-who initiated the download and the recorded download metadata.
-"""
+"""Owner-only global download-link history viewer."""
 
 from __future__ import annotations
 
@@ -53,7 +48,7 @@ async def _render(update: Update, get_db, owner_id: int, offset: int) -> None:
         total = int(conn.execute("SELECT COUNT(*) FROM downloads").fetchone()[0])
         rows = conn.execute(
             "SELECT d.id, d.user_id, d.username, d.url, d.website, d.media_type, "
-            "d.quality, d.created_at, u.first_name, u.last_name "
+            "d.quality, d.title, d.created_at, u.first_name, u.last_name "
             "FROM downloads d LEFT JOIN users u ON u.user_id = d.user_id "
             "ORDER BY d.id DESC LIMIT ? OFFSET ?",
             (_PAGE_SIZE + 1, max(0, offset)),
@@ -80,14 +75,16 @@ async def _render(update: Update, get_db, owner_id: int, offset: int) -> None:
                 continue
             safe_url = html.escape(raw_url, quote=True)
             website = html.escape(str(row["website"] or "غير معروف"))
+            title = html.escape(str(row["title"] or "العنوان غير متوفر"))
             media = html.escape(str(row["media_type"] or ""))
             quality = html.escape(str(row["quality"] or ""))
             created = html.escape(str(row["created_at"] or ""))
             user = _user_label(row)
             candidate = (
-                f"<b>{index}. <a href=\"{safe_url}\">{website} — فتح الرابط</a></b>\n"
+                f"<b>{index}. {title}</b>\n"
                 f"   👤 المستخدم: {user} (<code>{int(row['user_id'])}</code>)\n"
-                f"   🔗 العنوان: <code>{safe_url[:220]}</code>\n"
+                f"   🌐 المنصة: {website}\n"
+                f"   🔗 <a href=\"{safe_url}\">فتح الرابط</a>\n"
                 f"   ⚙️ {media} • {quality} • 🕒 {created}\n\n"
             )
             if len("\n".join(lines)) + len(candidate) > _MAX_TEXT:
@@ -118,13 +115,6 @@ def register_admin_download_log(app: Any, get_db, owner_id: int) -> None:
         CallbackQueryHandler(
             lambda u, c: callback(u, c, get_db, owner_id),
             pattern=r"^admin_download_log_[0-9]+$",
-        ),
-        group=-200,
-    )
-    app.add_handler(
-        CallbackQueryHandler(
-            lambda u, c: _render(u, get_db, owner_id, 0),
-            pattern=r"^admin_records$",
         ),
         group=-200,
     )
