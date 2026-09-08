@@ -21,17 +21,18 @@ LOCK_RETRY_SECONDS = 1
 def normalize_runtime_environment():
     """Normalize deployment-provided secrets before importing the bot module.
 
-    Railway/environment editors can preserve a trailing CR/LF when a secret is
-    pasted from another terminal or text source. python-telegram-bot then sees
-    that character as part of the Telegram API URL and raises InvalidURL.
+    Railway/environment editors can preserve CR/LF or tab characters when a
+    secret is pasted from another terminal or text source. A control character
+    embedded inside BOT_TOKEN is not removed by ``strip()`` and can therefore
+    reach the Telegram API URL and make httpx reject it as an invalid URL.
     Never log the secret itself.
     """
     token = os.getenv("BOT_TOKEN")
     if token is not None:
-        normalized = token.strip()
+        normalized = token.replace("\r", "").replace("\n", "").replace("\t", "").strip()
         if normalized != token:
             os.environ["BOT_TOKEN"] = normalized
-            print("🧹 Runtime environment: normalized BOT_TOKEN whitespace.", flush=True)
+            print("🧹 Runtime environment: normalized BOT_TOKEN control characters.", flush=True)
 
 
 def acquire_single_instance_lock():
