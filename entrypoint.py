@@ -63,8 +63,14 @@ def main() -> None:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
-                register_admin_user_links(self, bot_module.get_db, bot_module.ADMIN_ID)
+
+                # Admin layer must run before the user-links overlay. The admin
+                # layer removes legacy callback routes, including the historical
+                # admin_user_view/user patterns. Registering user-links first
+                # would therefore remove the new handler we intend to keep.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
+                register_admin_user_links(self, bot_module.get_db, bot_module.ADMIN_ID)
+
                 print("🛡️ Admin layer registered", flush=True)
                 print("🔗 Admin user download-links layer registered", flush=True)
                 print("👤 User activity middleware registered", flush=True)
