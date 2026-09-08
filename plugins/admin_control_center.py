@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -23,17 +24,16 @@ def _now():
 def admin_keyboard():
     """Single source of truth for the top-level admin navigation."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_dashboard_30"),
+        [InlineKeyboardButton("📊 لوحة القيادة", callback_data="admin_home"),
          InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
+        [InlineKeyboardButton("📥 التنزيلات والبيانات", callback_data="admin_records"),
+         InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
         [InlineKeyboardButton("📢 الإذاعة", callback_data="admin_broadcast"),
+         InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
+        [InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="admin_ai"),
          InlineKeyboardButton("🧹 التخزين", callback_data="admin_storage")],
-        [InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations"),
-         InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="admin_ai")],
-        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
-         InlineKeyboardButton("🗂️ السجلات والبيانات", callback_data="admin_records")],
         [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit"),
          InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
-        [InlineKeyboardButton("🔄 استرداد المستخدمين", callback_data="recover_users_menu")],
     ])
 
 
@@ -42,7 +42,7 @@ def _records_keyboard():
         [InlineKeyboardButton("🔗 سجل الروابط والتحميلات", callback_data="admin_download_log_0")],
         [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
         [InlineKeyboardButton("👥 إدارة سجلات مستخدم", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
     ])
 
 
@@ -134,63 +134,107 @@ def _authorized(update, get_db, owner_id, permission="center.view"):
     return authorize(update, get_db, owner_id, permission)
 
 
-def _home_text():
+def _home_text(get_db=None):
+    if get_db is None:
+        return (
+            "🎛️ <b>لوحة القيادة الإدارية</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🟢 النظام الإداري يعمل\n"
+            "🔐 الوصول محمي\n"
+            "🧾 التدقيق مفعّل\n\n"
+            "اختر القسم المطلوب:"
+        )
+    conn = None
+    try:
+        conn = get_db()
+        users = int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+        downloads = int(conn.execute("SELECT COUNT(*) FROM downloads").fetchone()[0])
+        banned = int(conn.execute("SELECT COALESCE(SUM(is_banned),0) FROM users").fetchone()[0])
+        today = _now()[:10]
+        today_downloads = int(conn.execute(
+            "SELECT COUNT(*) FROM downloads WHERE substr(created_at,1,10)=?", (today,)
+        ).fetchone()[0])
+        today_users = int(conn.execute(
+            "SELECT COUNT(*) FROM users WHERE substr(last_seen,1,10)=?", (today,)
+        ).fetchone()[0])
+    except Exception:
+        users = downloads = banned = today_downloads = today_users = 0
+    finally:
+        if conn:
+            conn.close()
     return (
-        "🎛️ <b>مركز التحكم الإداري</b>\n"
+        "🎛️ <b>لوحة القيادة الإدارية</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🟢 النظام الإداري يعمل\n"
-        "🔐 الوصول محمي بنظام صلاحيات مركزي\n"
-        "🧾 التدقيق الإداري مفعّل\n\n"
+        "🟢 <b>الحالة: ONLINE</b>\n\n"
+        f"👥 المستخدمون: <b>{users}</b>\n"
+        f"🚫 المحظورون: <b>{banned}</b>\n"
+        f"📥 إجمالي التحميلات: <b>{downloads}</b>\n"
+        f"📅 تحميلات اليوم: <b>{today_downloads}</b>\n"
+        f"🟢 نشطون اليوم: <b>{today_users}</b>\n\n"
+        "🩺 الصحة • 🤖 العمليات • 🧾 التدقيق • 🛡️ الصلاحيات\n\n"
         "اختر القسم المطلوب:"
     )
 
 
-def _records_text():
-    return (
-        "🗂️ <b>السجلات والبيانات</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔗 سجل الروابط والتحميلات\n"
-        "📥 تفاصيل العملية: العنوان، المستخدم، الرابط، المنصة، الجودة، والوقت\n"
-        "👥 السجل الفردي للمستخدمين\n"
-        "🧹 عمليات الحذف الحساسة تتطلب تأكيدًا\n\n"
-        "اختر العملية المطلوبة:"
-    )
-
-
-async def admin_control_center_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_control_center_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "center.view"):
         return
     audit(get_db, owner_id, "open_control_center")
-    await query.edit_message_text(_home_text(), parse_mode="HTML", reply_markup=admin_keyboard())
+    await query.edit_message_text(_home_text(get_db), parse_mode="HTML", reply_markup=admin_keyboard())
     raise ApplicationHandlerStop
 
 
-async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, get_db, owner_id, "center.view"):
+    if not _authorized(update, get_db, owner_id, "history.view"):
         return
     audit(get_db, owner_id, "open_records_center")
     await query.edit_message_text(_records_text(), parse_mode="HTML", reply_markup=_records_keyboard())
 
 
-async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+def _check_binary(command):
+    try:
+        result = subprocess.run(
+            [command, "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _module_available(name):
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
+async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "system.health"):
         return
+
+    db_ok = False
     conn = None
     try:
         conn = get_db()
         conn.execute("SELECT 1").fetchone()
-        db_status, db_detail = "🟢", "متصل ويستجيب"
-    except Exception as exc:
-        db_status, db_detail = "🔴", type(exc).__name__
+        db_ok = True
+    except Exception:
+        db_ok = False
     finally:
         if conn:
             conn.close()
+
     try:
         _, _, free = shutil.disk_usage("/")
         free_gb = free / (1024 ** 3)
@@ -198,23 +242,31 @@ async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TY
         disk_detail = f"{free_gb:.2f} GB متاح"
     except Exception:
         disk_status, disk_detail = "⚪", "غير متاح"
+
+    checks = [
+        ("🗄️ قاعدة البيانات", db_ok, "متصلة" if db_ok else "فشل الاتصال"),
+        ("🎞️ FFmpeg", _check_binary("ffmpeg"), "متاح"),
+        ("📥 yt-dlp", _module_available("yt_dlp"), "متاح"),
+        ("🤖 Telegram", _module_available("telegram"), "المكتبة متاحة"),
+    ]
     audit(get_db, owner_id, "view_system_health")
-    text = (
-        "🩺 <b>صحة النظام</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🗄️ قاعدة البيانات: {db_status} {db_detail}\n"
-        f"💾 التخزين: {disk_status} {disk_detail}\n"
-        "🤖 خدمة البوت: 🟢 تعمل\n"
-        f"🕒 وقت الفحص: {_now()}\n\n"
-        "ℹ️ الفحص تشخيصي فقط ولا يغيّر إعدادات النظام."
-    )
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+    lines = ["🩺 <b>صحة النظام والتشخيص</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
+    for label, ok, detail in checks:
+        lines.append(f"{label}: {'🟢' if ok else '🔴'} {detail}")
+    lines += [
+        f"💾 التخزين: {disk_status} {disk_detail}",
+        "🤖 خدمة البوت: 🟢 العملية الإدارية مستجيبة",
+        f"🕒 وقت الفحص: {_now()}",
+        "",
+        "ℹ️ الفحص تشخيصي فقط ولا يغيّر إعدادات النظام.",
+    ]
+    await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 تحديث", callback_data="admin_health")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
     ]))
 
 
-async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "audit.view"):
@@ -236,11 +288,11 @@ async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     audit(get_db, owner_id, "view_audit_log")
     await query.edit_message_text("\n".join(lines)[:3900], parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 تحديث", callback_data="admin_audit")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
     ]))
 
 
-async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "roles.view"):
@@ -257,5 +309,5 @@ async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     lines += ["", "🔒 تعديل الأدوار غير مفعّل تلقائياً في هذه المرحلة لحماية لوحة الإدارة."]
     audit(get_db, owner_id, "view_admin_roles")
     await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
     ]))
