@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes
 
 _USER_RE = re.compile(r"^(?:admin_user_view|user)_(\d+)$")
 _LINK_PAGE_RE = re.compile(r"^admin_user_links_(\d+)_([0-9]+)$")
@@ -112,6 +112,10 @@ async def _view(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
     match = _USER_RE.match(query.data or "")
     if match:
         await _render(update, context, get_db, owner_id, int(match.group(1)), 0)
+        # This layer intentionally owns the user-detail route. Stop lower
+        # priority handlers from rendering the legacy detail screen over the
+        # enriched view.
+        raise ApplicationHandlerStop
 
 
 async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -123,6 +127,7 @@ async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
     match = _LINK_PAGE_RE.match(query.data or "")
     if match:
         await _render(update, context, get_db, owner_id, int(match.group(1)), int(match.group(2)))
+        raise ApplicationHandlerStop
 
 
 def register_admin_user_links(app, get_db, owner_id: int) -> None:
