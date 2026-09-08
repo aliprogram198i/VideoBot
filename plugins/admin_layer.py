@@ -29,21 +29,6 @@ async def _admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
     raise ApplicationHandlerStop
 
 
-def _remove_legacy_hebaali_handlers(app: Any) -> int:
-    removed = 0
-    handlers_by_group = getattr(app, "handlers", {})
-    for group, handlers in list(handlers_by_group.items()):
-        kept = []
-        for handler in handlers:
-            commands = getattr(handler, "commands", None)
-            if isinstance(handler, CommandHandler) and commands and "hebaali" in commands:
-                removed += 1
-                continue
-            kept.append(handler)
-        handlers_by_group[group] = kept
-    return removed
-
-
 def _remove_legacy_admin_command_handlers(app: Any) -> int:
     """Remove commands now owned by isolated admin modules."""
     retired = {"hebaali", "stats", "broadcast"}
@@ -92,8 +77,7 @@ def _remove_legacy_admin_callback_handlers(app: Any) -> int:
 
 
 def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
-    removed_command = _remove_legacy_hebaali_handlers(app)
-    removed_command += _remove_legacy_admin_command_handlers(app)
+    removed_command = _remove_legacy_admin_command_handlers(app)
     removed_callbacks = _remove_legacy_admin_callback_handlers(app)
 
     if removed_command:
