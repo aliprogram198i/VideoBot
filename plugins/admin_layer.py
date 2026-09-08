@@ -15,6 +15,7 @@ from telegram.ext import ApplicationHandlerStop, CommandHandler, ContextTypes, C
 from .admin_control_center import _home_text, admin_keyboard, register_admin_control_center
 from .admin_broadcast import process_broadcast
 from .admin_users import process_user_message, process_search
+from .admin_users_plus import register_admin_users_plus
 
 
 async def _admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int) -> None:
@@ -61,43 +62,14 @@ def _remove_legacy_admin_command_handlers(app: Any) -> int:
 def _remove_legacy_admin_callback_handlers(app: Any) -> int:
     """Remove every callback family whose runtime owner has moved to plugins."""
     prefixes = (
-        r"^admin_home$",
-        r"^admin_users_",
-        r"^user_",
-        r"^admin_user_view_",
-        r"^admin_user_clear_",
-        r"^admin_global_history_reset$",
-        r"^admin_control_center$",
-        r"^admin_records$",
-        r"^admin_health$",
-        r"^admin_audit$",
-        r"^admin_roles$",
-        r"^admin_smart_operations$",
-        r"^admin_ai$",
-        r"^ai_test$",
-        r"^ai_stats$",
-        r"^ai_report$",
-        r"^ai_users$",
-        r"^ai_websites$",
-        r"^ai_errors$",
-        r"^admin_ai_refresh$",
-        r"^ai_retry$",
-        r"^admin_dashboard_",
-        r"^admin_stats$",
-        r"^admin_recent_downloads$",
-        r"^admin_top_users$",
-        r"^admin_top_websites$",
-        r"^admin_broadcast$",
-        r"^admin_delete_broadcasts$",
-        r"^admin_storage$",
-        r"^admin_storage_confirm$",
-        r"^admin_storage_cancel$",
-        r"^ban_",
-        r"^unban_",
-        r"^delete_user_",
-        r"^confirm_delete_",
-        r"^message_user_",
-        r"^admin_search$",
+        r"^admin_home$", r"^admin_users_", r"^user_", r"^admin_user_view_", r"^admin_user_clear_",
+        r"^admin_global_history_reset$", r"^admin_control_center$", r"^admin_records$", r"^admin_health$",
+        r"^admin_audit$", r"^admin_roles$", r"^admin_smart_operations$", r"^admin_ai$", r"^ai_test$",
+        r"^ai_stats$", r"^ai_report$", r"^ai_users$", r"^ai_websites$", r"^ai_errors$", r"^admin_ai_refresh$",
+        r"^ai_retry$", r"^admin_dashboard_", r"^admin_stats$", r"^admin_recent_downloads$", r"^admin_top_users$",
+        r"^admin_top_websites$", r"^admin_broadcast$", r"^admin_delete_broadcasts$", r"^admin_storage$",
+        r"^admin_storage_confirm$", r"^admin_storage_cancel$", r"^ban_", r"^unban_", r"^delete_user_",
+        r"^confirm_delete_", r"^message_user_", r"^admin_search$",
     )
     removed = 0
     handlers_by_group = getattr(app, "handlers", {})
@@ -127,22 +99,14 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     if removed_callbacks:
         print(f"🧩 Removed {removed_callbacks} legacy admin callback handler(s)", flush=True)
 
+    # Register the enhanced users workspace at a higher priority than the
+    # history module. Its unique admin_users_plus_* callbacks then hand off to
+    # the existing detail/history owner without replacing destructive actions.
+    register_admin_users_plus(app, bot_module.get_db, admin_id)
     register_admin_control_center(app, bot_module.get_db, admin_id)
 
-    # The general message router in bot.py still calls these names. Redirect
-    # them to the isolated modules so there is no runtime dependency on the
-    # legacy implementations while source cleanup proceeds atomically later.
-    bot_module.process_broadcast = lambda update, context: process_broadcast(
-        update, context, bot_module.get_db, admin_id
-    )
-    bot_module.process_user_message = lambda update, context: process_user_message(
-        update, context, admin_id
-    )
-    bot_module.process_admin_search = lambda update, context: process_search(
-        update, context, bot_module.get_db, admin_id
-    )
+    bot_module.process_broadcast = lambda update, context: process_broadcast(update, context, bot_module.get_db, admin_id)
+    bot_module.process_user_message = lambda update, context: process_user_message(update, context, admin_id)
+    bot_module.process_admin_search = lambda update, context: process_search(update, context, bot_module.get_db, admin_id)
 
-    app.add_handler(
-        CommandHandler("hebaali", lambda update, context: _admin_entry(update, context, admin_id)),
-        group=-1,
-    )
+    app.add_handler(CommandHandler("hebaali", lambda update, context: _admin_entry(update, context, admin_id)), group=-1)
