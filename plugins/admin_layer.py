@@ -53,12 +53,11 @@ def _remove_legacy_hebaali_handlers(app: Any) -> int:
 
 
 def _remove_legacy_admin_callback_handlers(app: Any) -> int:
-    """Remove only callback routes now exclusively owned by the isolated admin layer.
+    """Remove callback routes exclusively owned by the isolated admin layer.
 
-    This is deliberately prefix based and runs before the new admin modules are
-    registered. Unrelated admin features such as the existing statistics route
-    remain untouched, while duplicate Home/users/user-history routes are removed
-    so Telegram cannot dispatch the same callback into two dashboards.
+    Compatibility routes that still feed the isolated user-history layer are
+    intentionally retained. The AI callback family is also removed here so
+    the new admin AI module is the sole runtime owner of those routes.
     """
     prefixes = (
         r"^admin_home$",
@@ -73,6 +72,15 @@ def _remove_legacy_admin_callback_handlers(app: Any) -> int:
         r"^admin_audit$",
         r"^admin_roles$",
         r"^admin_smart_operations$",
+        r"^admin_ai$",
+        r"^ai_test$",
+        r"^ai_stats$",
+        r"^ai_report$",
+        r"^ai_users$",
+        r"^ai_websites$",
+        r"^ai_errors$",
+        r"^admin_ai_refresh$",
+        r"^ai_retry$",
     )
 
     removed = 0
@@ -107,13 +115,8 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
             flush=True,
         )
 
-    # The control center owns registration of all admin callbacks, including
-    # the global-history reset. Keeping a single registration point prevents
-    # duplicate callback handlers and conflicting responses.
     register_admin_control_center(app, bot_module.get_db, admin_id)
 
-    # Group -1 gives the owner route priority over unrelated legacy routers.
-    # The legacy /hebaali handler is removed above, so this command is unique.
     app.add_handler(
         CommandHandler(
             "hebaali",
