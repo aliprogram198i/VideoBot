@@ -46,6 +46,7 @@ def main() -> None:
         register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
         register_admin_layer = importlib.import_module("plugins.admin_layer").register_admin_layer
+        register_admin_user_links = importlib.import_module("plugins.admin_user_links").register_admin_user_links
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
 
@@ -62,8 +63,10 @@ def main() -> None:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
+                register_admin_user_links(self, bot_module.get_db, bot_module.ADMIN_ID)
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
                 print("🛡️ Admin layer registered", flush=True)
+                print("🔗 Admin user download-links layer registered", flush=True)
                 print("👤 User activity middleware registered", flush=True)
                 registered = True
             return original_run_polling(self, *args, **kwargs)
