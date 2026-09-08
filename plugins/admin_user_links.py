@@ -46,7 +46,7 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
     try:
         user = conn.execute(
             "SELECT user_id, username, first_name, last_name, downloads, language, country, last_seen, is_banned "
-            "FROM users WHERE user_id = ?", (user_id,)
+            "FROM users WHERE user_id = ?", (user_id,),
         ).fetchone()
         if not user:
             await query.edit_message_text("❌ المستخدم غير موجود.")
@@ -73,7 +73,7 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
         f"🌐 اللغة: {html.escape(str(user['language'] or 'غير محددة'))}",
         f"📍 البلد: {html.escape(str(user['country'] or 'غير محدد'))}",
         f"📥 العداد: {int(user['downloads'] or 0)}",
-        f"🧾 السجل الفعلي: {int(sum(1 for _ in rows) if not has_next else _PAGE_SIZE)}+" if has_next else f"🧾 السجل المعروض: {len(rows)} عملية",
+        f"🧾 السجل المعروض: {len(rows)} عملية" + (" + المزيد" if has_next else ""),
         f"🕒 آخر ظهور: {html.escape(str(user['last_seen'] or 'غير متوفر'))}",
         f"🚦 الحالة: {'🚫 محظور' if user['is_banned'] else '🟢 نشط'}",
         "",
@@ -112,9 +112,6 @@ async def _view(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
     match = _USER_RE.match(query.data or "")
     if match:
         await _render(update, context, get_db, owner_id, int(match.group(1)), 0)
-        # This layer intentionally owns the user-detail route. Stop lower
-        # priority handlers from rendering the legacy detail screen over the
-        # enriched view.
         raise ApplicationHandlerStop
 
 
@@ -131,12 +128,17 @@ async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
 
 
 def register_admin_user_links(app, get_db, owner_id: int) -> None:
-    """Register before the existing admin user-detail handler."""
+    """Register the user-detail owner at a higher priority than every admin router.
+
+    The admin center contains several historical callback groups. Using a
+    dedicated very-high-priority group makes this route deterministic even if a
+    future layer adds a broad callback pattern at group -2 or -1.
+    """
     app.add_handler(
         CallbackQueryHandler(lambda u, c: _view(u, c, get_db, owner_id), pattern=r"^(?:admin_user_view|user)_\d+$"),
-        group=-2,
+        group=-200,
     )
     app.add_handler(
         CallbackQueryHandler(lambda u, c: _page(u, c, get_db, owner_id), pattern=r"^admin_user_links_\d+_[0-9]+$"),
-        group=-2,
+        group=-200,
     )
