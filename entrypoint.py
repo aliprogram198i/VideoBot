@@ -67,6 +67,7 @@ def main() -> None:
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
         register_admin_layer = importlib.import_module("plugins.admin_layer").register_admin_layer
         register_admin_user_links = importlib.import_module("plugins.admin_user_links").register_admin_user_links
+        register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
 
@@ -83,6 +84,10 @@ def main() -> None:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
+
+                # Media conversion is isolated from URL/download and admin
+                # handlers. It only consumes Telegram voice/audio updates.
+                register_whatsapp_audio(self, bot_module)
 
                 # Admin layer must run before the user-links overlay. The admin
                 # layer removes legacy callback routes, including the historical
