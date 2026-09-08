@@ -1,7 +1,8 @@
-"""Admin user-detail download links overlay.
+"""Admin user-detail download links owner.
 
-Keeps the existing admin history layer intact while enriching the canonical
-user-detail screen with the URLs recorded for the selected user.
+The user-detail route is shared with the legacy history layer. This module
+makes the links view the single owner of both legacy and current user-detail
+callbacks so another handler cannot overwrite the rendered message.
 """
 
 from __future__ import annotations
@@ -17,6 +18,9 @@ _USER_RE = re.compile(r"^(?:admin_user_view|user)_(\d+)$")
 _LINK_PAGE_RE = re.compile(r"^admin_user_links_(\d+)_([0-9]+)$")
 _PAGE_SIZE = 5
 _MAX_TEXT = 3900
+_DETAIL_PATTERNS = (
+    r"^(?:admin_user_view|user)_\d+$",
+)
 
 
 def _authorized(update: Update, owner_id: int) -> bool:
@@ -32,12 +36,34 @@ def _name(row: Any) -> str:
 
 def _keyboard(user_id: int, offset: int, has_next: bool) -> InlineKeyboardMarkup:
     rows = []
+    if offset > 0:
+        rows.append([InlineKeyboardButton("⬅️ السابق", callback_data=f"admin_user_links_{user_id}_{max(0, offset - _PAGE_SIZE)}")])
     if has_next:
         rows.append([InlineKeyboardButton("🔗 المزيد من الروابط", callback_data=f"admin_user_links_{user_id}_{offset + _PAGE_SIZE}")])
     rows.append([InlineKeyboardButton("🧹 مسح سجل التحميلات", callback_data=f"admin_user_clear_{user_id}")])
     rows.append([InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")])
     rows.append([InlineKeyboardButton("🏠 الرئيسية", callback_data="admin_home")])
     return InlineKeyboardMarkup(rows)
+
+
+def _remove_competing_detail_handlers(app: Any) -> int:
+    """Remove every pre-existing user-detail callback before taking ownership."""
+    removed = 0
+    handlers_by_group = getattr(app, "handlers", {})
+    for group, handlers in list(handlers_by_group.items()):
+        kept = []
+        for handler in handlers:
+            if not isinstance(handler, CallbackQueryHandler):
+                kept.append(handler)
+                continue
+            pattern = getattr(handler, "pattern", None)
+            pattern_text = getattr(pattern, "pattern", None) or (pattern if isinstance(pattern, str) else "")
+            if pattern_text in _DETAIL_PATTERNS:
+                removed += 1
+                continue
+            kept.append(handler)
+        handlers_by_group[group] = kept
+    return removed
 
 
 async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int, user_id: int, offset: int = 0) -> None:
@@ -52,7 +78,7 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
             await query.edit_message_text("❌ المستخدم غير موجود.")
             return
         rows = conn.execute(
-            "SELECT url, website, media_type, quality, created_at FROM downloads "
+            "SELECT id, url, website, media_type, quality, created_at FROM downloads "
             "WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
             (user_id, _PAGE_SIZE + 1, max(0, offset)),
         ).fetchall()
@@ -73,7 +99,7 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
         f"🌐 اللغة: {html.escape(str(user['language'] or 'غير محددة'))}",
         f"📍 البلد: {html.escape(str(user['country'] or 'غير محدد'))}",
         f"📥 العداد: {int(user['downloads'] or 0)}",
-        f"🧾 السجل المعروض: {len(rows)} عملية" + (" + المزيد" if has_next else ""),
+        f"🧾 السجل الفعلي: {int(user['downloads'] or 0)} عملية" if not rows and int(user['downloads'] or 0) else f"🧾 السجل الفعلي: {len(rows)} عملية" + (" + المزيد" if has_next else ""),
         f"🕒 آخر ظهور: {html.escape(str(user['last_seen'] or 'غير متوفر'))}",
         f"🚦 الحالة: {'🚫 محظور' if user['is_banned'] else '🟢 نشط'}",
         "",
@@ -84,7 +110,10 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
         lines.append("لا توجد روابط تحميل مسجلة لهذا المستخدم.")
     else:
         for index, row in enumerate(rows, offset + 1):
-            url = html.escape(str(row["url"] or ""), quote=True)
+            raw_url = str(row["url"] or "").strip()
+            if not raw_url:
+                continue
+            url = html.escape(raw_url, quote=True)
             website = html.escape(str(row["website"] or "غير معروف"))
             media = html.escape(str(row["media_type"] or ""))
             quality = html.escape(str(row["quality"] or ""))
@@ -108,11 +137,13 @@ async def _view(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
     if not _authorized(update, owner_id):
         await query.answer()
         return
-    await query.answer()
     match = _USER_RE.match(query.data or "")
-    if match:
-        await _render(update, context, get_db, owner_id, int(match.group(1)), 0)
-        raise ApplicationHandlerStop
+    if not match:
+        await query.answer()
+        return
+    await query.answer()
+    await _render(update, context, get_db, owner_id, int(match.group(1)), 0)
+    raise ApplicationHandlerStop
 
 
 async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -120,20 +151,21 @@ async def _page(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owne
     if not _authorized(update, owner_id):
         await query.answer()
         return
-    await query.answer()
     match = _LINK_PAGE_RE.match(query.data or "")
-    if match:
-        await _render(update, context, get_db, owner_id, int(match.group(1)), int(match.group(2)))
-        raise ApplicationHandlerStop
+    if not match:
+        await query.answer()
+        return
+    await query.answer()
+    await _render(update, context, get_db, owner_id, int(match.group(1)), int(match.group(2)))
+    raise ApplicationHandlerStop
 
 
 def register_admin_user_links(app, get_db, owner_id: int) -> None:
-    """Register the user-detail owner at a higher priority than every admin router.
+    """Own user-detail callbacks exclusively and prevent message overwrites."""
+    removed = _remove_competing_detail_handlers(app)
+    if removed:
+        print(f"🧩 Admin user-links: removed {removed} competing user-detail handler(s)", flush=True)
 
-    The admin center contains several historical callback groups. Using a
-    dedicated very-high-priority group makes this route deterministic even if a
-    future layer adds a broad callback pattern at group -2 or -1.
-    """
     app.add_handler(
         CallbackQueryHandler(lambda u, c: _view(u, c, get_db, owner_id), pattern=r"^(?:admin_user_view|user)_\d+$"),
         group=-200,
