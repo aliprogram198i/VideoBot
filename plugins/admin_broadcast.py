@@ -16,6 +16,38 @@ def _authorized(update: Update, owner_id: int) -> bool:
     return bool(update.effective_user and update.effective_user.id == owner_id)
 
 
+def _ensure_broadcast_messages_table(get_db) -> None:
+    """Create the broadcast delivery ledger idempotently on first use.
+
+    The table is intentionally owned by the broadcast module so older bot
+    databases are upgraded safely without rewriting the main legacy schema.
+    """
+    conn = get_db()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS broadcast_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcast_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_messages_broadcast_id ON broadcast_messages(broadcast_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_messages_user_id ON broadcast_messages(user_id)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _broadcast_result_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑️ مسح الإعلانات المرسلة", callback_data="admin_delete_broadcasts")],
+        [InlineKeyboardButton("📢 إعلان جديد", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+    ])
+
+
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int) -> None:
     if not _authorized(update, owner_id) or not update.message:
         return
@@ -52,6 +84,7 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return
 
     context.user_data["waiting_broadcast"] = False
+    _ensure_broadcast_messages_table(get_db)
     conn = get_db()
     try:
         cur = conn.cursor()
@@ -90,7 +123,10 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         conn.commit()
     finally:
         conn.close()
-    await status.edit_text(f"✅ انتهى إرسال الإعلان.\n\n📨 تم الإرسال: {sent}\n❌ فشل الإرسال: {failed}\n👥 الإجمالي: {len(users)}")
+    await status.edit_text(
+        f"✅ انتهى إرسال الإعلان.\n\n📨 تم الإرسال: {sent}\n❌ فشل الإرسال: {failed}\n👥 الإجمالي: {len(users)}",
+        reply_markup=_broadcast_result_keyboard(),
+    )
 
 
 async def delete_broadcasts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
@@ -98,13 +134,14 @@ async def delete_broadcasts_callback(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     if not _authorized(update, owner_id):
         return
+    _ensure_broadcast_messages_table(get_db)
     conn = get_db()
     try:
         rows = conn.execute("SELECT id, user_id, message_id FROM broadcast_messages ORDER BY id ASC").fetchall()
     finally:
         conn.close()
     if not rows:
-        await query.edit_message_text("🗑️ لا توجد إعلانات محفوظة للحذف.")
+        await query.edit_message_text("🗑️ لا توجد إعلانات محفوظة للحذف.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")]]))
         return
     deleted = failed = 0
     status = await query.edit_message_text(f"🗑️ جاري حذف الإعلانات المرسلة...\n\n📨 الرسائل المسجلة: {len(rows)}")
