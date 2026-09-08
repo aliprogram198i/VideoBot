@@ -39,6 +39,7 @@ def admin_keyboard():
 
 def _records_keyboard():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 سجل الروابط والتحميلات", callback_data="admin_download_log_0")],
         [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
         [InlineKeyboardButton("👥 إدارة سجلات مستخدم", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
@@ -148,14 +149,15 @@ def _records_text():
     return (
         "🗂️ <b>السجلات والبيانات</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📥 إدارة سجل التحميلات\n"
+        "🔗 سجل الروابط والتحميلات\n"
+        "📥 تفاصيل العملية: العنوان، المستخدم، الرابط، المنصة، الجودة، والوقت\n"
         "👥 السجل الفردي للمستخدمين\n"
         "🧹 عمليات الحذف الحساسة تتطلب تأكيدًا\n\n"
         "اختر العملية المطلوبة:"
     )
 
 
-async def admin_control_center_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_control_center_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "center.view"):
@@ -165,7 +167,7 @@ async def admin_control_center_callback(update: Update, context: ContextTypes.DE
     raise ApplicationHandlerStop
 
 
-async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "center.view"):
@@ -174,7 +176,7 @@ async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(_records_text(), parse_mode="HTML", reply_markup=_records_keyboard())
 
 
-async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "system.health"):
@@ -212,48 +214,9 @@ async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TY
     ]))
 
 
-async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
+async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id, "audit.view"):
         return
     conn = get_db()
-    rows = conn.execute(
-        "SELECT admin_id, action, target_id, details, created_at "
-        "FROM admin_audit_logs ORDER BY id DESC LIMIT 15"
-    ).fetchall()
-    conn.close()
-    lines = ["🧾 <b>سجل التدقيق الإداري</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
-    if not rows:
-        lines.append("لا توجد عمليات مسجلة بعد.")
-    else:
-        for row in rows:
-            target = f" → {row['target_id']}" if row['target_id'] is not None else ""
-            detail = f" — {row['details']}" if row['details'] else ""
-            lines.append(f"• <code>{row['created_at']}</code> | {row['action']}{target}{detail}")
-    audit(get_db, owner_id, "view_audit_log")
-    await query.edit_message_text("\n".join(lines)[:3900], parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 تحديث", callback_data="admin_audit")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
-    ]))
-
-
-async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id):
-    query = update.callback_query
-    await query.answer()
-    if not _authorized(update, get_db, owner_id, "roles.view"):
-        return
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT role, COUNT(*) AS count FROM admin_roles GROUP BY role ORDER BY count DESC"
-    ).fetchall()
-    conn.close()
-    lines = ["🛡️ <b>الأدوار والصلاحيات</b>", "━━━━━━━━━━━━━━━━━━━━", "", "👑 Owner: صلاحية كاملة"]
-    for row in rows:
-        if row['role'] != 'owner':
-            lines.append(f"• {row['role']}: {row['count']}")
-    lines += ["", "🔒 تعديل الأدوار غير مفعّل تلقائياً في هذه المرحلة لحماية لوحة الإدارة."]
-    audit(get_db, owner_id, "view_admin_roles")
-    await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
-    ]))
