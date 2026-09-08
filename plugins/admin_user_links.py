@@ -95,7 +95,7 @@ async def _render(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, ow
             quality = html.escape(str(row["quality"] or ""))
             created = html.escape(str(row["created_at"] or ""))
             meta = " • ".join(x for x in (website, media, quality, created) if x)
-            candidate = f"{index}. <a href=\"{url}\">{website}</a>\n   <code>{url}</code>\n   {meta}"
+            candidate = f"{index}. 🔗 <a href=\"{url}\">{url}</a>\n   {meta}"
             if sum(len(x) + 1 for x in lines) + len(candidate) > _MAX_TEXT:
                 break
             lines.append(candidate)
