@@ -8,12 +8,14 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from .admin_common import authorize
+
 _PREFIX = "admin_users_plus_"
 _PAGE_SIZE = 8
 
 
-def _authorized(update: Update, owner_id: int) -> bool:
-    return bool(update.effective_user and update.effective_user.id == owner_id)
+def _authorized(update: Update, get_db, owner_id: int) -> bool:
+    return authorize(update, get_db, owner_id, "users.view")
 
 
 def _safe(value: Any, fallback: str = "غير متوفر") -> str:
@@ -44,7 +46,7 @@ def _user_buttons(rows) -> list[list[InlineKeyboardButton]]:
 
 async def _render_list(update: Update, get_db, owner_id: int, mode: str = "all", offset: int = 0) -> None:
     query = update.callback_query
-    if not _authorized(update, owner_id):
+    if not _authorized(update, get_db, owner_id):
         return
     conn = get_db()
     try:
@@ -107,7 +109,7 @@ async def workspace_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, owner_id): return
+    if not _authorized(update, get_db, owner_id): return
     try: user_id = int((query.data or "").rsplit("_", 1)[1])
     except (ValueError, IndexError): return
     conn = get_db()
@@ -128,7 +130,7 @@ async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get
 async def activity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
     query = update.callback_query
     await query.answer()
-    if not _authorized(update, owner_id): return
+    if not _authorized(update, get_db, owner_id): return
     try: user_id = int((query.data or "").rsplit("_", 1)[1])
     except (ValueError, IndexError): return
     conn = get_db()
@@ -138,7 +140,7 @@ async def activity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if not rows: lines.append("لا توجد عمليات تنزيل مسجلة.")
     else:
         for i, r in enumerate(rows, 1): lines.append(f"{i}. {_safe(r['website'])} • {_safe(r['media_type'])} • {_safe(r['quality'])} • {_safe(r['created_at'])}")
-    await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 الإحصائيات", callback_data=f"{_PREFIX}stats_{user_id}")], [InlineKeyboardButton("👤 تفاصيل المستخدم", callback_data=f"admin_user_view_{user_id}")], [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")]]))
+    await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 الإحصائيات", callback_data=f"{_PREFIX}stats_{user_id}")], [InlineKeyboardButton("👤 تفاصيل المستخدم", callback_data=f"admin_user_view_{user_id}"),], [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")]]))
 
 
 def register_admin_users_plus(app: Any, get_db, owner_id: int) -> None:
