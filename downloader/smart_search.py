@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-SEARCH_COUNT = 10
+SEARCH_COUNT = 25
 RESULT_COUNT = 5
 TIMEOUT_SECONDS = 25
 MAX_QUERY_LENGTH = 160
@@ -129,7 +129,7 @@ def _build_command(query: str) -> list[str]:
         sys.executable,
         "-m",
         "yt_dlp",
-        "ytsearch10:" + query,
+        f"ytsearch{SEARCH_COUNT}:" + query,
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
