@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import downloader.smart_media_resolver as resolver
 from downloader.smart_media_resolver import _extract, _looks_media_url
 
 
@@ -56,3 +59,69 @@ def test_media_extension_detection_is_path_based():
     assert _looks_media_url("https://cdn.example.test/a/movie.mp4?token=1")
     assert _looks_media_url("https://cdn.example.test/a/master.m3u8")
     assert not _looks_media_url("https://cdn.example.test/embed/player")
+
+
+class _FakeResponse:
+    def __init__(self, body, content_type="text/html"):
+        self._body = body
+        self.headers = SimpleNamespace(get_content_type=lambda: content_type)
+
+    def read(self, limit=None):
+        return self._body[:limit] if limit else self._body
+
+    def close(self):
+        pass
+
+
+def test_resolver_follows_player_page_to_hls(monkeypatch):
+    pages = {
+        "https://site.example/movie": (
+            b'<iframe src="https://player.example/embed/123"></iframe>',
+            "text/html",
+        ),
+        "https://player.example/embed/123": (
+            b'<script>var player={file:"https://cdn.example/master.m3u8"};</script>',
+            "text/html",
+        ),
+        "https://cdn.example/master.m3u8": (
+            b"#EXTM3U\n#EXT-X-VERSION:3\n",
+            "application/vnd.apple.mpegurl",
+        ),
+    }
+
+    monkeypatch.setattr(resolver, "_yt_dlp_sources", lambda page_url, validator: [])
+
+    def validator(url):
+        assert url.startswith("https://")
+
+    def request_factory(url, headers=None):
+        return url
+
+    def open_function(request, timeout=None, max_bytes=None):
+        body, content_type = pages[request]
+        return _FakeResponse(body, content_type)
+
+    result = resolver.resolve(
+        "https://site.example/movie",
+        validator=validator,
+        request_factory=request_factory,
+        open_function=open_function,
+        read_function=lambda response, limit: response.read(limit),
+    )
+
+    assert result[0] == "https://cdn.example/master.m3u8"
+
+
+def test_resolver_keeps_extensionless_ytdlp_media_without_probe(monkeypatch):
+    source = "https://cdn.example/stream?id=abc123&token=opaque"
+    monkeypatch.setattr(resolver, "_yt_dlp_sources", lambda page_url, validator: [(source, 120)])
+
+    result = resolver.resolve(
+        "https://player.example/embed/123",
+        validator=lambda url: None,
+        request_factory=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected page fetch")),
+        open_function=lambda *args, **kwargs: None,
+        read_function=lambda *args, **kwargs: b"",
+    )
+
+    assert result == [source]
