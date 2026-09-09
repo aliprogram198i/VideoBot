@@ -2,9 +2,9 @@
 
 This layer is intentionally separate from media discovery. It consumes a
 public candidate already discovered by the browser resolver, preserves the
-source-page browser context, follows the candidate when it is a player/server
-page, triggers normal browser download actions, and streams verified public
-media responses into the caller's temporary directory.
+source-page browser context, follows candidate/player/server pages, triggers
+normal browser download actions, and streams verified public media responses
+into the caller's temporary directory.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import tempfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -26,6 +25,7 @@ DEFAULT_SETTLE_MS = 2_000
 DEFAULT_MAX_CLICKS = 8
 DEFAULT_MAX_PAGES = 4
 DEFAULT_MAX_MEDIA_RESPONSES = 80
+DEFAULT_MAX_LINKS_PER_PAGE = 12
 DEFAULT_MAX_FILE_BYTES = 500 * 1024 * 1024
 
 _DOWNLOAD_WORDS = (
@@ -34,16 +34,14 @@ _DOWNLOAD_WORDS = (
 )
 _SERVER_WORDS = (
     "server", "servers", "watch", "player", "stream", "source",
-    "سيرفر", "سيرفرات", "مشاهدة", "مشغل", "تشغيل", "السيرفر",
+    "embed", "سيرفر", "سيرفرات", "مشاهدة", "مشغل", "تشغيل", "السيرفر",
     "السيرفرات",
 )
-_MEDIA_TYPES = (
-    "video/", "audio/", "application/octet-stream", "application/mp4",
-    "application/x-mpegurl", "application/vnd.apple.mpegurl",
-    "application/dash+xml",
+_MEDIA_EXTENSIONS = (
+    ".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v",
+    ".mp3", ".m4a", ".aac", ".opus", ".wav",
 )
-_PLAYLIST_TYPES = ("mpegurl", "m3u8", "dash", "mpd")
-_MEDIA_EXTENSIONS = (".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v", ".mp3", ".m4a", ".aac", ".opus", ".wav")
+_PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
 
 
 def _is_http_url(value: str) -> bool:
@@ -67,37 +65,37 @@ def _score_control(text: str, href: str) -> int:
 
 def _is_media_response(url: str, content_type: str | None, content_disposition: str | None = None) -> bool:
     value = (content_type or "").split(";", 1)[0].strip().casefold()
-    if any(value.startswith(prefix) for prefix in ("video/", "audio/")):
+    if value.startswith("video/") or value.startswith("audio/"):
         return True
-    if value in {"application/octet-stream", "application/mp4", "application/x-mpegurl", "application/vnd.apple.mpegurl", "application/dash+xml"}:
+    if value in {
+        "application/octet-stream", "application/mp4",
+        "application/x-mpegurl", "application/vnd.apple.mpegurl",
+        "application/dash+xml",
+    }:
         return True
     path = urlparse(url).path.casefold()
-    if any(path.endswith(ext) for ext in _MEDIA_EXTENSIONS + (".m3u8", ".mpd")):
+    if any(path.endswith(ext) for ext in _MEDIA_EXTENSIONS + _PLAYLIST_SUFFIXES):
         return True
     disposition = (content_disposition or "").casefold()
-    if "attachment" in disposition and any(ext in disposition for ext in _MEDIA_EXTENSIONS):
-        return True
-    return False
+    return "attachment" in disposition and any(ext in disposition for ext in _MEDIA_EXTENSIONS)
 
 
 def _looks_like_media(content_type: str, candidate_url: str, is_audio: bool) -> bool:
     value = (content_type or "").split(";", 1)[0].casefold()
     path = urlparse(candidate_url).path.casefold()
-    if any(token in value or token in path for token in _PLAYLIST_TYPES):
+    if path.endswith(_PLAYLIST_SUFFIXES) or "mpegurl" in value or "dash+xml" in value:
         return False
     if is_audio:
         return value.startswith("audio/") or "octet-stream" in value or path.endswith((".mp3", ".m4a", ".aac", ".opus", ".wav"))
-    return value.startswith("video/") or "octet-stream" in value or path.endswith(_MEDIA_EXTENSIONS[:6])
+    return value.startswith("video/") or "octet-stream" in value or path.endswith((".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v"))
 
 
 def _cookie_header(cookies: list[dict]) -> str:
-    pairs = []
-    for cookie in cookies or []:
-        name = cookie.get("name")
-        value = cookie.get("value")
-        if isinstance(name, str) and isinstance(value, str):
-            pairs.append(f"{name}={value}")
-    return "; ".join(pairs)
+    return "; ".join(
+        f"{cookie.get('name')}={cookie.get('value')}"
+        for cookie in cookies or []
+        if isinstance(cookie.get("name"), str) and isinstance(cookie.get("value"), str)
+    )
 
 
 def _safe_filename(name: str, is_audio: bool) -> str:
@@ -111,7 +109,7 @@ def _safe_filename(name: str, is_audio: bool) -> str:
 
 
 def _stream_with_browser_context(candidate_url: str, output_dir: str, *, cookies: list[dict], referer_url: str | None, is_audio: bool, max_file_bytes: int, timeout_s: float) -> str | None:
-    """Stream a public media URL without buffering the response in memory."""
+    """Stream one concrete public media URL without buffering it in memory."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
         "Accept": "video/*,audio/*,application/octet-stream;q=0.9,*/*;q=0.2",
@@ -147,6 +145,11 @@ def _stream_with_browser_context(candidate_url: str, output_dir: str, *, cookies
                         break
                     total += len(chunk)
                     if total > max_file_bytes:
+                        try:
+                            os.remove(target)
+                        except OSError:
+                            pass
+                        target = None
                         return None
                     output.write(chunk)
             if total <= 0:
@@ -196,13 +199,22 @@ async def _click_controls(page, max_clicks: int) -> None:
             continue
 
 
-async def _candidate_links(page, base_url: str, max_links: int = 8) -> list[str]:
+async def _candidate_links(page, base_url: str, max_links: int = DEFAULT_MAX_LINKS_PER_PAGE) -> list[str]:
+    """Return both ranked server links and unlabelled external links.
+
+    Some movie sites expose the real download server through a bare anchor
+    whose visible text is only an icon or whose href is an opaque token. A
+    score-only filter drops exactly those links, so discovery is now ranked
+    rather than filtered: likely server links first, then remaining public
+    links, all under a strict bound.
+    """
     try:
         rows = await page.locator("a[href], iframe[src], embed[src]").evaluate_all(
             """els => els.map(el => ({href: el.href || el.src || '', text: (el.innerText || el.textContent || '').trim(), attr: ((el.className || '') + ' ' + (el.id || '') + ' ' + (el.getAttribute('data-server') || '') + ' ' + (el.getAttribute('data-player') || '') + ' ' + (el.getAttribute('data-download') || '')).trim()}))"""
         )
     except Exception:
         return []
+
     base_host = (urlparse(base_url).hostname or "").lower()
     ranked: dict[str, int] = {}
     for row in rows or []:
@@ -216,9 +228,17 @@ async def _candidate_links(page, base_url: str, max_links: int = 8) -> list[str]
         host = (urlparse(href).hostname or "").lower()
         if host and host != base_host:
             score += 8
-        if score > 0:
-            ranked[href] = max(score, ranked.get(href, 0))
-    return [href for href, _ in sorted(ranked.items(), key=lambda item: (-item[1], item[0]))[:max_links]]
+        # Same-host links can still be valid nested download/player pages.
+        # Keep them, but rank them below explicitly labelled/external targets.
+        if host == base_host:
+            score += 1
+        ranked[href] = max(score, ranked.get(href, -1))
+
+    return [
+        href for href, _ in sorted(
+            ranked.items(), key=lambda item: (-item[1], item[0])
+        )[:max_links]
+    ]
 
 
 async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audio: bool, timeout_ms: int, settle_ms: int, max_file_bytes: int, referer_url: str | None = None) -> str | None:
@@ -254,8 +274,6 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                 accept_downloads=True,
             )
 
-            # Prime the browser with the original source page. The candidate can
-            # depend on cookies/session state established there.
             if referer_url:
                 source_page = await context.new_page()
                 try:
@@ -266,7 +284,6 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                 finally:
                     await source_page.close()
 
-            cookies = await context.cookies()
             queue = [candidate_url]
             visited: set[str] = set()
 
@@ -275,6 +292,7 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                 if page_url in visited:
                     continue
                 visited.add(page_url)
+                print(f"🌐 Browser Download Handoff: opening page {len(visited)}/{DEFAULT_MAX_PAGES}", flush=True)
                 page = await context.new_page()
                 media_urls: list[str] = []
                 seen_media: set[str] = set()
@@ -324,9 +342,6 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                     await _click_controls(page, DEFAULT_MAX_CLICKS)
                     await page.wait_for_timeout(settle_ms)
 
-                    # DOM media is useful when the media response was already
-                    # created before the response listener was attached to a
-                    # nested player frame.
                     try:
                         dom_rows = await page.locator("video, audio, source").evaluate_all(
                             """els => els.map(el => el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '')"""
@@ -341,8 +356,6 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                                 continue
                             remember_media(media_url)
 
-                    # Try browser downloads first: this preserves any browser
-                    # generated request headers and is the most faithful path.
                     for download in download_holder:
                         try:
                             suggested = download.suggested_filename or "media"
@@ -355,13 +368,13 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                                 LOG.info("Browser download handoff saved %d bytes", size)
                                 print(f"🌐 Browser Download Handoff: saved {size} bytes", flush=True)
                                 return target
-                            os.remove(target)
+                            try:
+                                os.remove(target)
+                            except OSError:
+                                pass
                         except Exception:
                             continue
 
-                    # Stream concrete media responses without buffering them in
-                    # Python memory. This remains safe for the existing 500 MB
-                    # limit and downstream large-file splitting.
                     cookies = await context.cookies()
                     for media_url in media_urls:
                         result = await asyncio.to_thread(
@@ -377,10 +390,6 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                         if result:
                             return result
 
-                    # Candidate pages can expose the actual server/player only
-                    # after navigation. Queue those public links for the same
-                    # browser context rather than handing them to a plain HTTP
-                    # downloader with no session state.
                     for link in await _candidate_links(page, page_url):
                         if link not in visited and link not in queue:
                             queue.append(link)
@@ -398,13 +407,23 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
 def resolve_to_file(candidate_url: str, output_dir: str, *, validator, is_audio: bool = False, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES, referer_url: str | None = None) -> str | None:
     """Resolve a public browser candidate into a verified local file."""
     try:
-        return asyncio.run(_save_async(candidate_url, output_dir, validator=validator, is_audio=is_audio, timeout_ms=timeout_ms, settle_ms=settle_ms, max_file_bytes=max_file_bytes, referer_url=referer_url))
+        return asyncio.run(
+            _save_async(
+                candidate_url,
+                output_dir,
+                validator=validator,
+                is_audio=is_audio,
+                timeout_ms=timeout_ms,
+                settle_ms=settle_ms,
+                max_file_bytes=max_file_bytes,
+                referer_url=referer_url,
+            )
+        )
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_save_async(candidate_url, output_dir, validator=validator, is_audio=is_audio, timeout_ms=timeout_ms, settle_ms=settle_ms, max_file_bytes=max_file_bytes, referer_url=referer_url))
-        finally:
-            loop.close()
+        # This function is normally called from asyncio.to_thread(). If a
+        # caller invokes it from an existing event loop directly, fail closed
+        # rather than nesting asyncio.run().
+        return None
     except Exception as exc:
-        LOG.warning("Browser download handoff failed: %s", type(exc).__name__)
+        LOG.debug("Browser Download Handoff failed: %s", type(exc).__name__)
         return None
