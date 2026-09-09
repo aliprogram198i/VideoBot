@@ -1,8 +1,8 @@
 """Browser-backed discovery for JavaScript-driven public media players.
 
 This module is a bounded last-resort discovery layer. It observes normal
-browser navigation/network activity and follows public player/server links
-exposed by the page. It does not solve CAPTCHAs, bypass authentication,
+browser navigation/network activity and follows public player/server/download
+links exposed by the page. It does not solve CAPTCHAs, bypass authentication,
 defeat DRM, or circumvent access controls.
 """
 
@@ -33,13 +33,13 @@ _MEDIA_CONTENT_TYPES = (
     "application/dash+xml",
 )
 _MEDIA_MARKERS = (
-    ".m3u8",
-    ".mpd",
-    ".mp4",
-    ".m4v",
-    ".webm",
-    ".mov",
+    ".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov",
+    ".avi", ".mkv", ".ts", ".m4a", ".mp3", ".aac",
 )
+_MEDIA_FILE_EXTENSIONS = {
+    ".mp4", ".m4v", ".webm", ".mov", ".avi", ".mkv", ".ts",
+    ".m3u8", ".mpd", ".m4a", ".mp3", ".aac",
+}
 _SERVER_WORDS = (
     "server", "servers", "watch", "player", "stream", "source",
     "سيرفر", "سيرفرات", "مشاهدة", "مشغل", "مشاهده", "تشغيل",
@@ -59,14 +59,23 @@ def _is_http_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
-def _is_media_response(url: str, content_type: str | None) -> bool:
+def _is_media_response(url: str, content_type: str | None, content_disposition: str | None = None) -> bool:
     normalized = (content_type or "").split(";", 1)[0].strip().lower()
     if any(normalized.startswith(prefix) for prefix in _MEDIA_CONTENT_TYPES[:2]):
         return True
     if normalized in _MEDIA_CONTENT_TYPES[2:]:
         return True
     path = urlparse(url).path.lower()
-    return any(marker in path for marker in _MEDIA_MARKERS)
+    if any(marker in path for marker in _MEDIA_MARKERS):
+        return True
+    disposition = (content_disposition or "").lower()
+    if "attachment" in disposition:
+        filename_match = re.search(r"filename\\*=.*?''([^;]+)|filename=[\"']?([^;\"']+)", disposition)
+        filename = ((filename_match.group(1) if filename_match and filename_match.group(1) else "") or
+                    (filename_match.group(2) if filename_match and filename_match.group(2) else "")).lower()
+        if any(filename.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS):
+            return True
+    return False
 
 
 def _score(url: str, content_type: str | None) -> int:
@@ -302,21 +311,47 @@ async def _resolve_async(
                     if not _is_http_url(response_url):
                         return
                     try:
-                        content_type = response.headers.get("content-type")
+                        headers = response.headers
+                        content_type = headers.get("content-type")
+                        content_disposition = headers.get("content-disposition")
                     except Exception:
                         content_type = None
-                    if not _is_media_response(response_url, content_type):
+                        content_disposition = None
+                    if not _is_media_response(response_url, content_type, content_disposition):
                         return
                     try:
                         validator(response_url)
                     except Exception:
                         return
                     score = _score(response_url, content_type)
+                    if content_disposition and "attachment" in content_disposition.lower():
+                        score += 25
                     current = candidates.get(response_url)
                     if current is None or score > current[0]:
                         candidates[response_url] = (score, content_type)
 
+                async def on_download(download) -> None:
+                    """Capture direct browser downloads without downloading them to disk."""
+                    try:
+                        download_url = download.url
+                        suggested = (download.suggested_filename or "").lower()
+                    except Exception:
+                        return
+                    if not _is_http_url(download_url):
+                        return
+                    path = urlparse(download_url).path.lower()
+                    if not (any(path.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS) or
+                            any(suggested.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS)):
+                        return
+                    try:
+                        validator(download_url)
+                    except Exception:
+                        return
+                    candidates[download_url] = (145, "application/octet-stream")
+                    print("🌐 Browser Resolver: captured direct media download", flush=True)
+
                 page.on("response", on_response)
+                page.on("download", on_download)
                 try:
                     await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms)
                     await page.wait_for_timeout(settle_ms)
