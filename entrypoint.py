@@ -66,6 +66,7 @@ def main() -> None:
         register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
+        install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
         register_admin_layer = importlib.import_module("plugins.admin_layer").register_admin_layer
         register_admin_user_links = importlib.import_module("plugins.admin_user_links").register_admin_user_links
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
@@ -76,6 +77,7 @@ def main() -> None:
         install_yoinku_compat(bot_module)
         install_download_guards(bot_module)
         install_smart_media_bridge(bot_module)
+        install_telegram_media_retry()
 
         original_run_polling = Application.run_polling
         registered = False
