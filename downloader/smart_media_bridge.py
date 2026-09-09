@@ -83,6 +83,9 @@ def install(bot_module) -> None:
 
             print("🌐 Browser Download Handoff: normal direct download produced no file", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
+            source_url = kwargs.get("url")
+            if source_url is None and args:
+                source_url = args[0]
             candidate_urls = []
             for item in candidates:
                 candidate = item.get("url") if isinstance(item, dict) else item
@@ -91,7 +94,15 @@ def install(bot_module) -> None:
 
             for candidate in candidate_urls[:8]:
                 try:
-                    local_path = await asyncio.to_thread(browser_handoff.resolve_to_file, candidate, temp_dir, validator=bot_module.validate_public_http_url, is_audio=is_audio, max_file_bytes=max_bytes)
+                    local_path = await asyncio.to_thread(
+                        browser_handoff.resolve_to_file,
+                        candidate,
+                        temp_dir,
+                        validator=bot_module.validate_public_http_url,
+                        is_audio=is_audio,
+                        max_file_bytes=max_bytes,
+                        referer_url=source_url if isinstance(source_url, str) else None,
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
