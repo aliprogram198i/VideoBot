@@ -1,10 +1,9 @@
-"""Optional browser/network media discovery for JavaScript-driven players.
+"""Browser-backed discovery for JavaScript-driven public media players.
 
-This module is a last-resort discovery layer. It uses Playwright only when the
-static extractor cannot resolve a public media URL. It observes normal browser
-network traffic and returns public media resources exposed by the page/player.
-It does not solve CAPTCHAs, bypass authentication, defeat DRM, or decrypt
-protected streams.
+This module is a bounded last-resort discovery layer. It observes normal
+browser navigation/network activity and follows public player/server links
+exposed by the page. It does not solve CAPTCHAs, bypass authentication,
+defeat DRM, or circumvent access controls.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from urllib.parse import urlparse
 
 
@@ -20,8 +20,10 @@ LOG = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_MS = 25_000
 DEFAULT_SETTLE_MS = 2_500
 DEFAULT_MAX_CANDIDATES = 8
-DEFAULT_MAX_RESPONSES = 160
-DEFAULT_MAX_PAGES = 3
+DEFAULT_MAX_RESPONSES = 220
+DEFAULT_MAX_PAGES = 6
+DEFAULT_MAX_NAV_TARGETS = 10
+DEFAULT_MAX_SERVER_CLICKS = 8
 
 _MEDIA_CONTENT_TYPES = (
     "video/",
@@ -37,6 +39,11 @@ _MEDIA_MARKERS = (
     ".m4v",
     ".webm",
     ".mov",
+)
+_SERVER_WORDS = (
+    "server", "servers", "watch", "player", "stream", "source",
+    "سيرفر", "سيرفرات", "مشاهدة", "مشغل", "مشاهده", "تشغيل",
+    "السيرفر", "السيرفرات",
 )
 
 
@@ -75,6 +82,123 @@ def _score(url: str, content_type: str | None) -> int:
 def _browser_enabled() -> bool:
     value = os.getenv("ALIBOT_BROWSER_RESOLVER", "1").strip().lower()
     return value not in {"0", "false", "no", "off"}
+
+
+def _navigation_score(text: str, href: str) -> int:
+    value = f"{text} {href}".casefold()
+    score = 0
+    for word in _SERVER_WORDS:
+        if word.casefold() in value:
+            score += 10
+    if any(token in value for token in ("embed", "iframe", "player")):
+        score += 15
+    if re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+", value):
+        score += 20
+    return score
+
+
+async def _discover_navigation_targets(page, base_url: str, max_targets: int) -> list[str]:
+    """Collect public player/server URLs exposed after JavaScript executes."""
+    try:
+        rows = await page.locator("a[href], iframe[src], embed[src]").evaluate_all(
+            """els => els.map(el => ({
+                href: el.href || el.src || '',
+                text: (el.innerText || el.textContent || '').trim(),
+                attr: ((el.className || '') + ' ' + (el.id || '') + ' ' +
+                       (el.getAttribute('data-server') || '') + ' ' +
+                       (el.getAttribute('data-player') || '')).trim()
+            }))"""
+        )
+    except Exception:
+        return []
+
+    ranked: dict[str, tuple[int, str]] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        href = row.get("href")
+        if not isinstance(href, str) or not _is_http_url(href) or href == base_url:
+            continue
+        text = " ".join(
+            str(row.get(key) or "") for key in ("text", "attr")
+        )
+        score = _navigation_score(text, href)
+        if score <= 0:
+            continue
+        current = ranked.get(href)
+        if current is None or score > current[0]:
+            ranked[href] = (score, text)
+
+    ordered = sorted(ranked.items(), key=lambda item: (-item[1][0], item[0]))
+    return [href for href, _ in ordered[:max_targets]]
+
+
+async def _click_server_controls(page, max_clicks: int) -> None:
+    """Trigger only strongly server/player-like controls, with strict bounds."""
+    try:
+        controls = await page.locator("button, [role='button'], input[type='button'], input[type='submit']").evaluate_all(
+            """els => els.map((el, index) => ({
+                index,
+                text: (el.innerText || el.textContent || el.value || '').trim(),
+                attr: ((el.className || '') + ' ' + (el.id || '') + ' ' +
+                       (el.getAttribute('data-server') || '') + ' ' +
+                       (el.getAttribute('data-player') || '')).trim()
+            }))"""
+        )
+    except Exception:
+        return
+
+    ranked: list[tuple[int, int]] = []
+    for row in controls or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            index = int(row.get("index"))
+        except (TypeError, ValueError):
+            continue
+        text = f"{row.get('text') or ''} {row.get('attr') or ''}"
+        score = _navigation_score(text, "")
+        if score >= 10:
+            ranked.append((score, index))
+
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    for _, index in ranked[:max_clicks]:
+        try:
+            control = page.locator("button, [role='button'], input[type='button'], input[type='submit']").nth(index)
+            await control.click(timeout=1500, no_wait_after=True)
+            await page.wait_for_timeout(350)
+        except Exception:
+            continue
+
+
+async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:
+    """Collect media URLs exposed as DOM properties after player initialization."""
+    try:
+        rows = await page.locator("video, audio, source").evaluate_all(
+            """els => els.map(el => ({
+                src: el.currentSrc || el.src || el.getAttribute('src') ||
+                     el.getAttribute('data-src') || el.getAttribute('data-url') || '',
+                type: el.getAttribute('type') || ''
+            }))"""
+        )
+    except Exception:
+        return
+
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        media_url = row.get("src")
+        if not isinstance(media_url, str) or not _is_http_url(media_url):
+            continue
+        try:
+            validator(media_url)
+        except Exception:
+            continue
+        content_type = row.get("type") or None
+        score = _score(media_url, content_type) + 12
+        current = candidates.get(media_url)
+        if current is None or score > current[0]:
+            candidates[media_url] = (score, content_type)
 
 
 async def _resolve_async(
@@ -121,8 +245,9 @@ async def _resolve_async(
                 ignore_https_errors=False,
             )
 
-            for page_url in queue:
-                if len(visited_pages) >= max_pages or page_url in visited_pages:
+            while queue and len(visited_pages) < max_pages:
+                page_url = queue.pop(0)
+                if page_url in visited_pages:
                     continue
                 visited_pages.add(page_url)
                 page = await context.new_page()
@@ -137,8 +262,7 @@ async def _resolve_async(
                     if not _is_http_url(response_url):
                         return
                     try:
-                        response_headers = response.headers
-                        content_type = response_headers.get("content-type")
+                        content_type = response.headers.get("content-type")
                     except Exception:
                         content_type = None
                     if not _is_media_response(response_url, content_type):
@@ -159,14 +283,28 @@ async def _resolve_async(
                         wait_until="domcontentloaded",
                         timeout=timeout_ms,
                     )
-                    # Give player initialization and delayed source requests a
-                    # bounded opportunity to run. We do not click controls or
-                    # interact with authentication/anti-bot challenges.
                     await page.wait_for_timeout(settle_ms)
+                    await _collect_dom_media(page, validator, candidates)
 
-                    # Collect same-origin iframe URLs. The browser may expose
-                    # their media requests independently, so inspect only a
-                    # small bounded number of frames/pages.
+                    # Many streaming pages expose server/player links only
+                    # after JavaScript has populated the DOM.
+                    targets = await _discover_navigation_targets(
+                        page, page_url, DEFAULT_MAX_NAV_TARGETS
+                    )
+                    for target in targets:
+                        if target not in visited_pages and target not in queue:
+                            queue.append(target)
+
+                    # Some sites attach server selection to buttons instead of
+                    # hrefs. Click only controls that strongly identify as a
+                    # server/player selector, then observe resulting requests.
+                    await _click_server_controls(page, DEFAULT_MAX_SERVER_CLICKS)
+                    await page.wait_for_timeout(settle_ms)
+                    await _collect_dom_media(page, validator, candidates)
+
+                    # Include dynamically created iframe URLs after controls
+                    # have run. They are queued as pages rather than treated
+                    # as media themselves.
                     frame_urls = []
                     for frame in page.frames:
                         frame_url = frame.url
@@ -178,7 +316,7 @@ async def _resolve_async(
                             and frame_url not in frame_urls
                         ):
                             frame_urls.append(frame_url)
-                    queue.extend(frame_urls[: max(0, max_pages - len(visited_pages))])
+                    queue.extend(frame_urls[:DEFAULT_MAX_NAV_TARGETS])
                 except Exception as exc:
                     LOG.debug("Browser page resolution failed: %s", type(exc).__name__)
                 finally:
@@ -192,7 +330,7 @@ async def _resolve_async(
             await browser.close()
 
     ranked = sorted(candidates.items(), key=lambda item: (-item[1][0], item[0]))
-    return [url for url, _ in ranked[:max_candidates]]
+    return [media_url for media_url, _ in ranked[:max_candidates]]
 
 
 def resolve(
@@ -204,7 +342,7 @@ def resolve(
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
     max_pages: int = DEFAULT_MAX_PAGES,
 ) -> list[str]:
-    """Resolve public media URLs exposed by a JavaScript-driven page."""
+    """Resolve public media URLs exposed by a JS-driven player/server chain."""
     if not _browser_enabled():
         return []
     if not isinstance(url, str) or not url.strip():
