@@ -22,8 +22,6 @@ def install(bot_module) -> None:
     browser_handoff = __import__("downloader.browser_download_handoff", fromlist=["resolve_to_file"])
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
 
-    # Short-lived per-source queue. Provider/browser discovery returns public
-    # candidates; Browser Handoff is responsible for materializing a local file.
     browser_candidate_cache = {}
 
     def _is_local_file(value, temp_dir):
@@ -54,10 +52,6 @@ def install(bot_module) -> None:
 
     async def wrapped(url, *args, **kwargs):
         print("🔎 Smart Media Bridge: entered", flush=True)
-
-        # Dedicated site adapter comes first for Shahid4u. This avoids relying
-        # on generic extraction heuristics for a page whose download section
-        # intentionally delegates to downstream download servers.
         try:
             provider_resolved = await asyncio.to_thread(
                 shahid4u_resolver.resolve,
@@ -72,10 +66,7 @@ def install(bot_module) -> None:
             provider_resolved = []
         if provider_resolved:
             _queue_candidates(url, provider_resolved)
-            print(
-                f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff",
-                flush=True,
-            )
+            print(f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff", flush=True)
             return provider_resolved
 
         try:
@@ -118,10 +109,7 @@ def install(bot_module) -> None:
             browser_resolved = []
         if browser_resolved:
             _queue_candidates(url, browser_resolved)
-            print(
-                f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s); queued for Browser Download Handoff",
-                flush=True,
-            )
+            print(f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s); queued for Browser Download Handoff", flush=True)
             return browser_resolved
 
         try:
@@ -159,7 +147,6 @@ def install(bot_module) -> None:
 
             candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else []
             candidate_urls = []
-
             cached_candidates = browser_candidate_cache.pop(source_url, []) if source_url else []
             for item in cached_candidates:
                 candidate = item.get("url") if isinstance(item, dict) else item
@@ -180,15 +167,26 @@ def install(bot_module) -> None:
             if not temp_dir or not candidate_urls:
                 return result
 
-            print(
-                f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)",
-                flush=True,
-            )
-            max_bytes = getattr(
-                bot_module,
-                "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES",
-                500 * 1024 * 1024,
-            )
+            print(f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)", flush=True)
+            max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
+            source_host = ""
+            try:
+                source_host = (bot_module.urlparse(source_url).hostname or "").lower().rstrip(".")
+            except Exception:
+                pass
+            strict_provider_validation = source_host == "shahid4u.run" or source_host.endswith(".shahid4u.run")
+            handoff_kwargs = {
+                "validator": bot_module.validate_public_http_url,
+                "is_audio": is_audio,
+                "max_file_bytes": max_bytes,
+                "referer_url": source_url if isinstance(source_url, str) else None,
+            }
+            if strict_provider_validation and not is_audio:
+                handoff_kwargs.update({
+                    "min_video_bytes": 5 * 1024 * 1024,
+                    "min_video_duration": 60.0,
+                })
+                print("🎯 Shahid4u Handoff: strict media validation enabled (>=5MB and >=60s)", flush=True)
 
             for candidate in candidate_urls[:12]:
                 try:
@@ -197,10 +195,9 @@ def install(bot_module) -> None:
                         browser_handoff.resolve_to_file,
                         candidate,
                         temp_dir,
-                        validator=bot_module.validate_public_http_url,
-                        is_audio=is_audio,
-                        max_file_bytes=max_bytes,
-                        referer_url=source_url if isinstance(source_url, str) else None,
+                        timeout_ms=45_000,
+                        settle_ms=2_000,
+                        **handoff_kwargs,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -214,11 +211,7 @@ def install(bot_module) -> None:
                         size = 0
                     print(f"🌐 Browser Download Handoff: succeeded ({size} bytes)", flush=True)
                     handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}
-                    handoff_diagnostics.update({
-                        "status": "browser_download_handoff_success",
-                        "handoff_candidate": candidate,
-                        "bytes_downloaded": size,
-                    })
+                    handoff_diagnostics.update({"status": "browser_download_handoff_success", "handoff_candidate": candidate, "bytes_downloaded": size})
                     return local_path, "Browser Download Handoff: saved local file", "", handoff_diagnostics
 
             print("🌐 Browser Download Handoff: no usable browser file", flush=True)
@@ -271,10 +264,7 @@ def install(bot_module) -> None:
                     return_value = await return_value
                 if isinstance(return_value, tuple) and return_value and _is_local_file(return_value[0], temp_dir):
                     print("🌐 Smart Media Bridge: direct-media handoff succeeded", flush=True)
-                    return return_value[0], {
-                        "handoff": "direct_media_chain",
-                        "fallback_diagnostics": return_value[3] if len(return_value) > 3 else {},
-                    }
+                    return return_value[0], {"handoff": "direct_media_chain", "fallback_diagnostics": return_value[3] if len(return_value) > 3 else {}}
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
