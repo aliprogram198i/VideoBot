@@ -1,17 +1,11 @@
-"""Bounded handoff for browser-triggered public media downloads.
-
-This layer is intentionally separate from media discovery. It consumes a
-public candidate already discovered by the browser resolver, preserves the
-source-page browser context, follows candidate/player/server pages, triggers
-normal browser download actions, and streams verified public media responses
-into the caller's temporary directory.
-"""
+"""Bounded handoff for browser-triggered public media downloads."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -83,20 +77,12 @@ def _navigation_score(text: str, href: str) -> int:
 
 
 async def _candidate_links(page, page_url: str) -> list[str]:
-    """Return bounded public player/server/download links.
-
-    Some hosts expose the real player behind an anchor whose visible text and
-    URL contain no obvious keyword. Keep the normal ranked controls first, but
-    retain a small bounded set of same-page-origin or media-like links so those
-    legitimate player hops are not discarded.
-    """
     try:
         rows = await page.locator("a[href], iframe[src], embed[src]").evaluate_all(
             """els => els.map((el,index) => ({index, href: el.href || el.src || '', text: (el.innerText || el.textContent || '').trim(), attr: ((el.className || '') + ' ' + (el.id || '')).trim()}))"""
         )
     except Exception:
         return []
-
     base = urlparse(page_url)
     ranked: list[tuple[int, int, str]] = []
     for row in rows or []:
@@ -104,16 +90,11 @@ async def _candidate_links(page, page_url: str) -> list[str]:
         link = str(row.get("href") or "")
         if not _is_http_url(link): continue
         parsed = urlparse(link)
-        if parsed.netloc == base.netloc:
-            score = 10
-        else:
-            score = 2
+        score = 10 if parsed.netloc == base.netloc else 2
         score += _score_control(str(row.get("text") or ""), link)
         if _is_download_target(str(row.get("text") or ""), link): score += 30
         if _looks_like_media(link): score += 20
-        if score >= 10:
-            ranked.append((score, int(row.get("index") or 0), link))
-
+        if score >= 10: ranked.append((score, int(row.get("index") or 0), link))
     ranked.sort(key=lambda item: (-item[0], item[1]))
     return [item[2] for item in ranked[:16]]
 
@@ -129,10 +110,8 @@ def _stream_with_browser_context(url: str, output_dir: str, *, cookies: list[dic
     if referer_url: headers["Referer"] = referer_url
     parsed = urlparse(url)
     if parsed.scheme == "https": headers.setdefault("Origin", f"https://{parsed.netloc}")
-
     suffix = Path(parsed.path).suffix.lower()
-    if suffix not in _MEDIA_FILE_EXTENSIONS:
-        suffix = ".m4a" if is_audio else ".mp4"
+    if suffix not in _MEDIA_FILE_EXTENSIONS: suffix = ".m4a" if is_audio else ".mp4"
     fd, target = tempfile.mkstemp(prefix="browser_", suffix=suffix, dir=output_dir)
     os.close(fd)
     try:
@@ -143,8 +122,7 @@ def _stream_with_browser_context(url: str, output_dir: str, *, cookies: list[dic
             if content_length:
                 try:
                     if int(content_length) > max_file_bytes: return None
-                except ValueError:
-                    pass
+                except ValueError: pass
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk: break
@@ -152,17 +130,14 @@ def _stream_with_browser_context(url: str, output_dir: str, *, cookies: list[dic
                 if total > max_file_bytes: return None
                 output.write(chunk)
         if total > 0:
-            LOG.info("Browser download handoff streamed %d bytes", total)
             print(f"🌐 Browser Download Handoff: streamed {total} bytes", flush=True)
             return target
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        LOG.debug("Browser media stream failed: %s", type(exc).__name__)
+        print(f"⚠️ Browser Download Handoff: stream failed ({type(exc).__name__})", flush=True)
     except Exception as exc:
-        LOG.debug("Browser media stream failed: %s", type(exc).__name__)
-    try:
-        os.remove(target)
-    except OSError:
-        pass
+        print(f"⚠️ Browser Download Handoff: stream failed ({type(exc).__name__})", flush=True)
+    try: os.remove(target)
+    except OSError: pass
     return None
 
 
@@ -188,8 +163,7 @@ async def _click_controls(page, max_clicks: int) -> None:
     locator = page.locator(selector)
     for _, index in ranked[:max_clicks]:
         try:
-            control = locator.nth(index)
-            await control.click(timeout=1800, no_wait_after=True)
+            await locator.nth(index).click(timeout=1800, no_wait_after=True)
             await page.wait_for_timeout(500)
         except Exception:
             continue
@@ -245,6 +219,7 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                         try: validator(response_url)
                         except Exception: return
                         remember_media(response_url)
+                        print("🌐 Browser Download Handoff: captured media response", flush=True)
                 async def on_download(download) -> None:
                     try: download_url = download.url
                     except Exception: return
@@ -267,12 +242,10 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                             try: validator(media_url)
                             except Exception: continue
                             remember_media(media_url)
-                    # A browser download event is already an authoritative media
-                    # handoff. Save it using Playwright's download API before trying
-                    # to reopen its URL as a normal page.
+
                     for download in download_holder:
                         try:
-                            suggested = _safe_filename(download.suggested_filename or "media", is_audio)
+                            suggested = _safe_filename(download.suggested_filename or ("audio" if is_audio else "video"), is_audio)
                             suffix = Path(suggested).suffix
                             if suffix.lower() not in _MEDIA_FILE_EXTENSIONS: suffix = ".m4a" if is_audio else ".mp4"
                             fd, target = tempfile.mkstemp(prefix="browser_", suffix=suffix, dir=output_dir); os.close(fd)
@@ -280,22 +253,41 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                                 await download.save_as(target)
                                 size = os.path.getsize(target)
                                 if 0 < size <= max_file_bytes:
-                                    LOG.info("Browser download handoff saved %d bytes", size)
                                     print(f"🌐 Browser Download Handoff: saved {size} bytes", flush=True)
                                     return target
+                                print(f"⚠️ Browser Download Handoff: saved file rejected ({size} bytes)", flush=True)
                             finally:
-                                if os.path.exists(target) and (os.path.getsize(target) == 0 or os.path.getsize(target) > max_file_bytes):
-                                    os.remove(target)
-                        except Exception:
-                            continue
+                                try:
+                                    if os.path.exists(target) and (os.path.getsize(target) == 0 or os.path.getsize(target) > max_file_bytes): os.remove(target)
+                                except OSError: pass
+                        except Exception as exc:
+                            print(f"⚠️ Browser Download Handoff: download.save_as failed ({type(exc).__name__})", flush=True)
+                            try:
+                                path = await download.path()
+                                if path and os.path.isfile(path):
+                                    size = os.path.getsize(path)
+                                    if 0 < size <= max_file_bytes:
+                                        suffix = Path(path).suffix.lower()
+                                        if suffix not in _MEDIA_FILE_EXTENSIONS: suffix = ".m4a" if is_audio else ".mp4"
+                                        target = tempfile.mktemp(prefix="browser_", suffix=suffix, dir=output_dir)
+                                        shutil.copyfile(path, target)
+                                        if os.path.getsize(target) == size:
+                                            print(f"🌐 Browser Download Handoff: recovered download path ({size} bytes)", flush=True)
+                                            return target
+                            except Exception as path_exc:
+                                print(f"⚠️ Browser Download Handoff: download path unavailable ({type(path_exc).__name__})", flush=True)
+
                     cookies = await context.cookies()
+                    if media_urls:
+                        print(f"🌐 Browser Download Handoff: streaming {len(media_urls)} captured media URL(s)", flush=True)
                     for media_url in media_urls:
-                        result = await asyncio.to_thread(_stream_with_browser_context, media_url, output_dir, cookies=cookies, referer_url=page_url or referer_url, is_audio=is_audio, max_file_bytes=max_file_bytes, timeout_s=max(5.0, timeout_ms / 1000.0))
+                        stream_referer = referer_url or page_url
+                        result = await asyncio.to_thread(_stream_with_browser_context, media_url, output_dir, cookies=cookies, referer_url=stream_referer, is_audio=is_audio, max_file_bytes=max_file_bytes, timeout_s=max(5.0, timeout_ms / 1000.0))
                         if result: return result
                     for link in await _candidate_links(page, page_url):
                         if link not in visited and link not in queue: queue.append(link)
                 except Exception as exc:
-                    LOG.debug("Browser handoff page failed: %s", type(exc).__name__)
+                    print(f"⚠️ Browser Download Handoff: page failed ({type(exc).__name__})", flush=True)
                 finally:
                     await page.close()
             await context.close()
