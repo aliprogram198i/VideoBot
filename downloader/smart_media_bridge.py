@@ -21,6 +21,12 @@ def install(bot_module) -> None:
     browser_handoff = __import__("downloader.browser_download_handoff", fromlist=["resolve_to_file"])
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
 
+    # Browser resolution happens inside the legacy fallback, which normally
+    # only receives candidate URLs and does not expose them to the caller.
+    # Keep a short-lived per-source handoff queue so the isolated Browser
+    # Download Handoff can consume the exact candidates captured by Chromium.
+    browser_candidate_cache = {}
+
     def _is_local_file(value, temp_dir):
         if not isinstance(value, (str, os.PathLike)) or not temp_dir:
             return False
@@ -75,7 +81,12 @@ def install(bot_module) -> None:
             print(f"⚠️ Browser Media Resolver failed: {type(exc).__name__}", flush=True)
             browser_resolved = []
         if browser_resolved:
-            print(f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s)", flush=True)
+            browser_candidate_cache[url] = list(browser_resolved)
+            print(
+                f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s); "
+                "queued for Browser Download Handoff",
+                flush=True,
+            )
             return browser_resolved
         try:
             print("🧩 Smart Media Bridge: Cobalt resolver starting", flush=True)
@@ -101,25 +112,39 @@ def install(bot_module) -> None:
             temp_dir = kwargs.get("temp_dir")
             is_audio = bool(kwargs.get("is_audio", False))
             diagnostics = result[3] if isinstance(result, tuple) and len(result) > 3 else {}
+            source_url = kwargs.get("url")
+            if source_url is None and args:
+                source_url = args[0]
 
             # A fallback result is only a successful download when its first
             # element is an actual local file. A direct URL is a candidate,
             # not a downloaded artifact, and must continue to Browser Handoff.
             if isinstance(result, tuple) and result and _is_local_file(result[0], temp_dir):
+                browser_candidate_cache.pop(source_url, None)
                 return result
 
-            candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else []
+            candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else {}
             candidate_urls = []
 
-            if isinstance(result, tuple) and result:
-                direct_candidate = _candidate_from_value(result[0])
-                if direct_candidate:
-                    candidate_urls.append(direct_candidate)
-
-            for item in candidates:
+            # Consume the exact candidates captured by Browser Resolver. This
+            # is the critical bridge between Chromium's download event and the
+            # separate browser context that materializes the file locally.
+            cached_candidates = browser_candidate_cache.pop(source_url, []) if source_url else []
+            for item in cached_candidates:
                 candidate = item.get("url") if isinstance(item, dict) else item
                 if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and candidate not in candidate_urls:
                     candidate_urls.append(candidate)
+
+            if isinstance(result, tuple) and result:
+                direct_candidate = _candidate_from_value(result[0])
+                if direct_candidate and direct_candidate not in candidate_urls:
+                    candidate_urls.append(direct_candidate)
+
+            if isinstance(candidates, (list, tuple)):
+                for item in candidates:
+                    candidate = item.get("url") if isinstance(item, dict) else item
+                    if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and candidate not in candidate_urls:
+                        candidate_urls.append(candidate)
 
             if not temp_dir or not candidate_urls:
                 return result
@@ -134,9 +159,6 @@ def install(bot_module) -> None:
                 "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES",
                 500 * 1024 * 1024,
             )
-            source_url = kwargs.get("url")
-            if source_url is None and args:
-                source_url = args[0]
 
             for candidate in candidate_urls[:8]:
                 try:
