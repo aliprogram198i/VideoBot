@@ -47,7 +47,7 @@ _SERVER_WORDS = (
 )
 _DOWNLOAD_WORDS = (
     "download", "downloads", "direct", "تحميل", "تحميل مباشر",
-    "تنزيل", "رابط التحميل", "تحميل مباشر", "hd", "web-dl", "webrip",
+    "تنزيل", "رابط التحميل", "hd", "web-dl", "webrip",
 )
 
 
@@ -91,19 +91,24 @@ def _browser_enabled() -> bool:
 def _navigation_score(text: str, href: str) -> int:
     value = f"{text} {href}".casefold()
     score = 0
-    for word in _SERVER_WORDS:
-        if word.casefold() in value:
-            score += 10
     for word in _DOWNLOAD_WORDS:
         if word.casefold() in value:
-            score += 12
+            score += 16
+    for word in _SERVER_WORDS:
+        if word.casefold() in value:
+            score += 7
     if re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+", value):
-        score += 20
-    if re.search(r"(?:720|1080|480|360)p", value):
         score += 12
+    if re.search(r"(?:2160|1440|1080|720|480|360)p", value):
+        score += 14
     if any(token in value for token in ("embed", "iframe", "player")):
-        score += 15
+        score += 10
     return score
+
+
+def _is_download_target(text: str, href: str) -> bool:
+    value = f"{text} {href}".casefold()
+    return any(word.casefold() in value for word in _DOWNLOAD_WORDS)
 
 
 async def _discover_navigation_targets(page, base_url: str, max_targets: int) -> list[str]:
@@ -119,10 +124,11 @@ async def _discover_navigation_targets(page, base_url: str, max_targets: int) ->
                        (el.getAttribute('data-download') || '')).trim()
             }))"""
         )
-    except Exception:
+    except Exception as exc:
+        LOG.debug("Browser navigation discovery failed: %s", type(exc).__name__)
         return []
 
-    ranked: dict[str, tuple[int, str]] = {}
+    ranked: dict[str, tuple[int, str, bool]] = {}
     base_host = (urlparse(base_url).hostname or "").lower()
     for row in rows or []:
         if not isinstance(row, dict):
@@ -130,21 +136,31 @@ async def _discover_navigation_targets(page, base_url: str, max_targets: int) ->
         href = row.get("href")
         if not isinstance(href, str) or not _is_http_url(href) or href == base_url:
             continue
-        text = " ".join(
-            str(row.get(key) or "") for key in ("text", "attr")
-        )
+        text = " ".join(str(row.get(key) or "") for key in ("text", "attr"))
         score = _navigation_score(text, href)
         target_host = (urlparse(href).hostname or "").lower()
-        if target_host and target_host != base_host:
+        external = bool(target_host and target_host != base_host)
+        if external:
             score += 8
+        download_target = _is_download_target(text, href)
+        if download_target:
+            score += 20
         if score <= 0:
             continue
         current = ranked.get(href)
+        candidate = (score, text, download_target)
         if current is None or score > current[0]:
-            ranked[href] = (score, text)
+            ranked[href] = candidate
 
-    ordered = sorted(ranked.items(), key=lambda item: (-item[1][0], item[0]))
-    return [href for href, _ in ordered[:max_targets]]
+    ordered = sorted(
+        ranked.items(),
+        key=lambda item: (-int(item[1][2]), -item[1][0], item[0]),
+    )
+    targets = [href for href, _ in ordered[:max_targets]]
+    if targets:
+        LOG.info("🌐 Browser Resolver: queued %d navigation target(s)", len(targets))
+        print(f"🌐 Browser Resolver: queued {len(targets)} navigation target(s)", flush=True)
+    return targets
 
 
 async def _click_server_controls(page, max_clicks: int) -> None:
@@ -156,7 +172,8 @@ async def _click_server_controls(page, max_clicks: int) -> None:
                 text: (el.innerText || el.textContent || el.value || '').trim(),
                 attr: ((el.className || '') + ' ' + (el.id || '') + ' ' +
                        (el.getAttribute('data-server') || '') + ' ' +
-                       (el.getAttribute('data-player') || '')).trim()
+                       (el.getAttribute('data-player') || '') + ' ' +
+                       (el.getAttribute('data-download') || '')).trim()
             }))"""
         )
     except Exception:
@@ -301,17 +318,11 @@ async def _resolve_async(
 
                 page.on("response", on_response)
                 try:
-                    await page.goto(
-                        page_url,
-                        wait_until="domcontentloaded",
-                        timeout=timeout_ms,
-                    )
+                    await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms)
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
 
-                    targets = await _discover_navigation_targets(
-                        page, page_url, DEFAULT_MAX_NAV_TARGETS
-                    )
+                    targets = await _discover_navigation_targets(page, page_url, DEFAULT_MAX_NAV_TARGETS)
                     for target in targets:
                         if target not in visited_pages and target not in queue:
                             queue.append(target)
@@ -346,6 +357,12 @@ async def _resolve_async(
             await browser.close()
 
     ranked = sorted(candidates.items(), key=lambda item: (-item[1][0], item[0]))
+    if ranked:
+        LOG.info("🌐 Browser Resolver: discovered %d media candidate(s)", len(ranked))
+        print(f"🌐 Browser Resolver: discovered {len(ranked)} media candidate(s)", flush=True)
+    else:
+        LOG.info("🌐 Browser Resolver: no media candidates discovered")
+        print("🌐 Browser Resolver: no media candidates discovered", flush=True)
     return [media_url for media_url, _ in ranked[:max_candidates]]
 
 
