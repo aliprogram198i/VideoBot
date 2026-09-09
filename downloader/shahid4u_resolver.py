@@ -15,17 +15,15 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request
 
-
 HOST_SUFFIXES = ("shahid4u.run",)
 MAX_HTML_BYTES = 5 * 1024 * 1024
 MAX_CANDIDATES = 16
 MAX_BROWSER_CANDIDATES = 20
 TIMEOUT_SECONDS = 25
-
-_DOWNLOAD_TERMS = (
-    "download", "تحميل", "تحميل مباشر", "تنزيل", "direct", "رابط التحميل",
-)
+_DOWNLOAD_TERMS = ("download", "تحميل", "تحميل مباشر", "تنزيل", "direct", "رابط التحميل")
 _QUALITY_RE = re.compile(r"(?:2160|1440|1080|720|480|360|240)\s*p", re.I)
+_MEDIA_EXTENSIONS = (".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".flv", ".m3u8", ".mpd")
+_REJECT_HOSTS = ("microsoft.com", "google.com", "googleadservices.com", "doubleclick.net")
 
 
 def _is_shahid4u(url: str) -> bool:
@@ -44,6 +42,14 @@ def _is_http(url: str) -> bool:
         return False
 
 
+def _is_rejected_host(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except Exception:
+        return True
+    return any(host == suffix or host.endswith("." + suffix) for suffix in _REJECT_HOSTS)
+
+
 def _score(text: str, href: str) -> int:
     value = f"{text} {href}".casefold()
     score = 0
@@ -56,9 +62,24 @@ def _score(text: str, href: str) -> int:
     quality = _QUALITY_RE.search(value)
     if quality:
         score += {"2160": 60, "1440": 55, "1080": 50, "720": 40, "480": 30, "360": 20, "240": 10}.get(quality.group(0)[:-1], 0)
-    if ".mp4" in value or ".m3u8" in value or ".mpd" in value:
+    if any(ext in value for ext in (".mp4", ".m3u8", ".mpd")):
         score += 40
     return score
+
+
+def _is_probable_media_candidate(url: str, text: str = "") -> bool:
+    if not _is_http(url) or _is_rejected_host(url):
+        return False
+    value = f"{text} {url}".casefold()
+    if any(marker in value for marker in ("secure_stream", "direct_stream", "mycima")):
+        return True
+    if _QUALITY_RE.search(value):
+        return True
+    if any(urlparse(url).path.lower().endswith(ext) for ext in _MEDIA_EXTENSIONS):
+        return True
+    if any(term in value for term in _DOWNLOAD_TERMS):
+        return True
+    return False
 
 
 class _LinkParser(HTMLParser):
@@ -97,35 +118,26 @@ def _extract_urls_from_html(page_url: str, body: bytes) -> list[str]:
         parser.feed(text)
     except Exception:
         pass
-
     ranked: dict[str, int] = {}
-    for score, href, _label in parser.links:
-        if score >= 60:
+    for score, href, label in parser.links:
+        if score >= 60 and _is_probable_media_candidate(href, label):
             ranked[href] = max(score, ranked.get(href, 0))
-
-    # Some themes store the server URL in attributes/inline JS instead of a
-    # normal anchor. Only retain public HTTP(S) URLs and require a Shahid4u
-    # download marker or a known downstream host marker.
-    for raw in re.findall(r"https?://[^\"'<>\\s]+", text, flags=re.I):
-        candidate = html_lib.unescape(raw).rstrip("),;\\")
+    for raw in re.findall(r"https?://[^\"'<>\s]+", text, flags=re.I):
+        candidate = html_lib.unescape(raw).rstrip("),;\")
         score = _score("", candidate)
-        if score >= 60 and _is_http(candidate):
+        if score >= 60 and _is_probable_media_candidate(candidate):
             ranked[candidate] = max(score, ranked.get(candidate, 0))
-
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
     return [url for url, _score_value in ordered[:MAX_CANDIDATES]]
 
 
 def _fetch_page(url: str, *, validator, request_factory, open_function, read_function) -> bytes:
     validator(url)
-    request = request_factory(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ar,en;q=0.8",
-        },
-    )
+    request = request_factory(url, headers={
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ar,en;q=0.8",
+    })
     with open_function(request, timeout=TIMEOUT_SECONDS, max_bytes=MAX_HTML_BYTES) as response:
         return read_function(response, MAX_HTML_BYTES)
 
@@ -135,14 +147,10 @@ async def _browser_discover(url: str, *, validator) -> list[str]:
         from playwright.async_api import async_playwright
     except Exception:
         return []
-
     found: dict[str, int] = {}
     async with async_playwright() as playwright:
         try:
-            browser = await playwright.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-            )
+            browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
         except Exception:
             return []
         try:
@@ -153,28 +161,33 @@ async def _browser_discover(url: str, *, validator) -> list[str]:
             )
             page = await context.new_page()
 
-            def remember(candidate: str, extra: int = 0) -> None:
-                if not _is_http(candidate):
+            def remember(candidate: str, extra: int = 0, text: str = "") -> None:
+                if not _is_probable_media_candidate(candidate, text):
                     return
                 try:
                     validator(candidate)
                 except Exception:
                     return
-                found[candidate] = max(found.get(candidate, 0), _score("", candidate) + extra)
+                found[candidate] = max(found.get(candidate, 0), _score(text, candidate) + extra)
 
             async def on_download(download) -> None:
                 try:
-                    remember(download.url, 180)
+                    candidate = download.url
+                    suggested = download.suggested_filename or ""
                 except Exception:
-                    pass
+                    return
+                # A browser download event alone is not proof that the resource
+                # is the movie. Shahid4u pages can fire ad/installer downloads.
+                remember(candidate, 180, suggested)
 
             async def on_response(response) -> None:
                 try:
                     ct = (response.headers.get("content-type") or "").lower()
-                    if ct.startswith("video/") or ct.startswith("audio/") or "mpegurl" in ct or "dash+xml" in ct:
-                        remember(response.url, 160)
+                    candidate = response.url
                 except Exception:
-                    pass
+                    return
+                if ct.startswith("video/") or ct.startswith("audio/") or "mpegurl" in ct or "dash+xml" in ct:
+                    remember(candidate, 160)
 
             page.on("download", on_download)
             page.on("response", on_response)
@@ -195,12 +208,9 @@ async def _browser_discover(url: str, *, validator) -> list[str]:
                     continue
                 href = str(row.get("href") or "")
                 text = f"{row.get('text') or ''} {row.get('attr') or ''}"
-                score = _score(text, href)
-                if score >= 60:
-                    remember(href, score)
+                if _score(text, href) >= 60:
+                    remember(href, _score(text, href), text)
 
-            # Explicitly click only download/server controls exposed by the
-            # page. This can trigger a public browser download or media request.
             selector = "a[href], button, [role='button']"
             try:
                 rows = await page.locator(selector).evaluate_all(
@@ -238,7 +248,6 @@ async def _browser_discover(url: str, *, validator) -> list[str]:
             await context.close()
         finally:
             await browser.close()
-
     return [url for url, _score_value in sorted(found.items(), key=lambda item: (-item[1], item[0]))[:MAX_BROWSER_CANDIDATES]]
 
 
@@ -246,7 +255,6 @@ def resolve(url: str, *, validator, request_factory=Request, open_function=None,
     """Return public download/server candidates exposed by a Shahid4u page."""
     if not _is_shahid4u(url):
         return []
-
     candidates: list[str] = []
     if open_function is not None and read_function is not None:
         try:
@@ -254,11 +262,9 @@ def resolve(url: str, *, validator, request_factory=Request, open_function=None,
             candidates.extend(_extract_urls_from_html(url, body))
         except Exception as exc:
             print(f"⚠️ Shahid4u Resolver: static page discovery failed ({type(exc).__name__})", flush=True)
-
     if candidates:
         print(f"🎯 Shahid4u Resolver: discovered {len(candidates)} download/server candidate(s)", flush=True)
         return candidates
-
     try:
         candidates = asyncio.run(_browser_discover(url, validator=validator))
     except RuntimeError:
@@ -270,7 +276,6 @@ def resolve(url: str, *, validator, request_factory=Request, open_function=None,
     except Exception as exc:
         print(f"⚠️ Shahid4u Resolver: browser discovery failed ({type(exc).__name__})", flush=True)
         candidates = []
-
     if candidates:
         print(f"🎯 Shahid4u Resolver: browser discovered {len(candidates)} candidate(s)", flush=True)
     else:
