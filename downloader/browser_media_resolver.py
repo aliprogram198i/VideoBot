@@ -45,6 +45,10 @@ _SERVER_WORDS = (
     "سيرفر", "سيرفرات", "مشاهدة", "مشغل", "مشاهده", "تشغيل",
     "السيرفر", "السيرفرات",
 )
+_DOWNLOAD_WORDS = (
+    "download", "downloads", "direct", "تحميل", "تحميل مباشر",
+    "تنزيل", "رابط التحميل", "تحميل مباشر", "hd", "web-dl", "webrip",
+)
 
 
 def _is_http_url(value: str) -> bool:
@@ -90,15 +94,20 @@ def _navigation_score(text: str, href: str) -> int:
     for word in _SERVER_WORDS:
         if word.casefold() in value:
             score += 10
-    if any(token in value for token in ("embed", "iframe", "player")):
-        score += 15
+    for word in _DOWNLOAD_WORDS:
+        if word.casefold() in value:
+            score += 12
     if re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+", value):
         score += 20
+    if re.search(r"(?:720|1080|480|360)p", value):
+        score += 12
+    if any(token in value for token in ("embed", "iframe", "player")):
+        score += 15
     return score
 
 
 async def _discover_navigation_targets(page, base_url: str, max_targets: int) -> list[str]:
-    """Collect public player/server URLs exposed after JavaScript executes."""
+    """Collect public player/server/download URLs exposed after JavaScript executes."""
     try:
         rows = await page.locator("a[href], iframe[src], embed[src]").evaluate_all(
             """els => els.map(el => ({
@@ -106,13 +115,15 @@ async def _discover_navigation_targets(page, base_url: str, max_targets: int) ->
                 text: (el.innerText || el.textContent || '').trim(),
                 attr: ((el.className || '') + ' ' + (el.id || '') + ' ' +
                        (el.getAttribute('data-server') || '') + ' ' +
-                       (el.getAttribute('data-player') || '')).trim()
+                       (el.getAttribute('data-player') || '') + ' ' +
+                       (el.getAttribute('data-download') || '')).trim()
             }))"""
         )
     except Exception:
         return []
 
     ranked: dict[str, tuple[int, str]] = {}
+    base_host = (urlparse(base_url).hostname or "").lower()
     for row in rows or []:
         if not isinstance(row, dict):
             continue
@@ -123,6 +134,9 @@ async def _discover_navigation_targets(page, base_url: str, max_targets: int) ->
             str(row.get(key) or "") for key in ("text", "attr")
         )
         score = _navigation_score(text, href)
+        target_host = (urlparse(href).hostname or "").lower()
+        if target_host and target_host != base_host:
+            score += 8
         if score <= 0:
             continue
         current = ranked.get(href)
