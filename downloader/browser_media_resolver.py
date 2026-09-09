@@ -214,6 +214,7 @@ async def _resolve_async(
         from playwright.async_api import async_playwright
     except Exception as exc:
         LOG.warning("Browser resolver unavailable: %s", type(exc).__name__)
+        print(f"⚠️ Browser resolver unavailable: {type(exc).__name__}", flush=True)
         return []
 
     try:
@@ -226,15 +227,23 @@ async def _resolve_async(
     queue: list[str] = [url]
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-dev-shm-usage",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ],
-        )
         try:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
+            )
+        except Exception as exc:
+            LOG.warning("Browser resolver Chromium launch failed: %s", type(exc).__name__)
+            print(f"⚠️ Browser resolver Chromium launch failed: {type(exc).__name__}", flush=True)
+            return []
+        try:
+            print("🌐 Browser Media Resolver: Chromium started", flush=True)
             context = await browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Linux; Android 10; K) "
@@ -286,8 +295,6 @@ async def _resolve_async(
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
 
-                    # Many streaming pages expose server/player links only
-                    # after JavaScript has populated the DOM.
                     targets = await _discover_navigation_targets(
                         page, page_url, DEFAULT_MAX_NAV_TARGETS
                     )
@@ -295,16 +302,10 @@ async def _resolve_async(
                         if target not in visited_pages and target not in queue:
                             queue.append(target)
 
-                    # Some sites attach server selection to buttons instead of
-                    # hrefs. Click only controls that strongly identify as a
-                    # server/player selector, then observe resulting requests.
                     await _click_server_controls(page, DEFAULT_MAX_SERVER_CLICKS)
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
 
-                    # Include dynamically created iframe URLs after controls
-                    # have run. They are queued as pages rather than treated
-                    # as media themselves.
                     frame_urls = []
                     for frame in page.frames:
                         frame_url = frame.url
@@ -319,6 +320,7 @@ async def _resolve_async(
                     queue.extend(frame_urls[:DEFAULT_MAX_NAV_TARGETS])
                 except Exception as exc:
                     LOG.debug("Browser page resolution failed: %s", type(exc).__name__)
+                    print(f"⚠️ Browser page resolution failed: {type(exc).__name__}", flush=True)
                 finally:
                     await page.close()
 
@@ -366,4 +368,5 @@ def resolve(
         )
     except Exception as exc:
         LOG.warning("Browser media resolver failed: %s", type(exc).__name__)
+        print(f"⚠️ Browser media resolver failed: {type(exc).__name__}", flush=True)
         return []
