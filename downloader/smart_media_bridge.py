@@ -7,8 +7,17 @@ import inspect
 
 
 def install(bot_module) -> None:
-    """Wrap the legacy extractor and add conservative smart fallbacks."""
+    """Compose the legacy extractor, Smart Search, browser, and Cobalt fallbacks.
+
+    The bridge is installed after the complete bot module is imported, so it
+    can safely wrap both the legacy direct-media extractor and the existing
+    Smart Extraction entrypoint without modifying the production download or
+    Telegram upload code paths.
+    """
     original = getattr(bot_module, "extract_direct_media_urls", None)
+    original_smart = getattr(bot_module, "download_with_smart_extraction", None)
+    original_fallback = getattr(bot_module, "download_with_fallback", None)
+
     if not callable(original) or getattr(original, "_smart_search_bridge", False):
         return
 
@@ -117,4 +126,87 @@ def install(bot_module) -> None:
 
     wrapped._smart_search_bridge = True
     bot_module.extract_direct_media_urls = wrapped
+
+    # Critical handoff: the existing Smart Extraction function is a separate
+    # path and can finish with no candidate before download_with_fallback() is
+    # ever reached. Wrap it so a failed static/yt-dlp smart pass immediately
+    # hands control to the same direct-media/browser chain instead of waiting
+    # behind the Yoinku stage.
+    if callable(original_smart) and callable(original_fallback):
+        async def wrapped_smart(*args, **kwargs):
+            print("🔎 Smart Media Bridge: smart-extraction handoff active", flush=True)
+
+            try:
+                smart_result = original_smart(*args, **kwargs)
+            except Exception as exc:
+                print(
+                    f"⚠️ Smart Extraction handoff exception: {type(exc).__name__}",
+                    flush=True,
+                )
+                smart_result = None
+
+            if inspect.isawaitable(smart_result):
+                try:
+                    smart_result = await smart_result
+                except Exception as exc:
+                    print(
+                        f"⚠️ Smart Extraction handoff await failed: {type(exc).__name__}",
+                        flush=True,
+                    )
+                    smart_result = None
+
+            if isinstance(smart_result, tuple) and smart_result and smart_result[0]:
+                return smart_result
+
+            url = kwargs.get("url")
+            if url is None and args:
+                url = args[0]
+
+            if not url:
+                print("⚠️ Smart Media Bridge: no URL available for handoff", flush=True)
+                return smart_result
+
+            print(
+                "🌐 Smart Media Bridge: handing failed Smart Extraction to direct-media chain",
+                flush=True,
+            )
+
+            fallback_kwargs = {
+                "url": url,
+                "temp_dir": kwargs.get("temp_dir"),
+                "output_template": kwargs.get("output_template"),
+                "format_option": kwargs.get("format_option"),
+                "is_audio": kwargs.get("is_audio", False),
+                "attempt_id": kwargs.get("attempt_id"),
+                "attempt_number": kwargs.get("attempt_number"),
+            }
+
+            try:
+                return_value = original_fallback(**fallback_kwargs)
+                if inspect.isawaitable(return_value):
+                    return_value = await return_value
+                if isinstance(return_value, tuple) and return_value and return_value[0]:
+                    print(
+                        "🌐 Smart Media Bridge: direct-media handoff succeeded",
+                        flush=True,
+                    )
+                    return return_value[0], {
+                        "handoff": "direct_media_chain",
+                        "fallback_diagnostics": return_value[3] if len(return_value) > 3 else {},
+                    }
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(
+                    f"⚠️ Smart Media Bridge: direct-media handoff failed: {type(exc).__name__}",
+                    flush=True,
+                )
+
+            return smart_result
+
+        wrapped_smart._smart_search_bridge = True
+        bot_module.download_with_smart_extraction = wrapped_smart
+
     print("🔎 Smart Search async bridge: ENABLED", flush=True)
+    if callable(original_smart) and callable(original_fallback):
+        print("🌐 Smart Media Bridge: Smart Extraction handoff ENABLED", flush=True)
