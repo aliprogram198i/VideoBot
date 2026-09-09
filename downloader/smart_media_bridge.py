@@ -7,7 +7,7 @@ import inspect
 
 
 def install(bot_module) -> None:
-    """Wrap the legacy extractor and add conservative smart/browser fallbacks."""
+    """Wrap the legacy extractor and add conservative smart fallbacks."""
     original = getattr(bot_module, "extract_direct_media_urls", None)
     if not callable(original) or getattr(original, "_smart_search_bridge", False):
         return
@@ -17,11 +17,11 @@ def install(bot_module) -> None:
         "downloader.browser_media_resolver",
         fromlist=["resolve"],
     )
+    cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
 
     async def wrapped(url, *args, **kwargs):
         # Preserve the existing production extractor as the first and safest
-        # path. The new layers are strictly fallbacks and cannot replace a
-        # successful legacy result.
+        # path. All new layers are strictly fallbacks.
         try:
             existing = original(url, *args, **kwargs)
             if inspect.isawaitable(existing):
@@ -61,9 +61,7 @@ def install(bot_module) -> None:
             )
             return resolved
 
-        # Last resort for JavaScript-driven public players. This layer only
-        # observes normal browser requests; it never automates login, CAPTCHA,
-        # DRM decryption, or access-control bypasses.
+        # Browser fallback for JavaScript-driven public players.
         try:
             browser_resolved = await asyncio.to_thread(
                 browser_resolver.resolve,
@@ -83,6 +81,24 @@ def install(bot_module) -> None:
                 flush=True,
             )
             return browser_resolved
+
+        # Final independent API fallback. It returns a normal public/tunnel
+        # URL and hands that URL back to the existing downloader unchanged.
+        try:
+            cobalt_resolved = await asyncio.to_thread(cobalt_resolver.resolve, url)
+        except Exception as exc:
+            print(
+                f"⚠️ Cobalt Resolver failed: {type(exc).__name__}",
+                flush=True,
+            )
+            cobalt_resolved = []
+
+        if cobalt_resolved:
+            print(
+                f"🧩 Cobalt Resolver: resolved {len(cobalt_resolved)} public media candidate(s)",
+                flush=True,
+            )
+            return cobalt_resolved
 
         print("🔎 Smart Search: no public media candidate resolved", flush=True)
         return []
