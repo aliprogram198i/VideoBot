@@ -154,6 +154,10 @@ def _extract(page: str, source_url: str) -> tuple[list[tuple[str, int]], list[st
             pages.append(candidate)
 
     # JSON-LD and common JavaScript configuration objects.
+    script_blocks: list[str] = []
+    for match in re.finditer(r"<script\b[^>]*>(.*?)</script>", page, re.I | re.S):
+        script_blocks.append(match.group(1))
+
     for match in re.finditer(r"<script\b[^>]*type\s*=\s*([\"'])application/ld\+json\1[^>]*>(.*?)</script>", page, re.I | re.S):
         try:
             payload = json.loads(html_lib.unescape(match.group(2)))
@@ -161,15 +165,17 @@ def _extract(page: str, source_url: str) -> tuple[list[tuple[str, int]], list[st
             continue
         _collect_from_json(payload, source_url, media, pages)
 
-    # Common JS player properties. Keep page/player properties separate.
-    for match in re.finditer(r"\b(?:file|source|src|url|videoUrl|contentUrl|hls|dash|mp4|streamUrl)\s*[:=]\s*[\"'](.*?)[\"']", page, re.I | re.S):
-        candidate = _absolute(match.group(1), source_url)
-        if candidate:
-            media.append((candidate, 88 if _looks_media_url(candidate) else 78))
-    for match in re.finditer(r"\b(?:embedUrl|playerUrl|watchUrl|iframeUrl)\s*[:=]\s*[\"'](.*?)[\"']", page, re.I | re.S):
-        candidate = _absolute(match.group(1), source_url)
-        if candidate:
-            pages.append(candidate)
+    # Only inspect JavaScript bodies here. This prevents an HTML iframe's
+    # src="..." attribute from being mistaken for a media property named src.
+    for script in script_blocks:
+        for match in re.finditer(r"\b(?:file|source|src|url|videoUrl|contentUrl|hls|dash|mp4|streamUrl)\s*[:=]\s*[\"'](.*?)[\"']", script, re.I | re.S):
+            candidate = _absolute(match.group(1), source_url)
+            if candidate:
+                media.append((candidate, 88 if _looks_media_url(candidate) else 78))
+        for match in re.finditer(r"\b(?:embedUrl|playerUrl|watchUrl|iframeUrl)\s*[:=]\s*[\"'](.*?)[\"']", script, re.I | re.S):
+            candidate = _absolute(match.group(1), source_url)
+            if candidate:
+                pages.append(candidate)
 
     # Last-resort explicit media URLs visible in page source.
     for raw in _URL_RE.findall(page):
