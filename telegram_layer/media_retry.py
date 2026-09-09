@@ -9,18 +9,28 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import re
 
 from telegram import Bot
-from telegram.error import RetryAfter
+from telegram.error import BadRequest, RetryAfter
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRY_AFTER_ATTEMPTS = 6
 MAX_RETRY_AFTER_SECONDS = 120
+_RETRY_AFTER_BAD_REQUEST = re.compile(r"too many requests:\s*retry after\s+(\d+)", re.IGNORECASE)
+
+
+def _bad_request_retry_after(exc: BadRequest) -> float | None:
+    """Return Telegram's explicit retry delay for its flood-control BadRequest."""
+    match = _RETRY_AFTER_BAD_REQUEST.search(str(exc))
+    if not match:
+        return None
+    return float(match.group(1))
 
 
 def install_telegram_media_retry() -> None:
-    """Install an idempotent RetryAfter handler around Bot.send_video."""
+    """Install an idempotent flood-control handler around Bot.send_video."""
     if getattr(Bot, "_alibot_media_retry_installed", False):
         return
 
@@ -32,23 +42,28 @@ def install_telegram_media_retry() -> None:
             try:
                 return await original_send_video(self, *args, **kwargs)
             except RetryAfter as exc:
-                if attempt >= MAX_RETRY_AFTER_ATTEMPTS:
-                    logger.error(
-                        "Telegram media delivery: retry limit reached after RetryAfter=%ss",
-                        exc.retry_after,
-                    )
+                retry_after = max(1.0, float(exc.retry_after))
+            except BadRequest as exc:
+                retry_after = _bad_request_retry_after(exc)
+                if retry_after is None:
                     raise
 
-                retry_after = max(1.0, float(exc.retry_after))
-                delay = min(retry_after, MAX_RETRY_AFTER_SECONDS)
-                logger.warning(
-                    "Telegram media delivery: RetryAfter=%ss; waiting %.1fs before retry %d/%d",
-                    exc.retry_after,
-                    delay,
-                    attempt + 1,
-                    MAX_RETRY_AFTER_ATTEMPTS,
+            if attempt >= MAX_RETRY_AFTER_ATTEMPTS:
+                logger.error(
+                    "Telegram media delivery: retry limit reached after flood-control delay %.1fs",
+                    retry_after,
                 )
-                await asyncio.sleep(delay)
+                raise
+
+            delay = min(retry_after, MAX_RETRY_AFTER_SECONDS)
+            logger.warning(
+                "Telegram media delivery: flood control requested %.1fs; waiting %.1fs before retry %d/%d",
+                retry_after,
+                delay,
+                attempt + 1,
+                MAX_RETRY_AFTER_ATTEMPTS,
+            )
+            await asyncio.sleep(delay)
 
     Bot.send_video = send_video_with_retry
     Bot._alibot_media_retry_installed = True
