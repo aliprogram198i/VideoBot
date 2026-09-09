@@ -32,7 +32,7 @@ COPY --chown=videobot:videobot jobs ./jobs
 COPY --chown=videobot:videobot security ./security
 COPY --chown=videobot:videobot plugins ./plugins
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
-    && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/smart_search.py downloader/smart_media_bridge.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/yoinku_compat.py plugins/whatsapp_audio.py
+    && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/smart_search.py downloader/smart_media_bridge.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/yoinku_compat.py plugins/whatsapp_audio.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
