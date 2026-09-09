@@ -73,18 +73,18 @@ def _navigation_score(text: str, href: str) -> int:
     return _score_control(text, href)
 
 
-def _verify_media_file(path: str, *, is_audio: bool, min_bytes: int, min_duration: float) -> bool:
+def _verify_media_file(path: str, *, is_audio: bool, min_bytes: int, min_duration: float, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> bool:
     """Reject empty, tiny, non-media, or implausibly short provider files.
 
-    The strict thresholds are opt-in so existing generic downloads keep their
-    previous behavior. ffprobe is used for container-level validation rather
-    than trusting extension, Content-Type, or download events.
+    max_file_bytes is normally the global 500 MB limit. Provider-specific
+    callers may explicitly pass a larger bounded limit so the normal delivery
+    layer can split large videos after a verified local file is obtained.
     """
     try:
         size = os.path.getsize(path)
     except OSError:
         return False
-    if size <= 0 or size > DEFAULT_MAX_FILE_BYTES:
+    if size <= 0 or size > max_file_bytes:
         return False
     if not is_audio and min_bytes > 0 and size < min_bytes:
         print(f"⚠️ Browser Download Handoff: video file rejected as too small ({size} bytes)", flush=True)
@@ -178,7 +178,7 @@ def _stream_with_browser_context(url: str, output_dir: str, *, cookies: list[dic
                 if total > max_file_bytes:
                     return None
                 output.write(chunk)
-        if _verify_media_file(target, is_audio=is_audio, min_bytes=min_bytes, min_duration=min_duration):
+        if _verify_media_file(target, is_audio=is_audio, min_bytes=min_bytes, min_duration=min_duration, max_file_bytes=max_file_bytes):
             print(f"🌐 Browser Download Handoff: streamed {total} bytes", flush=True)
             return target
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
@@ -334,13 +334,13 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                             try:
                                 await download.save_as(target)
                                 size = os.path.getsize(target)
-                                if _verify_media_file(target, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration):
+                                if _verify_media_file(target, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration, max_file_bytes=max_file_bytes):
                                     print(f"🌐 Browser Download Handoff: saved {size} bytes", flush=True)
                                     return target
                                 print(f"⚠️ Browser Download Handoff: saved file rejected ({size} bytes)", flush=True)
                             finally:
                                 try:
-                                    if os.path.exists(target) and not _verify_media_file(target, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration):
+                                    if os.path.exists(target) and not _verify_media_file(target, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration, max_file_bytes=max_file_bytes):
                                         os.remove(target)
                                 except OSError:
                                     pass
@@ -350,13 +350,13 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                                 path = await download.path()
                                 if path and os.path.isfile(path):
                                     size = os.path.getsize(path)
-                                    if _verify_media_file(path, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration):
+                                    if _verify_media_file(path, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration, max_file_bytes=max_file_bytes):
                                         suffix = Path(path).suffix.lower()
                                         if suffix not in _MEDIA_FILE_EXTENSIONS:
                                             suffix = ".m4a" if is_audio else ".mp4"
                                         target = tempfile.mktemp(prefix="browser_", suffix=suffix, dir=output_dir)
                                         shutil.copyfile(path, target)
-                                        if _verify_media_file(target, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration) and os.path.getsize(target) == size:
+                                        if _verify_media_file(target, is_audio=is_audio, min_bytes=min_video_bytes, min_duration=min_video_duration, max_file_bytes=max_file_bytes) and os.path.getsize(target) == size:
                                             print(f"🌐 Browser Download Handoff: recovered download path ({size} bytes)", flush=True)
                                             return target
                                         try:
