@@ -20,6 +20,8 @@ def install(bot_module) -> None:
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
 
     async def wrapped(url, *args, **kwargs):
+        print("🔎 Smart Media Bridge: entered", flush=True)
+
         # Preserve the existing production extractor as the first and safest
         # path. All new layers are strictly fallbacks.
         try:
@@ -34,11 +36,16 @@ def install(bot_module) -> None:
             existing = []
 
         if existing:
+            print(
+                f"🔎 Smart Media Bridge: legacy returned {len(existing)} candidate(s)",
+                flush=True,
+            )
             return existing
 
         # Static HTML/embed/yt-dlp resolver remains the first fallback because
         # it is cheaper and does not launch a browser.
         try:
+            print("🔎 Smart Media Bridge: static resolver starting", flush=True)
             resolved = await asyncio.to_thread(
                 resolver.resolve,
                 url,
@@ -61,8 +68,12 @@ def install(bot_module) -> None:
             )
             return resolved
 
-        # Browser fallback for JavaScript-driven public players.
+        # Browser fallback for JavaScript-driven public players and explicit
+        # public download/server chains. This is intentionally unconditional
+        # after the static resolver so an extractor exception cannot suppress
+        # the browser layer.
         try:
+            print("🌐 Smart Media Bridge: browser resolver starting", flush=True)
             browser_resolved = await asyncio.to_thread(
                 browser_resolver.resolve,
                 url,
@@ -85,6 +96,7 @@ def install(bot_module) -> None:
         # Final independent API fallback. It returns a normal public/tunnel
         # URL and hands that URL back to the existing downloader unchanged.
         try:
+            print("🧩 Smart Media Bridge: Cobalt resolver starting", flush=True)
             cobalt_resolved = await asyncio.to_thread(cobalt_resolver.resolve, url)
         except Exception as exc:
             print(
