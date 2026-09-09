@@ -1,8 +1,4 @@
-"""Dedicated public-link discovery for Shahid4u pages.
-
-This adapter only follows public download/server links exposed by the page.
-It does not bypass authentication, CAPTCHA, DRM, or other access controls.
-"""
+"""Dedicated public-link discovery for Shahid4u pages."""
 from __future__ import annotations
 
 import html
@@ -77,14 +73,15 @@ def _score(url: str, label: str = "") -> int:
 def _extract(page_url: str, body: bytes) -> list[str]:
     text = body.decode("utf-8", errors="ignore")
     ranked: dict[str, int] = {}
-    for match in re.finditer(r"<a\\b[^>]*href\\s*=\\s*[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>", text, re.I | re.S):
+    anchor_re = re.compile(r'<a\b[^>]*href\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.I | re.S)
+    for match in anchor_re.finditer(text):
         href = urljoin(page_url, html.unescape(match.group(1)))
         label = re.sub(r"<[^>]+>", " ", html.unescape(match.group(2)))
-        label = re.sub(r"\\s+", " ", label).strip()
+        label = re.sub(r"\s+", " ", label).strip()
         if _probable_media(href, label):
             ranked[href] = max(ranked.get(href, 0), _score(href, label))
-    for raw in re.findall(r"https?://[^\\\"'<>\\s]+", text, re.I):
-        href = html.unescape(raw).rstrip(")>,;\\\"'")
+    for raw in re.findall(r'https?://[^\s"\'<>]+', text, re.I):
+        href = html.unescape(raw).rstrip(")>,;\"'")
         if _probable_media(href):
             ranked[href] = max(ranked.get(href, 0), _score(href))
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
