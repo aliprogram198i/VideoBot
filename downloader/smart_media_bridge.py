@@ -8,10 +8,10 @@ import os
 from urllib.parse import urlparse
 
 
-# Shahid4u may expose a legitimate movie file larger than the generic
+# Shahid4u may expose legitimate movie files larger than the generic
 # 500 MB extraction guard. The normal delivery layer already splits large
-# videos for Telegram, so this larger bound is isolated to this provider.
-SHAHID4U_MAX_HANDOFF_BYTES = 1 * 1024 * 1024 * 1024
+# videos for Telegram, so this larger bounded limit is isolated to this provider.
+SHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_BYTES = 5 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_DURATION = 60.0
 
@@ -157,7 +157,7 @@ def install(bot_module) -> None:
             handoff_kwargs = {"validator": bot_module.validate_public_http_url, "is_audio": is_audio, "max_file_bytes": max_bytes, "referer_url": source_url if isinstance(source_url, str) else None}
             if strict_provider_validation and not is_audio:
                 handoff_kwargs.update({"min_video_bytes": SHAHID4U_MIN_VIDEO_BYTES, "min_video_duration": SHAHID4U_MIN_VIDEO_DURATION})
-                print("🎯 Shahid4u Handoff: strict media validation enabled (>=5MB, >=60s, max 1GB)", flush=True)
+                print("🎯 Shahid4u Handoff: strict media validation enabled (>=5MB, >=60s, max 2GB)", flush=True)
             for candidate in candidate_urls[:12]:
                 try:
                     print(f"🌐 Browser Download Handoff: trying candidate {candidate.split('?', 1)[0]}", flush=True)
