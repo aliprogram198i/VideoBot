@@ -1,9 +1,9 @@
 """Bounded handoff for browser-triggered public media downloads.
 
 This layer is intentionally separate from media discovery. It consumes a
-public candidate already discovered by the browser resolver, triggers the
-normal browser download action, saves the resulting file into the caller's
-temporary directory, and returns a verified local path.
+public candidate already discovered by the browser resolver, preserves the
+source-page browser context, triggers the normal browser download action, and
+streams a verified media response into the caller's temporary directory.
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 LOG = logging.getLogger(__name__)
 
@@ -31,6 +33,11 @@ _SERVER_WORDS = (
     "سيرفر", "سيرفرات", "مشاهدة", "مشغل", "تشغيل", "السيرفر",
     "السيرفرات",
 )
+_MEDIA_TYPES = (
+    "video/", "audio/", "application/octet-stream", "application/mp4",
+    "application/x-mpegurl", "application/vnd.apple.mpegurl",
+)
+_PLAYLIST_TYPES = ("mpegurl", "m3u8", "dash", "mpd")
 
 
 def _is_http_url(value: str) -> bool:
@@ -139,6 +146,90 @@ def _safe_filename(name: str, is_audio: bool) -> str:
     return (safe[:80] or "browser_download") + suffix
 
 
+def _looks_like_media(content_type: str, candidate_url: str, is_audio: bool) -> bool:
+    value = (content_type or "").casefold()
+    path = urlparse(candidate_url).path.casefold()
+    if any(token in value or token in path for token in _PLAYLIST_TYPES):
+        return False
+    if is_audio:
+        return value.startswith("audio/") or "octet-stream" in value or path.endswith((".mp3", ".m4a", ".aac", ".opus", ".wav"))
+    return value.startswith("video/") or "octet-stream" in value or path.endswith((".mp4", ".mkv", ".webm", ".mov", ".ts"))
+
+
+def _cookie_header(cookies: list[dict]) -> str:
+    pairs = []
+    for cookie in cookies or []:
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if isinstance(name, str) and isinstance(value, str):
+            pairs.append(f"{name}={value}")
+    return "; ".join(pairs)
+
+
+def _stream_with_browser_context(candidate_url: str, output_dir: str, *, cookies: list[dict], referer_url: str | None, is_audio: bool, max_file_bytes: int, timeout_s: float) -> str | None:
+    """Stream a public candidate using cookies established by Chromium.
+
+    This is deliberately a streaming fallback: it never loads the media body
+    into memory, so large-file handling remains compatible with the existing
+    splitter/Telegram pipeline.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
+        "Accept": "video/*,audio/*,application/octet-stream;q=0.9,*/*;q=0.2",
+    }
+    cookie_value = _cookie_header(cookies)
+    if cookie_value:
+        headers["Cookie"] = cookie_value
+    if referer_url:
+        headers["Referer"] = referer_url
+
+    fd, target = tempfile.mkstemp(prefix="browser_stream_", suffix=_safe_filename("media", is_audio)[-5:], dir=output_dir)
+    os.close(fd)
+    total = 0
+    try:
+        request = Request(candidate_url, headers=headers, method="GET")
+        with urlopen(request, timeout=timeout_s) as response:
+            content_type = response.headers.get("Content-Type", "")
+            content_length = response.headers.get("Content-Length")
+            try:
+                declared = int(content_length) if content_length else 0
+            except ValueError:
+                declared = 0
+            if declared > max_file_bytes or not _looks_like_media(content_type, candidate_url, is_audio):
+                return None
+
+            suggested = response.headers.get_filename() or ""
+            suffix = Path(_safe_filename(suggested or "media", is_audio)).suffix
+            final_target = target
+            if suffix:
+                renamed = target + suffix
+                os.replace(target, renamed)
+                final_target = renamed
+
+            with open(final_target, "wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_file_bytes:
+                        return None
+                    output.write(chunk)
+            if total <= 0:
+                return None
+            LOG.info("Browser context stream saved %d bytes", total)
+            print(f"🌐 Browser Download Handoff: streamed {total} bytes", flush=True)
+            return final_target
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return None
+    finally:
+        if not locals().get("final_target") or not os.path.exists(locals().get("final_target", "")):
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+
+
 async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audio: bool, timeout_ms: int, settle_ms: int, max_file_bytes: int, referer_url: str | None = None) -> str | None:
     if not _is_http_url(candidate_url):
         return None
@@ -161,11 +252,8 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
             browser = await playwright.chromium.launch(
                 headless=True,
                 args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--no-first-run",
-                    "--no-default-browser-check",
+                    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+                    "--no-first-run", "--no-default-browser-check",
                 ],
             )
         except Exception:
@@ -180,6 +268,21 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
             if referer_url:
                 context_kwargs["extra_http_headers"] = {"Referer": referer_url}
             context = await browser.new_context(**context_kwargs)
+
+            # Establish the same first-party/browser context before touching the
+            # external candidate. This preserves cookies/session state used by
+            # the source page and fixes candidates that reject isolated requests.
+            if referer_url:
+                source_page = await context.new_page()
+                try:
+                    await source_page.goto(referer_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    await source_page.wait_for_timeout(settle_ms)
+                except Exception:
+                    pass
+                finally:
+                    await source_page.close()
+
+            cookies = await context.cookies()
             queue = [candidate_url]
             visited = set()
 
@@ -201,25 +304,42 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                     os.close(fd)
                     await download.save_as(target)
                     size = os.path.getsize(target)
-                    if size <= 0 or size > max_file_bytes:
-                        try:
-                            os.remove(target)
-                        except OSError:
-                            pass
-                        continue
-                    LOG.info("Browser download handoff saved %d bytes", size)
-                    print(f"🌐 Browser Download Handoff: saved {size} bytes", flush=True)
-                    return target
-                except Exception:
+                    if 0 < size <= max_file_bytes:
+                        LOG.info("Browser download handoff saved %d bytes", size)
+                        print(f"🌐 Browser Download Handoff: saved {size} bytes", flush=True)
+                        return target
                     try:
-                        await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms, referer=referer_url)
-                        await page.wait_for_timeout(settle_ms)
-                        await _click_controls(page, DEFAULT_MAX_CLICKS)
-                        for link in await _candidate_links(page, page_url):
-                            if link not in visited and link not in queue:
-                                queue.append(link)
-                    except Exception:
+                        os.remove(target)
+                    except OSError:
                         pass
+                except Exception:
+                    pass
+
+                # The browser may receive an inline media response rather than
+                # emitting a Playwright Download event. Stream that candidate
+                # with the cookies captured from the now-primed browser context.
+                stream_result = await asyncio.to_thread(
+                    _stream_with_browser_context,
+                    page_url,
+                    output_dir,
+                    cookies=cookies,
+                    referer_url=referer_url,
+                    is_audio=is_audio,
+                    max_file_bytes=max_file_bytes,
+                    timeout_s=max(5.0, timeout_ms / 1000.0),
+                )
+                if stream_result:
+                    return stream_result
+
+                try:
+                    await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms, referer=referer_url)
+                    await page.wait_for_timeout(settle_ms)
+                    await _click_controls(page, DEFAULT_MAX_CLICKS)
+                    for link in await _candidate_links(page, page_url):
+                        if link not in visited and link not in queue:
+                            queue.append(link)
+                except Exception:
+                    pass
                 finally:
                     await page.close()
 
