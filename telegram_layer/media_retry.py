@@ -42,18 +42,23 @@ def install_telegram_media_retry() -> None:
             try:
                 return await original_send_video(self, *args, **kwargs)
             except RetryAfter as exc:
+                if attempt >= MAX_RETRY_AFTER_ATTEMPTS:
+                    logger.error(
+                        "Telegram media delivery: retry limit reached after RetryAfter=%ss",
+                        exc.retry_after,
+                    )
+                    raise
                 retry_after = max(1.0, float(exc.retry_after))
             except BadRequest as exc:
                 retry_after = _bad_request_retry_after(exc)
                 if retry_after is None:
                     raise
-
-            if attempt >= MAX_RETRY_AFTER_ATTEMPTS:
-                logger.error(
-                    "Telegram media delivery: retry limit reached after flood-control delay %.1fs",
-                    retry_after,
-                )
-                raise
+                if attempt >= MAX_RETRY_AFTER_ATTEMPTS:
+                    logger.error(
+                        "Telegram media delivery: retry limit reached after flood-control delay %.1fs",
+                        retry_after,
+                    )
+                    raise
 
             delay = min(retry_after, MAX_RETRY_AFTER_SECONDS)
             logger.warning(
