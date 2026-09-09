@@ -331,7 +331,7 @@ async def _resolve_async(
                         candidates[response_url] = (score, content_type)
 
                 async def on_download(download) -> None:
-                    """Capture direct browser downloads without downloading them to disk."""
+                    """Capture browser downloads exposed by explicit public download links."""
                     try:
                         download_url = download.url
                         suggested = (download.suggested_filename or "").lower()
@@ -340,8 +340,22 @@ async def _resolve_async(
                     if not _is_http_url(download_url):
                         return
                     path = urlparse(download_url).path.lower()
-                    if not (any(path.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS) or
-                            any(suggested.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS)):
+                    query = urlparse(download_url).query.lower()
+                    is_media_file = (
+                        any(path.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS)
+                        or any(suggested.endswith(ext) for ext in _MEDIA_FILE_EXTENSIONS)
+                    )
+                    # Some movie hosts intentionally hide the media extension
+                    # behind signed endpoints such as ?secure_stream=... .
+                    # The event can only originate from a browser download, and
+                    # this resolver reaches it only through an explicit public
+                    # server/download chain, so these bounded markers are safe
+                    # media hints without assuming every octet-stream is video.
+                    secure_media_endpoint = any(
+                        marker in query or marker in path
+                        for marker in ("secure_stream", "download", "direct_stream", "media")
+                    )
+                    if not (is_media_file or secure_media_endpoint):
                         return
                     try:
                         validator(download_url)
