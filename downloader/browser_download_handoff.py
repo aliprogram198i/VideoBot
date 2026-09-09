@@ -139,11 +139,13 @@ def _safe_filename(name: str, is_audio: bool) -> str:
     return (safe[:80] or "browser_download") + suffix
 
 
-async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audio: bool, timeout_ms: int, settle_ms: int, max_file_bytes: int) -> str | None:
+async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audio: bool, timeout_ms: int, settle_ms: int, max_file_bytes: int, referer_url: str | None = None) -> str | None:
     if not _is_http_url(candidate_url):
         return None
     try:
         validator(candidate_url)
+        if referer_url:
+            validator(referer_url)
     except Exception:
         return None
 
@@ -170,11 +172,14 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
             return None
 
         try:
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
-                java_script_enabled=True,
-                accept_downloads=True,
-            )
+            context_kwargs = {
+                "user_agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
+                "java_script_enabled": True,
+                "accept_downloads": True,
+            }
+            if referer_url:
+                context_kwargs["extra_http_headers"] = {"Referer": referer_url}
+            context = await browser.new_context(**context_kwargs)
             queue = [candidate_url]
             visited = set()
 
@@ -186,13 +191,13 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                 page = await context.new_page()
                 try:
                     async with page.expect_download(timeout=timeout_ms) as download_info:
-                        await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms, referer=referer_url)
                         await page.wait_for_timeout(settle_ms)
                         await _click_controls(page, DEFAULT_MAX_CLICKS)
                     download = await download_info.value
                     suggested = download.suggested_filename or ""
-                    target = os.path.join(output_dir, _safe_filename(suggested, is_audio))
-                    fd, target = tempfile.mkstemp(prefix="browser_", suffix=Path(target).suffix, dir=output_dir)
+                    target_suffix = Path(_safe_filename(suggested, is_audio)).suffix
+                    fd, target = tempfile.mkstemp(prefix="browser_", suffix=target_suffix, dir=output_dir)
                     os.close(fd)
                     await download.save_as(target)
                     size = os.path.getsize(target)
@@ -207,7 +212,7 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                     return target
                 except Exception:
                     try:
-                        await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms, referer=referer_url)
                         await page.wait_for_timeout(settle_ms)
                         await _click_controls(page, DEFAULT_MAX_CLICKS)
                         for link in await _candidate_links(page, page_url):
@@ -225,14 +230,14 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
     return None
 
 
-def resolve_to_file(candidate_url: str, output_dir: str, *, validator, is_audio: bool = False, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> str | None:
+def resolve_to_file(candidate_url: str, output_dir: str, *, validator, is_audio: bool = False, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES, referer_url: str | None = None) -> str | None:
     """Trigger a public browser download and return a verified local file."""
     try:
-        return asyncio.run(_save_async(candidate_url, output_dir, validator=validator, is_audio=is_audio, timeout_ms=timeout_ms, settle_ms=settle_ms, max_file_bytes=max_file_bytes))
+        return asyncio.run(_save_async(candidate_url, output_dir, validator=validator, is_audio=is_audio, timeout_ms=timeout_ms, settle_ms=settle_ms, max_file_bytes=max_file_bytes, referer_url=referer_url))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(_save_async(candidate_url, output_dir, validator=validator, is_audio=is_audio, timeout_ms=timeout_ms, settle_ms=settle_ms, max_file_bytes=max_file_bytes))
+            return loop.run_until_complete(_save_async(candidate_url, output_dir, validator=validator, is_audio=is_audio, timeout_ms=timeout_ms, settle_ms=settle_ms, max_file_bytes=max_file_bytes, referer_url=referer_url))
         finally:
             loop.close()
     except Exception as exc:
