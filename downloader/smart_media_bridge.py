@@ -8,7 +8,7 @@ import os
 
 
 def install(bot_module) -> None:
-    """Compose the legacy extractor, Smart Search, browser, and Cobalt fallbacks."""
+    """Compose legacy, provider-specific, static, browser, and Cobalt fallbacks."""
     original = getattr(bot_module, "extract_direct_media_urls", None)
     original_smart = getattr(bot_module, "download_with_smart_extraction", None)
     original_fallback = getattr(bot_module, "download_with_fallback", None)
@@ -17,14 +17,13 @@ def install(bot_module) -> None:
         return
 
     resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
+    shahid4u_resolver = __import__("downloader.shahid4u_resolver", fromlist=["resolve"])
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
     browser_handoff = __import__("downloader.browser_download_handoff", fromlist=["resolve_to_file"])
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
 
-    # Browser resolution happens inside the legacy fallback, which normally
-    # only receives candidate URLs and does not expose them to the caller.
-    # Keep a short-lived per-source handoff queue so the isolated Browser
-    # Download Handoff can consume the exact candidates captured by Chromium.
+    # Short-lived per-source queue. Provider/browser discovery returns public
+    # candidates; Browser Handoff is responsible for materializing a local file.
     browser_candidate_cache = {}
 
     def _is_local_file(value, temp_dir):
@@ -42,8 +41,43 @@ def install(bot_module) -> None:
             return value
         return None
 
+    def _queue_candidates(source_url, values):
+        if not source_url:
+            return
+        normalized = []
+        for item in values or []:
+            candidate = item.get("url") if isinstance(item, dict) else item
+            if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and candidate not in normalized:
+                normalized.append(candidate)
+        if normalized:
+            browser_candidate_cache[source_url] = normalized[:16]
+
     async def wrapped(url, *args, **kwargs):
         print("🔎 Smart Media Bridge: entered", flush=True)
+
+        # Dedicated site adapter comes first for Shahid4u. This avoids relying
+        # on generic extraction heuristics for a page whose download section
+        # intentionally delegates to downstream download servers.
+        try:
+            provider_resolved = await asyncio.to_thread(
+                shahid4u_resolver.resolve,
+                url,
+                validator=bot_module.validate_public_http_url,
+                request_factory=bot_module.Request,
+                open_function=bot_module.safe_urlopen,
+                read_function=bot_module.read_limited,
+            )
+        except Exception as exc:
+            print(f"⚠️ Shahid4u Resolver failed: {type(exc).__name__}", flush=True)
+            provider_resolved = []
+        if provider_resolved:
+            _queue_candidates(url, provider_resolved)
+            print(
+                f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff",
+                flush=True,
+            )
+            return provider_resolved
+
         try:
             existing = original(url, *args, **kwargs)
             if inspect.isawaitable(existing):
@@ -54,6 +88,7 @@ def install(bot_module) -> None:
         if existing:
             print(f"🔎 Smart Media Bridge: legacy returned {len(existing)} candidate(s)", flush=True)
             return existing
+
         try:
             print("🔎 Smart Media Bridge: static resolver starting", flush=True)
             resolved = await asyncio.to_thread(
@@ -70,6 +105,7 @@ def install(bot_module) -> None:
         if resolved:
             print(f"🔎 Smart Search Resolver: resolved {len(resolved)} public media candidate(s)", flush=True)
             return resolved
+
         try:
             print("🌐 Smart Media Bridge: browser resolver starting", flush=True)
             browser_resolved = await asyncio.to_thread(
@@ -81,13 +117,13 @@ def install(bot_module) -> None:
             print(f"⚠️ Browser Media Resolver failed: {type(exc).__name__}", flush=True)
             browser_resolved = []
         if browser_resolved:
-            browser_candidate_cache[url] = list(browser_resolved)
+            _queue_candidates(url, browser_resolved)
             print(
-                f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s); "
-                "queued for Browser Download Handoff",
+                f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s); queued for Browser Download Handoff",
                 flush=True,
             )
             return browser_resolved
+
         try:
             print("🧩 Smart Media Bridge: Cobalt resolver starting", flush=True)
             cobalt_resolved = await asyncio.to_thread(cobalt_resolver.resolve, url)
@@ -97,6 +133,7 @@ def install(bot_module) -> None:
         if cobalt_resolved:
             print(f"🧩 Cobalt Resolver: resolved {len(cobalt_resolved)} public media candidate(s)", flush=True)
             return cobalt_resolved
+
         print("🔎 Smart Media Search: no public media candidate resolved", flush=True)
         return []
 
@@ -116,19 +153,13 @@ def install(bot_module) -> None:
             if source_url is None and args:
                 source_url = args[0]
 
-            # A fallback result is only a successful download when its first
-            # element is an actual local file. A direct URL is a candidate,
-            # not a downloaded artifact, and must continue to Browser Handoff.
             if isinstance(result, tuple) and result and _is_local_file(result[0], temp_dir):
                 browser_candidate_cache.pop(source_url, None)
                 return result
 
-            candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else {}
+            candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else []
             candidate_urls = []
 
-            # Consume the exact candidates captured by Browser Resolver. This
-            # is the critical bridge between Chromium's download event and the
-            # separate browser context that materializes the file locally.
             cached_candidates = browser_candidate_cache.pop(source_url, []) if source_url else []
             for item in cached_candidates:
                 candidate = item.get("url") if isinstance(item, dict) else item
@@ -150,8 +181,7 @@ def install(bot_module) -> None:
                 return result
 
             print(
-                f"🌐 Browser Download Handoff: normal direct download produced no file; "
-                f"processing {len(candidate_urls)} candidate(s)",
+                f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)",
                 flush=True,
             )
             max_bytes = getattr(
@@ -160,12 +190,9 @@ def install(bot_module) -> None:
                 500 * 1024 * 1024,
             )
 
-            for candidate in candidate_urls[:8]:
+            for candidate in candidate_urls[:12]:
                 try:
-                    print(
-                        "🌐 Browser Download Handoff: trying captured candidate",
-                        flush=True,
-                    )
+                    print(f"🌐 Browser Download Handoff: trying candidate {candidate.split('?', 1)[0]}", flush=True)
                     local_path = await asyncio.to_thread(
                         browser_handoff.resolve_to_file,
                         candidate,
@@ -216,10 +243,6 @@ def install(bot_module) -> None:
                 smart_result = None
 
             temp_dir = kwargs.get("temp_dir")
-
-            # Do not treat a returned URL as a downloaded file. Smart
-            # extraction may return a direct-media candidate, which still
-            # needs the isolated Browser Download Handoff to materialize it.
             if isinstance(smart_result, tuple) and smart_result and _is_local_file(smart_result[0], temp_dir):
                 return smart_result
 
@@ -266,3 +289,4 @@ def install(bot_module) -> None:
         print("🌐 Smart Media Bridge: Smart Extraction handoff ENABLED", flush=True)
     if callable(original_fallback):
         print("🌐 Smart Media Bridge: Browser Download Handoff ENABLED", flush=True)
+    print("🎯 Shahid4u Provider Resolver: ENABLED", flush=True)
