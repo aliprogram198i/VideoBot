@@ -66,42 +66,6 @@ def install(bot_module) -> None:
     wrapped._smart_search_bridge = True
     bot_module.extract_direct_media_urls = wrapped
 
-    if callable(original_smart) and callable(original_fallback):
-        async def wrapped_smart(*args, **kwargs):
-            print("🔎 Smart Media Bridge: smart-extraction handoff active", flush=True)
-            try:
-                smart_result = original_smart(*args, **kwargs)
-                if inspect.isawaitable(smart_result):
-                    smart_result = await smart_result
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                print(f"⚠️ Smart Extraction handoff failed: {type(exc).__name__}", flush=True)
-                smart_result = None
-            if isinstance(smart_result, tuple) and smart_result and smart_result[0]:
-                return smart_result
-            url = kwargs.get("url")
-            if url is None and args:
-                url = args[0]
-            if not url:
-                return smart_result
-            print("🌐 Smart Media Bridge: handing failed Smart Extraction to direct-media chain", flush=True)
-            fallback_kwargs = {"url": url, "temp_dir": kwargs.get("temp_dir"), "output_template": kwargs.get("output_template"), "format_option": kwargs.get("format_option"), "is_audio": kwargs.get("is_audio", False), "attempt_id": kwargs.get("attempt_id"), "attempt_number": kwargs.get("attempt_number")}
-            try:
-                return_value = original_fallback(**fallback_kwargs)
-                if inspect.isawaitable(return_value):
-                    return_value = await return_value
-                if isinstance(return_value, tuple) and return_value and return_value[0]:
-                    print("🌐 Smart Media Bridge: direct-media handoff succeeded", flush=True)
-                    return return_value[0], {"handoff": "direct_media_chain", "fallback_diagnostics": return_value[3] if len(return_value) > 3 else {}}
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                print(f"⚠️ Smart Media Bridge: direct-media handoff failed: {type(exc).__name__}", flush=True)
-            return smart_result
-        wrapped_smart._smart_search_bridge = True
-        bot_module.download_with_smart_extraction = wrapped_smart
-
     if callable(original_fallback):
         async def wrapped_fallback(*args, **kwargs):
             result = original_fallback(*args, **kwargs)
@@ -109,12 +73,14 @@ def install(bot_module) -> None:
                 result = await result
             if isinstance(result, tuple) and result and result[0]:
                 return result
+
             temp_dir = kwargs.get("temp_dir")
             is_audio = bool(kwargs.get("is_audio", False))
             diagnostics = result[3] if isinstance(result, tuple) and len(result) > 3 else {}
             candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else []
             if not temp_dir or not candidates:
                 return result
+
             print("🌐 Browser Download Handoff: normal direct download produced no file", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
             candidate_urls = []
@@ -122,6 +88,7 @@ def install(bot_module) -> None:
                 candidate = item.get("url") if isinstance(item, dict) else item
                 if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and candidate not in candidate_urls:
                     candidate_urls.append(candidate)
+
             for candidate in candidate_urls[:8]:
                 try:
                     local_path = await asyncio.to_thread(browser_handoff.resolve_to_file, candidate, temp_dir, validator=bot_module.validate_public_http_url, is_audio=is_audio, max_file_bytes=max_bytes)
@@ -140,10 +107,65 @@ def install(bot_module) -> None:
                         handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}
                         handoff_diagnostics.update({"status": "browser_download_handoff_success", "handoff_candidate": candidate, "bytes_downloaded": size})
                         return local_path, "Browser Download Handoff: saved local file", "", handoff_diagnostics
+
             print("🌐 Browser Download Handoff: no usable browser file", flush=True)
             return result
+
         wrapped_fallback._smart_search_bridge = True
         bot_module.download_with_fallback = wrapped_fallback
+    else:
+        wrapped_fallback = None
+
+    if callable(original_smart) and callable(original_fallback):
+        async def wrapped_smart(*args, **kwargs):
+            print("🔎 Smart Media Bridge: smart-extraction handoff active", flush=True)
+            try:
+                smart_result = original_smart(*args, **kwargs)
+                if inspect.isawaitable(smart_result):
+                    smart_result = await smart_result
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"⚠️ Smart Extraction handoff failed: {type(exc).__name__}", flush=True)
+                smart_result = None
+
+            if isinstance(smart_result, tuple) and smart_result and smart_result[0]:
+                return smart_result
+
+            url = kwargs.get("url")
+            if url is None and args:
+                url = args[0]
+            if not url:
+                return smart_result
+
+            print("🌐 Smart Media Bridge: handing failed Smart Extraction to direct-media chain", flush=True)
+            fallback_kwargs = {
+                "url": url,
+                "temp_dir": kwargs.get("temp_dir"),
+                "output_template": kwargs.get("output_template"),
+                "format_option": kwargs.get("format_option"),
+                "is_audio": kwargs.get("is_audio", False),
+                "attempt_id": kwargs.get("attempt_id"),
+                "attempt_number": kwargs.get("attempt_number"),
+            }
+            try:
+                if callable(wrapped_fallback):
+                    return_value = wrapped_fallback(**fallback_kwargs)
+                else:
+                    return_value = original_fallback(**fallback_kwargs)
+                if inspect.isawaitable(return_value):
+                    return_value = await return_value
+                if isinstance(return_value, tuple) and return_value and return_value[0]:
+                    print("🌐 Smart Media Bridge: direct-media handoff succeeded", flush=True)
+                    return return_value[0], {"handoff": "direct_media_chain", "fallback_diagnostics": return_value[3] if len(return_value) > 3 else {}}
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"⚠️ Smart Media Bridge: direct-media handoff failed: {type(exc).__name__}", flush=True)
+            return smart_result
+
+        wrapped_smart._smart_search_bridge = True
+        bot_module.download_with_smart_extraction = wrapped_smart
 
     print("🔎 Smart Search async bridge: ENABLED", flush=True)
     if callable(original_smart) and callable(original_fallback):
