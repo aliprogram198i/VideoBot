@@ -24,7 +24,7 @@ def _now():
 def admin_keyboard():
     """Single source of truth for the top-level admin navigation."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 لوحة القيادة", callback_data="admin_home"),
+        [InlineKeyboardButton("📊 مركز العمليات", callback_data="admin_ops_dashboard"),
          InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("📥 التنزيلات والبيانات", callback_data="admin_records"),
          InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
@@ -42,7 +42,7 @@ def _records_keyboard():
         [InlineKeyboardButton("🔗 سجل الروابط والتحميلات", callback_data="admin_download_log_0")],
         [InlineKeyboardButton("🧹 مسح سجل الجميع", callback_data="admin_global_history_reset")],
         [InlineKeyboardButton("👥 إدارة سجلات مستخدم", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
+        [InlineKeyboardButton("📊 مركز العمليات", callback_data="admin_ops_dashboard")],
     ])
 
 
@@ -331,16 +331,18 @@ async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if not _authorized(update, get_db, owner_id, "roles.view"):
         return
     conn = get_db()
-    rows = conn.execute(
-        "SELECT role, COUNT(*) AS count FROM admin_roles GROUP BY role ORDER BY count DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT user_id, role, permissions, updated_at FROM admin_roles ORDER BY updated_at DESC").fetchall()
     conn.close()
-    lines = ["🛡️ <b>الأدوار والصلاحيات</b>", "━━━━━━━━━━━━━━━━━━━━", "", "👑 Owner: صلاحية كاملة"]
+    lines = ["🛡️ <b>الأدوار والصلاحيات</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
     for row in rows:
-        if row['role'] != 'owner':
-            lines.append(f"• {row['role']}: {row['count']}")
-    lines += ["", "🔒 تعديل الأدوار غير مفعّل تلقائياً في هذه المرحلة لحماية لوحة الإدارة."]
-    audit(get_db, owner_id, "view_admin_roles")
-    await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+        lines.append(f"• 👤 <code>{row['user_id']}</code> — <b>{html_escape_role(row['role'])}</b> — {html_escape_role(row['updated_at'])}")
+    if not rows:
+        lines.append("لا توجد أدوار مسجلة.")
+    await query.edit_message_text("\n".join(lines)[:3900], parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
     ]))
+
+
+def html_escape_role(value):
+    import html
+    return html.escape(str(value or ""))
