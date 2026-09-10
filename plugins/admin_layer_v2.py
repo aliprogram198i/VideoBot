@@ -27,6 +27,7 @@ from .admin_users import process_user_message, process_search, register_admin_us
 from .admin_users_plus import register_admin_users_plus
 from .admin_user_links import register_admin_user_links
 from .admin_download_log import register_admin_download_log
+from .admin_operations_center import register_admin_operations_center
 from .download_log_enrichment import register_download_log_enrichment
 from .admin_stats import register_admin_stats
 from .admin_broadcast import register_admin_broadcast, process_broadcast
@@ -113,6 +114,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     _register_core_callback(app, admin_health_callback, r"^admin_health$", get_db, admin_id)
     _register_core_callback(app, admin_audit_callback, r"^admin_audit$", get_db, admin_id)
     _register_core_callback(app, admin_roles_callback, r"^admin_roles$", get_db, admin_id)
+    register_admin_operations_center(app, get_db, admin_id)
 
     # Canonical user workspace: list/filters + user detail/actions + download links.
     register_admin_users_plus(app, get_db, admin_id)
