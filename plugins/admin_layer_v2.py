@@ -50,6 +50,20 @@ async def _admin_entry(update, context, admin_id: int) -> None:
     raise ApplicationHandlerStop
 
 
+async def _phase3_security_entry(update, context, admin_id: int, get_db) -> None:
+    if not (update.effective_user and update.effective_user.id == admin_id):
+        return
+    from .admin_security_center import _callback
+    await _callback(update, context, admin_id, get_db)
+
+
+async def _phase3_backup_entry(update, context, admin_id: int) -> None:
+    if not (update.effective_user and update.effective_user.id == admin_id):
+        return
+    from .admin_backup_recovery import _callback
+    await _callback(update, context, admin_id)
+
+
 def _remove_legacy_admin_handlers(app: Any) -> tuple[int, int]:
     """Remove retired dashboard handlers before the canonical layer is installed."""
     retired_commands = {"hebaali", "stats", "broadcast"}
@@ -121,6 +135,11 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_fallback_intelligence(app, admin_id)
     register_admin_backup_recovery(app, admin_id, get_db)
     register_admin_security_center(app, admin_id, get_db)
+
+    # Explicit owner-only phase-3 commands provide safe entry points without
+    # altering the existing top-level keyboard layout.
+    app.add_handler(CommandHandler("adminsecurity", lambda u, c: _phase3_security_entry(u, c, admin_id, get_db)), group=-200)
+    app.add_handler(CommandHandler("adminbackup", lambda u, c: _phase3_backup_entry(u, c, admin_id)), group=-200)
 
     # Canonical user workspace: list/filters + user detail/actions + download links.
     register_admin_users_plus(app, get_db, admin_id)
