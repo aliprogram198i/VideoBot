@@ -95,6 +95,8 @@ def _dashboard_keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton("🩺 صحة المنصات", callback_data="admin_ops_platforms")],
         [InlineKeyboardButton("🚨 مركز الحوادث", callback_data="admin_ops_incidents")],
         [InlineKeyboardButton("🧠 Fallback Intelligence", callback_data="admin_fallback_intelligence")],
+        [InlineKeyboardButton("🛡️ مركز الأمان", callback_data="admin_security"),
+         InlineKeyboardButton("🗄️ النسخ والاستعادة", callback_data="admin_backup_recovery")],
         [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ])
 
@@ -234,7 +236,6 @@ async def incidents_callback(update: Update, context, get_db, owner_id: int) -> 
             "📌 عند ربط Telemetry/Incident Store في مرحلة لاحقة ستعرض الصفحة التجميع، التكرار، المنصة المتأثرة، الشدة والحالة.",
         ]
     else:
-        # Schema varies between deployments; inspect only common columns and never mutate it.
         conn = get_db()
         try:
             columns = {row[1] for row in conn.execute(f"PRAGMA table_info({source})").fetchall()}
