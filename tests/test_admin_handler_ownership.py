@@ -49,6 +49,27 @@ def test_retired_legacy_admin_callbacks_are_removed():
     assert all(_pattern(h) not in legacy_patterns for h in app.handlers[0])
 
 
+def test_legacy_user_detail_callback_is_removed_without_touching_user_features():
+    patterns = [
+        r"^user_\d+$",
+        r"^user_single_download$",
+        r"^user_batch_prompt$",
+        r"^user_history$",
+        r"^user_history_pick_\d+$",
+    ]
+    app = FakeApp({0: [CallbackQueryHandler(lambda *_: None, pattern=p) for p in patterns]})
+
+    removed = _remove_legacy_admin_callback_handlers(app)
+
+    remaining = {_pattern(handler) for handlers in app.handlers.values() for handler in handlers}
+    assert removed == 1
+    assert r"^user_\d+$" not in remaining
+    assert r"^user_single_download$" in remaining
+    assert r"^user_batch_prompt$" in remaining
+    assert r"^user_history$" in remaining
+    assert r"^user_history_pick_\d+$" in remaining
+
+
 def test_new_admin_registration_has_no_duplicate_exact_callback_owners():
     app = FakeApp()
     register_admin_control_center(app, _get_db_factory(), OWNER_ID)
