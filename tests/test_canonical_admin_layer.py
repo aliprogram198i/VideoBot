@@ -22,8 +22,13 @@ def pattern(handler):
     return getattr(value, "pattern", None) or (value if isinstance(value, str) else "")
 
 
-def _register_without_runtime_db_migration(monkeypatch):
-    """Keep ownership tests focused on handler composition, not DB migration."""
+def _isolate_admin_runtime_initializers(monkeypatch):
+    """Keep ownership tests focused on handler composition, not DB setup/migrations."""
+    monkeypatch.setattr(
+        admin_layer_v2,
+        "init_admin_control_center",
+        lambda get_db, owner_id: None,
+    )
     monkeypatch.setattr(
         admin_layer_v2,
         "register_download_log_enrichment",
@@ -32,7 +37,7 @@ def _register_without_runtime_db_migration(monkeypatch):
 
 
 def _build_app(monkeypatch):
-    _register_without_runtime_db_migration(monkeypatch)
+    _isolate_admin_runtime_initializers(monkeypatch)
     app = FakeApp()
 
     class Bot:
