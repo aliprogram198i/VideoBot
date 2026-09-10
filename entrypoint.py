@@ -65,6 +65,7 @@ def main() -> None:
         register_user_activity = importlib.import_module("plugins.user_activity").register_user_activity
         register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
+        register_user_features = importlib.import_module("plugins.user_features").register_user_features
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
         register_admin_layer = importlib.import_module("plugins.admin_layer").register_admin_layer
@@ -87,6 +88,7 @@ def main() -> None:
             if not registered:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
+                register_user_features(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
 
                 # Media conversion is isolated from URL/download and admin
