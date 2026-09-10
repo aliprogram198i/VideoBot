@@ -59,16 +59,23 @@ def test_canonical_admin_layer_has_single_exact_callback_owner(monkeypatch):
     assert len(patterns) == len(set(patterns))
 
 
-def test_user_workspace_has_no_legacy_users_page_owner(monkeypatch):
+def test_user_workspace_has_single_canonical_users_page_owner(monkeypatch):
     app = _build_app(monkeypatch)
-    patterns = [
-        pattern(handler)
-        for handlers in app.handlers.values()
-        for handler in handlers
-        if isinstance(handler, CallbackQueryHandler)
+    handlers = [
+        handler
+        for group_handlers in app.handlers.values()
+        for handler in group_handlers
+        if isinstance(handler, CallbackQueryHandler) and pattern(handler)
     ]
-    assert sum(bool(re.fullmatch(r"\^admin_users_page_0\$", p)) for p in patterns) == 1
-    assert not any(p == r"^admin_users_page_\d+$" for p in patterns)
+    matching = [
+        handler
+        for handler in handlers
+        if re.fullmatch(pattern(handler), "admin_users_page_0")
+    ]
+    assert len(matching) == 1
+    # The old standalone page owner must not be reintroduced.
+    assert not any(pattern(handler) == r"^admin_users_page_0$" for handler in handlers)
+    assert not any(pattern(handler) == r"^admin_users_page_\d+$" for handler in handlers)
 
 
 def test_all_top_level_admin_buttons_have_registered_owner(monkeypatch):
