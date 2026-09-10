@@ -1,9 +1,8 @@
 from pathlib import Path
 """Staged runtime entrypoint for AliBot.
 
-Keeps the legacy bot implementation intact while composing isolated runtime
-layers before polling starts. Production configuration and Telegram polling
-behavior are otherwise unchanged.
+Keeps the bot runtime stable while composing isolated runtime layers before polling starts.
+The administrative UI is owned exclusively by plugins.admin_layer_v2.
 """
 
 import fcntl
@@ -20,14 +19,7 @@ LOCK_RETRY_SECONDS = 1
 
 
 def normalize_runtime_environment():
-    """Normalize deployment-provided secrets before importing the bot module.
-
-    Railway/environment editors can preserve CR/LF or tab characters when a
-    secret is pasted from another terminal or text source. A control character
-    embedded inside BOT_TOKEN is not removed by ``strip()`` and can therefore
-    reach the Telegram API URL and make httpx reject it as an invalid URL.
-    Never log the secret itself.
-    """
+    """Normalize deployment-provided secrets before importing the bot module."""
     token = os.getenv("BOT_TOKEN")
     if token is not None:
         normalized = token.replace("\r", "").replace("\n", "").replace("\t", "").strip()
@@ -68,8 +60,7 @@ def main() -> None:
         register_user_features = importlib.import_module("plugins.user_features").register_user_features
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
-        register_admin_layer = importlib.import_module("plugins.admin_layer").register_admin_layer
-        register_admin_user_links = importlib.import_module("plugins.admin_user_links").register_admin_user_links
+        register_admin_layer = importlib.import_module("plugins.admin_layer_v2").register_admin_layer
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
@@ -90,20 +81,13 @@ def main() -> None:
                 register_smart_search_pro(self, bot_module)
                 register_user_features(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
-
-                # Media conversion is isolated from URL/download and admin
-                # handlers. It only consumes Telegram voice/audio updates.
                 register_whatsapp_audio(self, bot_module)
 
-                # Admin layer must run before the user-links overlay. The admin
-                # layer removes legacy callback routes, including the historical
-                # admin_user_view/user patterns. Registering user-links first
-                # would therefore remove the new handler we intend to keep.
+                # One canonical administrative runtime. It removes retired
+                # handlers before installing the isolated admin ownership graph.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
-                register_admin_user_links(self, bot_module.get_db, bot_module.ADMIN_ID)
 
-                print("🛡️ Admin layer registered", flush=True)
-                print("🔗 Admin user download-links layer registered", flush=True)
+                print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
                 registered = True
             return original_run_polling(self, *args, **kwargs)
