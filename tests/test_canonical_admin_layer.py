@@ -1,10 +1,9 @@
 import re
-import sqlite3
 
 from telegram.ext import CallbackQueryHandler
 
 from plugins.admin_control_center import admin_keyboard
-from plugins.admin_layer_v2 import register_admin_layer
+import plugins.admin_layer_v2 as admin_layer_v2
 
 
 OWNER_ID = 1486412391
@@ -18,24 +17,34 @@ class FakeApp:
         self.handlers.setdefault(group, []).append(handler)
 
 
-def get_db():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def pattern(handler):
     value = getattr(handler, "pattern", None)
     return getattr(value, "pattern", None) or (value if isinstance(value, str) else "")
 
 
-def test_canonical_admin_layer_has_single_exact_callback_owner():
+def _register_without_runtime_db_migration(monkeypatch):
+    """Keep ownership tests focused on handler composition, not DB migration."""
+    monkeypatch.setattr(
+        admin_layer_v2,
+        "register_download_log_enrichment",
+        lambda bot_module: None,
+    )
+
+
+def _build_app(monkeypatch):
+    _register_without_runtime_db_migration(monkeypatch)
     app = FakeApp()
+
     class Bot:
         ADMIN_ID = OWNER_ID
-        get_db = staticmethod(get_db)
+        get_db = staticmethod(lambda: None)
 
-    register_admin_layer(app, Bot, OWNER_ID)
+    admin_layer_v2.register_admin_layer(app, Bot, OWNER_ID)
+    return app
+
+
+def test_canonical_admin_layer_has_single_exact_callback_owner(monkeypatch):
+    app = _build_app(monkeypatch)
     patterns = [
         pattern(handler)
         for handlers in app.handlers.values()
@@ -45,13 +54,8 @@ def test_canonical_admin_layer_has_single_exact_callback_owner():
     assert len(patterns) == len(set(patterns))
 
 
-def test_user_workspace_has_no_legacy_users_page_owner():
-    app = FakeApp()
-    class Bot:
-        ADMIN_ID = OWNER_ID
-        get_db = staticmethod(get_db)
-
-    register_admin_layer(app, Bot, OWNER_ID)
+def test_user_workspace_has_no_legacy_users_page_owner(monkeypatch):
+    app = _build_app(monkeypatch)
     patterns = [
         pattern(handler)
         for handlers in app.handlers.values()
@@ -62,13 +66,8 @@ def test_user_workspace_has_no_legacy_users_page_owner():
     assert not any(p == r"^admin_users_page_\d+$" for p in patterns)
 
 
-def test_all_top_level_admin_buttons_have_registered_owner():
-    app = FakeApp()
-    class Bot:
-        ADMIN_ID = OWNER_ID
-        get_db = staticmethod(get_db)
-
-    register_admin_layer(app, Bot, OWNER_ID)
+def test_all_top_level_admin_buttons_have_registered_owner(monkeypatch):
+    app = _build_app(monkeypatch)
     patterns = [
         pattern(handler)
         for handlers in app.handlers.values()
