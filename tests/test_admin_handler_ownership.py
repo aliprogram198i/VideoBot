@@ -51,7 +51,7 @@ def test_retired_legacy_admin_callbacks_are_removed():
 
 def test_legacy_user_detail_callback_is_removed_without_touching_user_features():
     patterns = [
-        r"^user_12345$",
+        r"^user_\d+$",
         r"^user_single_download$",
         r"^user_batch_prompt$",
         r"^user_history$",
@@ -63,7 +63,7 @@ def test_legacy_user_detail_callback_is_removed_without_touching_user_features()
 
     remaining = {_pattern(handler) for handlers in app.handlers.values() for handler in handlers}
     assert removed == 1
-    assert r"^user_12345$" not in remaining
+    assert r"^user_\d+$" not in remaining
     assert r"^user_single_download$" in remaining
     assert r"^user_batch_prompt$" in remaining
     assert r"^user_history$" in remaining
