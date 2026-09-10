@@ -19,7 +19,6 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-
 MAX_BATCH_URLS = 5
 MAX_URL_LENGTH = 2048
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
@@ -130,7 +129,7 @@ def _type_keyboard(language: str) -> InlineKeyboardMarkup:
 def _extract_urls(text: str) -> list[str]:
     found: list[str] = []
     for raw in URL_RE.findall(text or ""):
-        url = raw.rstrip(".,;!?)\]}>")
+        url = raw.rstrip(".,;!?)[]}>")
         if len(url) > MAX_URL_LENGTH:
             continue
         if url not in found:
@@ -306,8 +305,6 @@ async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot
             try:
                 await bot_module.download_media(batch_update, context)
             except Exception:
-                # Existing downloader records/logs its own errors. Continue so
-                # one bad URL cannot cancel the remaining batch.
                 continue
         context.user_data.pop("user_batch_urls", None)
         context.user_data.pop("batch_index", None)
