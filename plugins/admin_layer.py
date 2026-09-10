@@ -49,7 +49,7 @@ def _remove_legacy_admin_command_handlers(app: Any) -> int:
 def _remove_legacy_admin_callback_handlers(app: Any) -> int:
     """Remove every callback family whose runtime owner has moved to plugins."""
     prefixes = (
-        r"^admin_home$", r"^admin_users_", r"^user_", r"^admin_user_view_", r"^admin_user_clear_",
+        r"^admin_home$", r"^admin_users_", r"^user_\d+$", r"^admin_user_view_", r"^admin_user_clear_",
         r"^admin_global_history_reset$", r"^admin_control_center$", r"^admin_records$", r"^admin_health$",
         r"^admin_audit$", r"^admin_roles$", r"^admin_smart_operations$", r"^admin_ai$", r"^ai_test$",
         r"^ai_stats$", r"^ai_report$", r"^ai_users$", r"^ai_websites$", r"^ai_errors$", r"^admin_ai_refresh$",
