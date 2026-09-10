@@ -12,6 +12,10 @@ OWNER_ID = 1486412391
 class FakeApp:
     def __init__(self):
         self.handlers = {}
+        # python-telegram-bot exposes bot_data on Application. The canonical
+        # admin runtime now stores the shared get_db provider there, so the
+        # ownership test double must model that stable Application contract.
+        self.bot_data = {}
 
     def add_handler(self, handler, group=0):
         self.handlers.setdefault(group, []).append(handler)
