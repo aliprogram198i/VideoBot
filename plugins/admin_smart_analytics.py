@@ -1,16 +1,11 @@
-"""Read-only Smart Analytics and anomaly detection for AliBot administration.
-
-Phase 4 intentionally observes existing Smart telemetry only. It never creates,
-updates, deletes, promotes, or rolls back telemetry, policies, users, downloads,
-or production configuration. All findings are advisory and sample-size aware.
-"""
+"""Read-only Smart Analytics and anomaly detection for AliBot administration."""
 
 from __future__ import annotations
 
 import html
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -34,78 +29,56 @@ def _telemetry_path() -> Path:
     return Path(".smart_data") / "smart_learning.db"
 
 
-def _read_only_connect(path: Path) -> sqlite3.Connection | None:
+def _connect_ro(path: Path) -> sqlite3.Connection | None:
     if not path.is_file():
         return None
     try:
-        uri = f"file:{path.resolve().as_posix()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=5)
+        conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=5)
         conn.row_factory = sqlite3.Row
         return conn
     except (OSError, sqlite3.Error):
         return None
 
 
-def _period_stats(conn: sqlite3.Connection, start_hours: int, end_hours: int) -> dict[str, Any]:
-    params = (f"-{start_hours} hours", f"-{end_hours} hours")
-    outcome_rows = conn.execute(
-        """SELECT success FROM smart_outcomes
-           WHERE created_at >= datetime('now', ?) AND created_at < datetime('now', ?)
-           ORDER BY id DESC""",
-        params,
+def _period(conn: sqlite3.Connection, start_hours: int, end_hours: int) -> dict[str, Any]:
+    start = f"-{start_hours} hours"
+    end = f"-{end_hours} hours"
+    outcomes = conn.execute(
+        "SELECT success FROM smart_outcomes WHERE julianday(created_at) >= julianday('now', ?) AND julianday(created_at) < julianday('now', ?)",
+        (start, end),
     ).fetchall()
-    latency_rows = conn.execute(
-        """SELECT extraction_ms FROM smart_telemetry
-           WHERE created_at >= datetime('now', ?) AND created_at < datetime('now', ?)
-           AND extraction_ms IS NOT NULL
-           ORDER BY id DESC""",
-        params,
-    ).fetchall()
-    telemetry_count = int(conn.execute(
-        """SELECT COUNT(*) FROM smart_telemetry
-           WHERE created_at >= datetime('now', ?) AND created_at < datetime('now', ?)""",
-        params,
-    ).fetchone()[0])
-    successes = sum(int(row[0]) for row in outcome_rows)
-    outcomes = len(outcome_rows)
-    failures = outcomes - successes
-    latencies = [float(row[0]) for row in latency_rows if row[0] is not None]
+    latencies = [float(row[0]) for row in conn.execute(
+        "SELECT extraction_ms FROM smart_telemetry WHERE julianday(created_at) >= julianday('now', ?) AND julianday(created_at) < julianday('now', ?) AND extraction_ms IS NOT NULL",
+        (start, end),
+    ).fetchall() if row[0] is not None]
+    telemetry = conn.execute(
+        "SELECT COUNT(*) FROM smart_telemetry WHERE julianday(created_at) >= julianday('now', ?) AND julianday(created_at) < julianday('now', ?)",
+        (start, end),
+    ).fetchone()[0]
+    total = len(outcomes)
+    success = sum(int(row[0]) for row in outcomes)
     return {
-        "telemetry": telemetry_count,
-        "outcomes": outcomes,
-        "successes": successes,
-        "failures": failures,
-        "success_rate": round(successes * 100 / outcomes, 1) if outcomes else None,
+        "telemetry": int(telemetry),
+        "outcomes": total,
+        "successes": success,
+        "failures": total - success,
+        "success_rate": round(success * 100 / total, 1) if total else None,
         "avg_ms": round(mean(latencies), 1) if latencies else None,
         "p95_ms": round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)], 1) if latencies else None,
     }
 
 
 def _empty() -> dict[str, Any]:
-    return {
-        "available": False,
-        "current": {},
-        "previous": {},
-        "hosts": [],
-        "anomalies": [],
-        "recommendations": [],
-        "policy": "غير متاح",
-        "candidates": 0,
-        "evaluations": 0,
-    }
+    return {"available": False, "current": {}, "previous": {}, "hosts": [], "anomalies": [], "recommendations": [], "policy": "غير متاح", "candidates": 0, "evaluations": 0}
 
 
 def _confidence(sample: int) -> str:
-    if sample >= 50:
-        return "عالٍ"
-    if sample >= 20:
-        return "متوسط"
-    return "منخفض"
+    return "عالٍ" if sample >= 50 else "متوسط" if sample >= 20 else "منخفض"
 
 
 def collect_smart_analytics(path: Path | None = None) -> dict[str, Any]:
-    """Collect anomaly signals from Smart telemetry using SQLite read-only mode."""
-    conn = _read_only_connect(path or _telemetry_path())
+    """Analyze existing telemetry in SQLite read-only mode; never mutate it."""
+    conn = _connect_ro(path or _telemetry_path())
     if conn is None:
         return _empty()
     try:
@@ -113,68 +86,42 @@ def collect_smart_analytics(path: Path | None = None) -> dict[str, Any]:
         required = {"smart_telemetry", "smart_outcomes", "smart_policy_versions", "smart_evaluations"}
         if not required.issubset(tables):
             return _empty()
-
-        current = _period_stats(conn, 24, 0)
-        previous = _period_stats(conn, 48, 24)
-        anomalies: list[dict[str, Any]] = []
+        current, previous = _period(conn, 24, 0), _period(conn, 48, 24)
+        anomalies: list[dict[str, str]] = []
         recommendations: list[str] = []
-
         if current["outcomes"] >= 10 and previous["outcomes"] >= 10:
             drop = float(previous["success_rate"] or 0) - float(current["success_rate"] or 0)
-            if drop >= 15.0:
-                anomalies.append({"severity": "HIGH" if drop >= 25 else "MEDIUM", "title": "انخفاض معدل النجاح", "detail": f"انخفض {drop:.1f} نقطة مئوية خلال آخر 24 ساعة مقارنة بالـ24 ساعة السابقة.", "confidence": _confidence(current["outcomes"])})
+            if drop >= 15:
+                anomalies.append({"severity": "HIGH" if drop >= 25 else "MEDIUM", "title": "انخفاض معدل النجاح", "detail": f"انخفض {drop:.1f} نقطة مئوية خلال آخر 24 ساعة.", "confidence": _confidence(current["outcomes"])})
                 recommendations.append("افحص المنصات ذات أعلى معدل فشل قبل تغيير أي extractor أو policy.")
-
-        if current["avg_ms"] is not None and previous["avg_ms"] is not None and current["outcomes"] >= 10 and previous["outcomes"] >= 10:
-            increase = (current["avg_ms"] / previous["avg_ms"] - 1.0) * 100 if previous["avg_ms"] else 0
-            if increase >= 50.0:
-                anomalies.append({"severity": "MEDIUM", "title": "ارتفاع زمن الاستخراج", "detail": f"ارتفع المتوسط {increase:.1f}% إلى {current['avg_ms']} ms.", "confidence": _confidence(current["outcomes"])})
-                recommendations.append("راجع مصادر التأخير وراقب p95 قبل تعديل مسار الاستخراج.")
-
+            if current["avg_ms"] and previous["avg_ms"] and current["avg_ms"] >= previous["avg_ms"] * 1.5:
+                increase = (current["avg_ms"] / previous["avg_ms"] - 1) * 100
+                anomalies.append({"severity": "MEDIUM", "title": "ارتفاع زمن الاستخراج", "detail": f"ارتفع المتوسط {increase:.1f}%.", "confidence": _confidence(current["outcomes"])})
+                recommendations.append("راجع مصادر التأخير وراقب P95 قبل تعديل مسار الاستخراج.")
         if current["telemetry"] >= 20 and previous["telemetry"] >= 10 and current["telemetry"] >= previous["telemetry"] * 2:
-            anomalies.append({"severity": "LOW", "title": "ارتفاع حجم الطلبات", "detail": f"Telemetry الحالية {current['telemetry']} مقابل {previous['telemetry']} في الفترة السابقة.", "confidence": _confidence(current["telemetry"])})
-            recommendations.append("راقب استهلاك الموارد ومعدل الأخطاء؛ لا يتم تغيير حدود التشغيل تلقائيًا.")
+            anomalies.append({"severity": "LOW", "title": "ارتفاع حجم الطلبات", "detail": f"{current['telemetry']} مقابل {previous['telemetry']} سابقًا.", "confidence": _confidence(current["telemetry"])})
+            recommendations.append("راقب الموارد ومعدل الأخطاء؛ لا توجد تغييرات تلقائية.")
 
-        host_rows = conn.execute(
-            """SELECT COALESCE(t.source_host,'unknown') AS host,
-                      COUNT(*) AS telemetry,
-                      COUNT(o.id) AS outcomes,
-                      SUM(CASE WHEN o.success=0 THEN 1 ELSE 0 END) AS failures,
-                      AVG(t.extraction_ms) AS avg_ms
-               FROM smart_telemetry t
-               LEFT JOIN smart_outcomes o ON o.telemetry_id=t.id
-               WHERE t.created_at >= datetime('now','-24 hours')
-               GROUP BY t.source_host
-               HAVING COUNT(o.id) >= 5
-               ORDER BY failures DESC, outcomes DESC
-               LIMIT 8"""
+        rows = conn.execute(
+            """SELECT COALESCE(t.source_host,'unknown') host, COUNT(o.id) outcomes,
+                      SUM(CASE WHEN o.success=0 THEN 1 ELSE 0 END) failures,
+                      AVG(t.extraction_ms) avg_ms
+               FROM smart_telemetry t LEFT JOIN smart_outcomes o ON o.telemetry_id=t.id
+               WHERE julianday(t.created_at) >= julianday('now','-24 hours')
+               GROUP BY t.source_host HAVING COUNT(o.id) >= 5
+               ORDER BY failures DESC, outcomes DESC LIMIT 8"""
         ).fetchall()
-        hosts: list[dict[str, Any]] = []
-        for row in host_rows:
-            outcomes = int(row["outcomes"] or 0)
-            failures = int(row["failures"] or 0)
-            rate = round((outcomes - failures) * 100 / outcomes, 1) if outcomes else None
-            hosts.append({"host": row["host"], "outcomes": outcomes, "failure_rate": round(failures * 100 / outcomes, 1) if outcomes else 0.0, "success_rate": rate, "avg_ms": round(float(row["avg_ms"]), 1) if row["avg_ms"] is not None else None})
-            if outcomes >= 10 and failures * 100 / outcomes >= 50:
-                anomalies.append({"severity": "HIGH", "title": f"تدهور منصة: {row['host']}", "detail": f"معدل الفشل {failures * 100 / outcomes:.1f}% خلال آخر 24 ساعة.", "confidence": _confidence(outcomes)})
-                recommendations.append(f"تحقق من {row['host']} أولًا؛ لا يتم تعطيله أو تغيير policy تلقائيًا.")
+        hosts = []
+        for row in rows:
+            total, failures = int(row["outcomes"] or 0), int(row["failures"] or 0)
+            failure_rate = round(failures * 100 / total, 1) if total else 0
+            hosts.append({"host": row["host"], "outcomes": total, "failure_rate": failure_rate, "avg_ms": round(float(row["avg_ms"]), 1) if row["avg_ms"] is not None else None})
+            if total >= 10 and failure_rate >= 50:
+                anomalies.append({"severity": "HIGH", "title": f"تدهور منصة: {row['host']}", "detail": f"معدل الفشل {failure_rate}%.", "confidence": _confidence(total)})
+                recommendations.append(f"تحقق من {row['host']} أولًا؛ لا يتم تعطيله تلقائيًا.")
 
-        production = conn.execute(
-            "SELECT version FROM smart_policy_versions WHERE status='production' ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-        candidates = int(conn.execute("SELECT COUNT(*) FROM smart_policy_versions WHERE status='candidate'").fetchone()[0])
-        evaluations = int(conn.execute("SELECT COUNT(*) FROM smart_evaluations").fetchone()[0])
-        return {
-            "available": True,
-            "current": current,
-            "previous": previous,
-            "hosts": hosts,
-            "anomalies": anomalies,
-            "recommendations": list(dict.fromkeys(recommendations))[:5],
-            "policy": str(production[0]) if production else "غير متاح",
-            "candidates": candidates,
-            "evaluations": evaluations,
-        }
+        production = conn.execute("SELECT version FROM smart_policy_versions WHERE status='production' ORDER BY created_at DESC LIMIT 1").fetchone()
+        return {"available": True, "current": current, "previous": previous, "hosts": hosts, "anomalies": anomalies, "recommendations": list(dict.fromkeys(recommendations))[:5], "policy": str(production[0]) if production else "غير متاح", "candidates": int(conn.execute("SELECT COUNT(*) FROM smart_policy_versions WHERE status='candidate'").fetchone()[0]), "evaluations": int(conn.execute("SELECT COUNT(*) FROM smart_evaluations").fetchone()[0])}
     except sqlite3.Error:
         return _empty()
     finally:
@@ -194,45 +141,20 @@ def _keyboard() -> InlineKeyboardMarkup:
 def _render(data: dict[str, Any]) -> str:
     if not data["available"]:
         return "🧠 <b>Smart Analytics</b>\n━━━━━━━━━━━━━━━━━━━━\n\n🟠 بيانات التحليل غير متاحة حاليًا.\n\nℹ️ لم يتم إنشاء أو تعديل أي قاعدة بيانات."
-    current = data["current"]
-    previous = data["previous"]
-    cur_rate = f"{current['success_rate']}%" if current["success_rate"] is not None else "غير متاح"
-    prev_rate = f"{previous['success_rate']}%" if previous["success_rate"] is not None else "غير متاح"
-    cur_lat = f"{current['avg_ms']} ms" if current["avg_ms"] is not None else "غير متاح"
-    p95 = f"{current['p95_ms']} ms" if current["p95_ms"] is not None else "غير متاح"
-    lines = [
-        "🧠 <b>Smart Analytics</b>",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "📈 <b>مقارنة آخر 24 ساعة</b>",
-        f"• النتائج: {current['outcomes']} | نجاح: {cur_rate} | السابق: {prev_rate}",
-        f"• Telemetry: {current['telemetry']} | المتوسط: {cur_lat} | P95: {p95}",
-        "",
-        f"🧩 سياسة الإنتاج: <code>{html.escape(str(data['policy']))}</code>",
-        f"🧪 مرشحون: {data['candidates']} | تقييمات: {data['evaluations']}",
-        "",
-        "🚨 <b>الإشارات المكتشفة</b>",
-    ]
+    cur, prev = data["current"], data["previous"]
+    cur_rate = f"{cur['success_rate']}%" if cur["success_rate"] is not None else "غير متاح"
+    prev_rate = f"{prev['success_rate']}%" if prev["success_rate"] is not None else "غير متاح"
+    avg = f"{cur['avg_ms']} ms" if cur["avg_ms"] is not None else "غير متاح"
+    p95 = f"{cur['p95_ms']} ms" if cur["p95_ms"] is not None else "غير متاح"
+    lines = ["🧠 <b>Smart Analytics</b>", "━━━━━━━━━━━━━━━━━━━━", "", "📈 <b>مقارنة آخر 24 ساعة</b>", f"• النتائج: {cur['outcomes']} | نجاح: {cur_rate} | السابق: {prev_rate}", f"• Telemetry: {cur['telemetry']} | المتوسط: {avg} | P95: {p95}", "", f"🧩 سياسة الإنتاج: <code>{html.escape(str(data['policy']))}</code>", f"🧪 مرشحون: {data['candidates']} | تقييمات: {data['evaluations']}", "", "🚨 <b>الإشارات المكتشفة</b>"]
     if data["anomalies"]:
-        for item in data["anomalies"][:6]:
-            lines.append(f"• [{item['severity']}] {html.escape(item['title'])} — {html.escape(item['detail'])} — ثقة {item['confidence']}")
+        lines += [f"• [{x['severity']}] {html.escape(x['title'])} — {html.escape(x['detail'])} — ثقة {x['confidence']}" for x in data["anomalies"][:6]]
     else:
         lines.append("• 🟢 لا توجد إشارة شذوذ تستوفي عتبات العينة الحالية.")
-
     lines += ["", "🌐 <b>صحة المصادر</b>"]
-    if data["hosts"]:
-        for host in data["hosts"][:6]:
-            lines.append(f"• {html.escape(str(host['host']))}: فشل {host['failure_rate']}% | متوسط {host['avg_ms'] if host['avg_ms'] is not None else '—'} ms")
-    else:
-        lines.append("• لا توجد عينة كافية للمصادر.")
-
+    lines += [f"• {html.escape(str(x['host']))}: فشل {x['failure_rate']}% | متوسط {x['avg_ms'] if x['avg_ms'] is not None else '—'} ms" for x in data["hosts"][:6]] or ["• لا توجد عينة كافية للمصادر."]
     lines += ["", "💡 <b>التوصيات</b>"]
-    if data["recommendations"]:
-        for item in data["recommendations"]:
-            lines.append(f"• {html.escape(item)}")
-    else:
-        lines.append("• لا توجد توصيات تشغيلية مطلوبة حاليًا.")
-
+    lines += [f"• {html.escape(x)}" for x in data["recommendations"]] or ["• لا توجد توصيات تشغيلية مطلوبة حاليًا."]
     lines += ["", "🔐 <b>وضع آمن</b>", "التحليل استشاري فقط: لا تدريب تلقائي، لا ترقية policy، لا تغيير extractor، ولا تعديل لبيانات المستخدمين أو التنزيلات."]
     return "\n".join(lines)[:_MAX_TEXT]
 
@@ -243,22 +165,11 @@ async def smart_analytics_callback(update: Update, context, get_db, owner_id: in
     if not authorize(update, get_db, owner_id, "analytics.view"):
         return
     try:
-        data = collect_smart_analytics()
-        await query.edit_message_text(_render(data), parse_mode="HTML", reply_markup=_keyboard(), disable_web_page_preview=True)
+        await query.edit_message_text(_render(collect_smart_analytics()), parse_mode="HTML", reply_markup=_keyboard(), disable_web_page_preview=True)
     except Exception:
-        await query.edit_message_text(
-            "🧠 <b>Smart Analytics</b>\n━━━━━━━━━━━━━━━━━━━━\n\n🔴 تعذر تنفيذ التحليل حاليًا.\n\nℹ️ لم يتم تعديل بيانات النظام.",
-            parse_mode="HTML", reply_markup=_keyboard(),
-        )
+        await query.edit_message_text("🧠 <b>Smart Analytics</b>\n━━━━━━━━━━━━━━━━━━━━\n\n🔴 تعذر تنفيذ التحليل حاليًا.\n\nℹ️ لم يتم تعديل بيانات النظام.", parse_mode="HTML", reply_markup=_keyboard())
     raise ApplicationHandlerStop
 
 
 def register_admin_smart_analytics(app: Any, get_db, owner_id: int) -> None:
-    """Register the analytics route once at the isolated admin group."""
-    app.add_handler(
-        CallbackQueryHandler(
-            lambda u, c: smart_analytics_callback(u, c, get_db, owner_id),
-            pattern=rf"^{_CALLBACK}$",
-        ),
-        group=-150,
-    )
+    app.add_handler(CallbackQueryHandler(lambda u, c: smart_analytics_callback(u, c, get_db, owner_id), pattern=rf"^{_CALLBACK}$"), group=-150)
