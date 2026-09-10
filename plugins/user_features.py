@@ -23,6 +23,7 @@ MAX_BATCH_URLS = 5
 MAX_URL_LENGTH = 2048
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 BATCH_QUALITY_RE = re.compile(r"^(?:video_(?:best|1080|720|480|360)|audio_(?:best|320|256|192|128))$")
+BATCH_TYPE_RE = re.compile(r"^(?:video_menu|audio_menu)$")
 HISTORY_RE = re.compile(r"^user_history_pick_(\d+)$")
 
 _BATCH_LOCKS: dict[int, asyncio.Lock] = {}
@@ -187,7 +188,9 @@ async def _history(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_modul
     finally:
         conn.close()
     if not rows:
-        await update.message.reply_text(_messages(language)["history_empty"], parse_mode="HTML")
+        target = getattr(update, "message", None)
+        if target:
+            await target.reply_text(_messages(language)["history_empty"], parse_mode="HTML")
         return
     context.user_data["user_history"] = [dict(row) for row in rows]
     text = _messages(language)["history_title"]
@@ -199,7 +202,9 @@ async def _history(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_modul
         label = f"{index + 1}️⃣ {media} {website} {quality}".strip()
         text += f"{index + 1}. {website} • {quality}\n"
         keyboard.append([InlineKeyboardButton(label[:60], callback_data=f"user_history_pick_{index}")])
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    target = getattr(update, "message", None)
+    if target:
+        await target.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
@@ -276,6 +281,18 @@ class _QueryProxy:
         return None
 
 
+async def _batch_type_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user or not context.user_data.get("user_batch_urls"):
+        return
+    if not BATCH_TYPE_RE.match(query.data or ""):
+        return
+    context.user_data["video_url"] = list(context.user_data["user_batch_urls"])[0]
+    await bot_module.download_media(update, context)
+    raise ApplicationHandlerStop
+
+
 async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
     query = update.callback_query
     user = update.effective_user
@@ -285,11 +302,11 @@ async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot
         return
     if not BATCH_QUALITY_RE.match(query.data or ""):
         return
-    await query.answer()
     urls = list(context.user_data.get("user_batch_urls") or [])
     language = _language(bot_module, user.id)
     lock = _lock_for(user.id)
     if lock.locked():
+        await query.answer()
         await query.edit_message_text(_messages(language)["batch_busy"])
         return
     async with lock:
@@ -312,6 +329,7 @@ async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot
             await query.edit_message_text(_messages(language)["batch_done"].format(count=len(urls)), parse_mode="HTML")
         except Exception:
             pass
+    raise ApplicationHandlerStop
 
 
 async def _user_history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
@@ -330,6 +348,7 @@ def register_user_features(app: Any, bot_module: Any) -> None:
     app.add_handler(CallbackQueryHandler(lambda u, c: _batch_prompt(u, c, bot_module), pattern=r"^user_batch_prompt$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: _user_history_callback(u, c, bot_module), pattern=r"^user_history$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: _history_callback(u, c, bot_module), pattern=r"^user_history_pick_\d+$"), group=-1)
+    app.add_handler(CallbackQueryHandler(lambda u, c: _batch_type_menu(u, c, bot_module), pattern=BATCH_TYPE_RE), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: _batch_quality(u, c, bot_module), pattern=BATCH_QUALITY_RE), group=-1)
     app.add_handler(CommandHandler("history", lambda u, c: _history(u, c, bot_module)), group=-1)
     app.add_handler(CommandHandler("batch", lambda u, c: _batch_prompt_command(u, c, bot_module)), group=-1)
