@@ -122,9 +122,10 @@ def collect_smart_operations(get_db):
 def _keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 تحديث", callback_data=CALLBACK)],
+        [InlineKeyboardButton("🧠 Fallback Intelligence", callback_data="admin_fallback_intelligence")],
         [InlineKeyboardButton("📊 لوحة الإحصائيات", callback_data="admin_dashboard_30")],
         [InlineKeyboardButton("🤖 الذكاء الاصطناعي", callback_data="admin_ai")],
-        [InlineKeyboardButton("🔙 مركز التحكم الإداري", callback_data="admin_control_center")],
+        [InlineKeyboardButton("🔙 مركز التحكم الإداري", callback_data="admin_home")],
     ])
 
 
