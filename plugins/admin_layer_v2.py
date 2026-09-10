@@ -7,11 +7,12 @@ workspace, preventing duplicate callback ownership.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, CommandHandler
 
-from .admin_common import authorize
 from .admin_control_center import (
     _home_text,
     admin_keyboard,
@@ -22,8 +23,7 @@ from .admin_control_center import (
     admin_roles_callback,
     init_admin_control_center,
 )
-from .admin_users import process_user_message, process_search
-from .admin_users import register_admin_users
+from .admin_users import process_user_message, process_search, register_admin_users, user_view_callback
 from .admin_users_plus import register_admin_users_plus
 from .admin_user_links import register_admin_user_links
 from .admin_download_log import register_admin_download_log
@@ -34,7 +34,7 @@ from .admin_storage import register_admin_storage
 from .admin_global_history import register_admin_global_history
 from .admin_ai import register_admin_ai
 from .smart_operations import register_smart_operations
-from .admin_user_history import clear_prompt_callback, clear_confirm_callback, clear_cancel_callback
+from .admin_user_history import clear_prompt_callback, clear_confirm_callback
 
 
 async def _admin_entry(update, context, admin_id: int) -> None:
@@ -47,7 +47,7 @@ async def _admin_entry(update, context, admin_id: int) -> None:
 
 
 def _remove_legacy_admin_handlers(app: Any) -> tuple[int, int]:
-    """Remove only handlers belonging to the retired dashboard before registration."""
+    """Remove retired dashboard handlers before the canonical layer is installed."""
     retired_commands = {"hebaali", "stats", "broadcast"}
     retired_prefixes = (
         r"^admin_home$", r"^admin_users_", r"^user_\d+$", r"^admin_user_view_",
@@ -82,29 +82,32 @@ def _remove_legacy_admin_handlers(app: Any) -> tuple[int, int]:
 
 
 def _register_core_callback(app, callback, pattern: str, get_db, owner_id: int, group: int = -100) -> None:
-    app.add_handler(
-        CallbackQueryHandler(
-            lambda u, c: callback(u, c, get_db, owner_id),
-            pattern=pattern,
-        ),
-        group=group,
-    )
+    app.add_handler(CallbackQueryHandler(lambda u, c: callback(u, c, get_db, owner_id), pattern=pattern), group=group)
+
+
+async def _clear_cancel(update, context, get_db, owner_id: int) -> None:
+    query = update.callback_query
+    if not (update.effective_user and update.effective_user.id == owner_id):
+        await query.answer()
+        return
+    match = re.fullmatch(r"admin_user_clear_cancel_(\d+)", query.data or "")
+    if not match:
+        await query.answer()
+        return
+    await query.answer("تم الإلغاء")
+    await user_view_callback(update, context, get_db, owner_id, callback_data=f"admin_user_view_{int(match.group(1))}")
 
 
 def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     """Install the one canonical admin layer and its non-overlapping submodules."""
     removed_commands, removed_callbacks = _remove_legacy_admin_handlers(app)
-    if removed_commands or removed_callbacks:
-        print(
-            f"🧩 Retired admin handlers removed: commands={removed_commands}, callbacks={removed_callbacks}",
-            flush=True,
-        )
+    print(f"🧩 Retired admin handlers removed: commands={removed_commands}, callbacks={removed_callbacks}", flush=True)
 
     get_db = bot_module.get_db
     init_admin_control_center(get_db, admin_id)
     register_download_log_enrichment(bot_module)
 
-    # Canonical dashboard/navigation. These callbacks are registered exactly once.
+    # Canonical dashboard/navigation: one owner per top-level callback.
     _register_core_callback(app, admin_control_center_callback, r"^admin_home$", get_db, admin_id)
     _register_core_callback(app, admin_records_callback, r"^admin_records$", get_db, admin_id)
     _register_core_callback(app, admin_health_callback, r"^admin_health$", get_db, admin_id)
@@ -116,12 +119,12 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_users(app, get_db, admin_id)
     register_admin_user_links(app, get_db, admin_id)
 
-    # User-history module contributes only destructive-history confirmation routes.
+    # History contributes only its destructive confirmation workflow.
     app.add_handler(CallbackQueryHandler(lambda u, c: clear_prompt_callback(u, c, get_db, admin_id), pattern=r"^admin_user_clear_\d+$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: clear_confirm_callback(u, c, get_db, admin_id), pattern=r"^admin_user_clear_confirm_\d+$"), group=-1)
-    app.add_handler(CallbackQueryHandler(lambda u, c: clear_cancel_callback(u, c, get_db, admin_id), pattern=r"^admin_user_clear_cancel_\d+$"), group=-1)
+    app.add_handler(CallbackQueryHandler(lambda u, c: _clear_cancel(u, c, get_db, admin_id), pattern=r"^admin_user_clear_cancel_\d+$"), group=-1)
 
-    # Remaining administrative capabilities are each registered once.
+    # Remaining administrative capabilities are each registered exactly once.
     register_admin_stats(app, get_db, admin_id)
     register_admin_broadcast(app, get_db, admin_id)
     register_admin_storage(app, admin_id)
