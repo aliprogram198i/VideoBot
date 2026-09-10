@@ -1,20 +1,22 @@
 """Read-only fallback intelligence views for the canonical AliBot admin layer.
 
-This module consumes the existing Smart telemetry store only. It does not alter
-extraction, fallback, learning, policies, or the main bot database.
+This module reads the existing Smart telemetry database only. It does not create
+it, alter extraction, alter fallback behavior, train models, promote policies,
+or modify the main bot database.
 """
 
 from __future__ import annotations
 
 import html
 import json
+import os
+import sqlite3
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler
-
-from ..downloader.smart_learning import get_telemetry_store
 
 _CALLBACK = "admin_fallback_intelligence"
 _MAX_TEXT = 3900
@@ -24,6 +26,16 @@ def _authorized(update: Update, owner_id: int) -> bool:
     return bool(update.effective_user and update.effective_user.id == owner_id)
 
 
+def _telemetry_path() -> Path:
+    configured = os.getenv("SMART_DATA_DIR")
+    if configured:
+        return Path(configured).expanduser() / "smart_learning.db"
+    railway_data = Path("/app/data")
+    if railway_data.is_dir():
+        return railway_data / "smart" / "smart_learning.db"
+    return Path(".smart_data") / "smart_learning.db"
+
+
 def _safe_json(value: str | None) -> Any:
     try:
         return json.loads(value or "null")
@@ -31,10 +43,43 @@ def _safe_json(value: str | None) -> Any:
         return None
 
 
+def _empty_data() -> dict[str, Any]:
+    return {
+        "telemetry_total": 0,
+        "outcomes_total": 0,
+        "successes": 0,
+        "failures": 0,
+        "success_rate": None,
+        "avg_ms": None,
+        "hosts": [],
+        "kinds": [],
+        "failures_by_reason": [],
+        "diagnostics": [],
+        "production_policy": "غير متاح",
+        "policy_candidates": 0,
+        "evaluations": 0,
+    }
+
+
 def collect_fallback_intelligence() -> dict[str, Any]:
-    """Read Smart telemetry without mutating its database."""
-    store = get_telemetry_store()
-    with store._connect() as conn:
+    """Read Smart telemetry in SQLite read-only mode; never initialize the DB."""
+    path = _telemetry_path()
+    if not path.is_file():
+        return _empty_data()
+
+    uri = f"file:{path.resolve().as_posix()}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+        conn.row_factory = sqlite3.Row
+    except (OSError, sqlite3.Error):
+        return _empty_data()
+
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        required = {"smart_telemetry", "smart_outcomes", "smart_policy_versions", "smart_evaluations"}
+        if not required.issubset(tables):
+            return _empty_data()
+
         telemetry_total = int(conn.execute("SELECT COUNT(*) FROM smart_telemetry").fetchone()[0])
         outcomes_total = int(conn.execute("SELECT COUNT(*) FROM smart_outcomes").fetchone()[0])
         successes = int(conn.execute("SELECT COUNT(*) FROM smart_outcomes WHERE success=1").fetchone()[0])
@@ -49,10 +94,6 @@ def collect_fallback_intelligence() -> dict[str, Any]:
             """SELECT COALESCE(selected_kind,'unknown') AS kind, COUNT(*) AS total,
                       SUM(success) AS successes
                FROM smart_outcomes GROUP BY selected_kind ORDER BY total DESC LIMIT 8"""
-        ).fetchall()
-        policy_rows = conn.execute(
-            """SELECT policy_version, COUNT(*) AS total
-               FROM smart_telemetry GROUP BY policy_version ORDER BY total DESC LIMIT 5"""
         ).fetchall()
         failure_rows = conn.execute(
             """SELECT COALESCE(failure_reason,'unknown') AS reason, COUNT(*) AS total
@@ -69,9 +110,16 @@ def collect_fallback_intelligence() -> dict[str, Any]:
                     if name:
                         diagnostic_counter[name] += 1
 
-        policy_version, _ = store.production_policy()
+        production = conn.execute(
+            "SELECT version FROM smart_policy_versions WHERE status='production' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        policy_version = str(production[0]) if production else "غير متاح"
         policy_candidates = int(conn.execute("SELECT COUNT(*) FROM smart_policy_versions WHERE status='candidate'").fetchone()[0])
         evaluations = int(conn.execute("SELECT COUNT(*) FROM smart_evaluations").fetchone()[0])
+    except sqlite3.Error:
+        return _empty_data()
+    finally:
+        conn.close()
 
     outcome_rate = round(successes * 100 / outcomes_total, 1) if outcomes_total else None
     return {
@@ -83,7 +131,6 @@ def collect_fallback_intelligence() -> dict[str, Any]:
         "avg_ms": round(float(avg_ms), 1) if avg_ms is not None else None,
         "hosts": host_rows,
         "kinds": kind_rows,
-        "policies": policy_rows,
         "failures_by_reason": failure_rows,
         "diagnostics": diagnostic_counter.most_common(6),
         "production_policy": policy_version,
