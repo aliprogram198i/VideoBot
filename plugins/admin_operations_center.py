@@ -94,6 +94,7 @@ def _dashboard_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📥 التنزيلات", callback_data="admin_ops_downloads"),
          InlineKeyboardButton("🩺 صحة المنصات", callback_data="admin_ops_platforms")],
         [InlineKeyboardButton("🚨 مركز الحوادث", callback_data="admin_ops_incidents")],
+        [InlineKeyboardButton("🧠 Fallback Intelligence", callback_data="admin_fallback_intelligence")],
         [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ])
 
