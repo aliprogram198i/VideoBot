@@ -68,19 +68,15 @@ def test_phase4_detects_success_drop(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    # Unit-test the anomaly rules with deterministic period stats instead of
-    # depending on the wall clock used by SQLite date expressions.
     import plugins.admin_smart_analytics as module
-    original = module._period_stats
     calls = iter([
         {"telemetry": 20, "outcomes": 20, "successes": 8, "failures": 12, "success_rate": 40.0, "avg_ms": 100.0, "p95_ms": 120.0},
         {"telemetry": 20, "outcomes": 20, "successes": 18, "failures": 2, "success_rate": 90.0, "avg_ms": 100.0, "p95_ms": 120.0},
     ])
-    monkeypatch.setattr(module, "_period_stats", lambda *args: next(calls))
+    monkeypatch.setattr(module, "_period", lambda *args: next(calls))
     data = module.collect_smart_analytics(path)
     assert any(item["title"] == "انخفاض معدل النجاح" for item in data["anomalies"])
     assert data["policy"] == "smart-policy-v1"
-    assert original is not None
 
 
 def test_phase4_render_is_bounded_and_safe():
