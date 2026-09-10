@@ -123,6 +123,7 @@ def _keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 تحديث", callback_data=CALLBACK)],
         [InlineKeyboardButton("🧠 Fallback Intelligence", callback_data="admin_fallback_intelligence")],
+        [InlineKeyboardButton("📈 Smart Analytics", callback_data="admin_smart_analytics")],
         [InlineKeyboardButton("📊 لوحة الإحصائيات", callback_data="admin_dashboard_30")],
         [InlineKeyboardButton("🤖 الذكاء الاصطناعي", callback_data="admin_ai")],
         [InlineKeyboardButton("🔙 مركز التحكم الإداري", callback_data="admin_home")],
@@ -164,7 +165,7 @@ def render_smart_operations(data):
     return text
 
 
-async def smart_operations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, admin_id):
+async def smart_operations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, admin_id: int):
     query = update.callback_query
     await query.answer()
     if not update.effective_user or update.effective_user.id != admin_id:
