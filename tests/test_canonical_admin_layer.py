@@ -78,6 +78,24 @@ def test_user_workspace_has_single_canonical_users_page_owner(monkeypatch):
     assert not any(pattern(handler) == r"^admin_users_page_\d+$" for handler in handlers)
 
 
+def test_operations_center_has_single_owner_for_each_new_route(monkeypatch):
+    app = _build_app(monkeypatch)
+    handlers = [
+        handler
+        for group_handlers in app.handlers.values()
+        for handler in group_handlers
+        if isinstance(handler, CallbackQueryHandler) and pattern(handler)
+    ]
+    for callback_data in (
+        "admin_ops_dashboard",
+        "admin_ops_downloads",
+        "admin_ops_platforms",
+        "admin_ops_incidents",
+    ):
+        matching = [handler for handler in handlers if re.fullmatch(pattern(handler), callback_data)]
+        assert len(matching) == 1, f"Expected one owner for {callback_data}, got {len(matching)}"
+
+
 def test_all_top_level_admin_buttons_have_registered_owner(monkeypatch):
     app = _build_app(monkeypatch)
     patterns = [
