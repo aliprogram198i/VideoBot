@@ -14,7 +14,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler
 
-from .admin_authorization import authorize
+from .admin_common import authorize
 
 
 def _db_path() -> Path:
@@ -37,7 +37,7 @@ def _read_db() -> dict[str, Any]:
 
 async def _callback(update, context, admin_id: int) -> None:
     query = update.callback_query
-    if not authorize(update, admin_id):
+    if not authorize(update, context.bot_data.get("get_db"), admin_id, "database.backup"):
         await query.answer()
         return
     info = _read_db()
@@ -64,5 +64,6 @@ async def _callback(update, context, admin_id: int) -> None:
     raise ApplicationHandlerStop
 
 
-def register_admin_backup_recovery(app: Any, admin_id: int) -> None:
+def register_admin_backup_recovery(app: Any, admin_id: int, get_db) -> None:
+    app.bot_data["get_db"] = get_db
     app.add_handler(CallbackQueryHandler(lambda u, c: _callback(u, c, admin_id), pattern=r"^admin_backup_recovery$"), group=-150)
