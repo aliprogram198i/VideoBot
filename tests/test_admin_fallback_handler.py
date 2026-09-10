@@ -8,6 +8,9 @@ import plugins.admin_layer_v2 as admin_layer_v2
 class FakeApp:
     def __init__(self):
         self.handlers = {}
+        # python-telegram-bot exposes bot_data on Application. The canonical
+        # admin runtime stores the shared get_db provider there.
+        self.bot_data = {}
 
     def add_handler(self, handler, group=0):
         self.handlers.setdefault(group, []).append(handler)
