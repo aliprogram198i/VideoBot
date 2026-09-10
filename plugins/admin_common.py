@@ -11,7 +11,7 @@ import json
 from typing import Any
 
 
-# Stable permission identifiers.  The owner has the wildcard permission.
+# Stable permission identifiers. The owner has the wildcard permission.
 PERMISSIONS = {
     "center.view",
     "users.view",
@@ -24,13 +24,15 @@ PERMISSIONS = {
     "roles.view",
     "roles.manage",
     "broadcast.send",
+    "security.view",
+    "database.backup",
 }
 
 
 def authorize(update: Any, get_db, owner_id: int, permission: str) -> bool:
     """Return True only when the current Telegram user has the permission.
 
-    Authorization is fail-closed.  The configured owner is always allowed;
+    Authorization is fail-closed. The configured owner is always allowed;
     other users must have an explicit role with the requested permission.
     Malformed/missing role data never grants access.
     """
