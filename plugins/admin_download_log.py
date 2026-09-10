@@ -44,7 +44,7 @@ def _keyboard(offset: int, has_next: bool, link_buttons: list[InlineKeyboardButt
         rows.append(nav)
     rows += [
         [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_control_center")],
+        [InlineKeyboardButton("📊 مركز العمليات", callback_data="admin_ops_dashboard")],
     ]
     return InlineKeyboardMarkup(rows)
 
