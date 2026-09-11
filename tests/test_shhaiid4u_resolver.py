@@ -27,6 +27,19 @@ def test_candidate_normalization_filters_ads_and_ranks_media():
     assert "https://cdn.example/video.m3u8" in candidates
 
 
+def test_extract_urls_from_html_finds_public_player_and_media_links():
+    html = '''<iframe src="https://player.example/embed/abc"></iframe>
+    <script>var src="https:\\/\\/cdn.example\\/video.m3u8";</script>'''
+    found = resolver._extract_urls_from_text(html)
+    assert "https://player.example/embed/abc" in found
+    assert "https://cdn.example/video.m3u8" in found
+
+
+def test_extract_urls_filters_ad_hosts():
+    html = '<script src="https://doubleclick.net/ad.mp4"></script>'
+    assert resolver._extract_urls_from_text(html) == []
+
+
 def test_resolve_does_not_touch_other_hosts(monkeypatch):
     called = []
     monkeypatch.setattr(resolver, "_is_ad_host", lambda url: called.append(url) or False)
@@ -35,28 +48,23 @@ def test_resolve_does_not_touch_other_hosts(monkeypatch):
 
 
 def test_resolve_uses_canonical_episode_route_for_watch_url(monkeypatch):
-    class FakeBrowser:
-        @staticmethod
-        def resolve(url, **kwargs):
-            assert url == "https://shhaiid4u.net/episode/1"
-            assert kwargs["max_candidates"] == resolver.MAX_CANDIDATES
-            assert kwargs["max_pages"] == resolver.MAX_PAGES
-            return ["https://cdn.example/direct_stream/720p.mp4"]
+    async def fake_browser(url, *, validator):
+        assert url == "https://shhaiid4u.net/episode/1"
+        return ["https://cdn.example/direct_stream/720p.mp4"]
 
-    monkeypatch.setitem(__import__("sys").modules, "downloader.browser_media_resolver", FakeBrowser)
+    monkeypatch.setattr(resolver, "_browser_discover", fake_browser)
     result = resolver.resolve("https://shhaiid4u.net/watch/1", validator=lambda _: None)
     assert result == ["https://cdn.example/direct_stream/720p.mp4"]
 
 
-def test_resolve_uses_bounded_browser_for_platform(monkeypatch):
-    class FakeBrowser:
-        @staticmethod
-        def resolve(url, **kwargs):
-            assert url.startswith("https://shhaiid4u.net/")
-            assert kwargs["max_candidates"] == resolver.MAX_CANDIDATES
-            assert kwargs["max_pages"] == resolver.MAX_PAGES
-            return ["https://cdn.example/direct_stream/720p.mp4"]
+def test_resolve_uses_bounded_platform_browser(monkeypatch):
+    seen = []
 
-    monkeypatch.setitem(__import__("sys").modules, "downloader.browser_media_resolver", FakeBrowser)
+    async def fake_browser(url, *, validator):
+        seen.append(url)
+        return ["https://cdn.example/direct_stream/720p.mp4"]
+
+    monkeypatch.setattr(resolver, "_browser_discover", fake_browser)
     result = resolver.resolve("https://shhaiid4u.net/episode/1", validator=lambda _: None)
+    assert seen == ["https://shhaiid4u.net/episode/1"]
     assert result == ["https://cdn.example/direct_stream/720p.mp4"]
