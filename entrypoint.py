@@ -59,6 +59,7 @@ def main() -> None:
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
         register_user_features = importlib.import_module("plugins.user_features").register_user_features
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
+        install_movie_source_guard = importlib.import_module("downloader.movie_source_guard").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
         register_admin_layer = importlib.import_module("plugins.admin_layer_v2").register_admin_layer
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
@@ -68,6 +69,10 @@ def main() -> None:
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
         install_download_guards(bot_module)
+        # Install the movie gate before Smart Media Bridge so rejected direct
+        # artifacts are treated as a failed attempt and the bridge can continue
+        # through its existing candidate/browser fallback chain.
+        install_movie_source_guard(bot_module)
         install_smart_media_bridge(bot_module)
         install_telegram_media_retry()
 
