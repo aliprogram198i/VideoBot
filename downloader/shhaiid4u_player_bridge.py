@@ -16,7 +16,7 @@ MEDIA_CONTENT_HINTS=("video/","audio/","mpegurl","dash+xml")
 MEDIA_EXTENSIONS=(".m3u8",".mpd",".mp4",".m4v",".webm",".mov",".mkv",".ts")
 PLAYER_HINTS=("player","embed","iframe","stream","source","server","servers","direct_stream","secure_stream")
 CONTENT_PAGE_PATHS=("/episode/","/watch/","/tag/","/category/")
-UNRESOLVED_MARKERS=("${","}","{{","}}","<%","%}")
+UNRESOLVED_MARKERS=("${","{{","<%","%}")
 
 
 def _is_interesting_response(url:str,content_type:str)->bool:
@@ -27,41 +27,40 @@ def _is_interesting_response(url:str,content_type:str)->bool:
 
 def _is_unresolved_template(url:str)->bool:
     value=str(url or "")
-    return any(marker in value for marker in UNRESOLVED_MARKERS) or re.search(r"\$\{[^}]*$", value) is not None
+    return any(marker in value for marker in UNRESOLVED_MARKERS) or re.search(r"\$\{[^}]*\}", value) is not None
 
 
 def _is_media_url(url:str)->bool:
-    value=url.casefold()
-    path=urlparse(url).path.casefold()
+    value=url.casefold();path=urlparse(url).path.casefold()
     return any(path.endswith(ext) or ext+"?" in value or ext+"&" in value for ext in MEDIA_EXTENSIONS)
 
 
 def _is_content_page(url:str)->bool:
     try:
-        parsed=urlparse(url)
-        host=(parsed.hostname or "").casefold().rstrip(".")
-        path=(parsed.path or "/").casefold()
-    except Exception:
-        return True
-    if host != base.HOST_SUFFIX and not host.endswith("."+base.HOST_SUFFIX):
-        return False
-    if _is_media_url(url):
-        return False
-    if any(path.startswith(prefix) for prefix in CONTENT_PAGE_PATHS):
-        return True
-    if path == "/download" or path.startswith("/download/"):
-        return True
+        parsed=urlparse(url);host=(parsed.hostname or "").casefold().rstrip(".");path=(parsed.path or "/").casefold()
+    except Exception:return True
+    if host != base.HOST_SUFFIX and not host.endswith("."+base.HOST_SUFFIX): return False
+    if _is_media_url(url): return False
+    if any(path.startswith(prefix) for prefix in CONTENT_PAGE_PATHS): return True
+    if path == "/download" or path.startswith("/download/"): return True
     return False
+
+
+def _is_navigation_target(url:str)->bool:
+    if not isinstance(url,str) or not base._is_http(url) or base._is_ad_host(url) or _is_unresolved_template(url): return False
+    value=url.casefold()
+    if any(hint in value for hint in PLAYER_HINTS): return True
+    try:
+        host=(urlparse(url).hostname or "").casefold().rstrip(".");path=(urlparse(url).path or "/").casefold()
+    except Exception:return False
+    return (host == base.HOST_SUFFIX or host.endswith("."+base.HOST_SUFFIX)) and (path == "/download" or path.startswith("/download/"))
 
 
 def _sanitize_candidate(url:str)->bool:
     if not isinstance(url,str) or not url or not base._is_http(url): return False
-    if base._is_ad_host(url) or _is_unresolved_template(url): return False
-    if _is_content_page(url): return False
+    if base._is_ad_host(url) or _is_unresolved_template(url) or _is_content_page(url): return False
     value=url.casefold()
-    if _is_media_url(url): return True
-    if any(hint in value for hint in PLAYER_HINTS): return True
-    return False
+    return _is_media_url(url) or any(hint in value for hint in PLAYER_HINTS)
 
 
 def _extract_urls(text:str,*,base_url:str)->list[str]:
@@ -71,13 +70,14 @@ def _extract_urls(text:str,*,base_url:str)->list[str]:
     out=[];seen=set()
     for value in values:
         value=value.replace("\\/","/").rstrip(".,);]}")
-        if value in seen or not _sanitize_candidate(value):continue
-        seen.add(value);out.append(value)
+        if value in seen or not (base._is_http(value) and not base._is_ad_host(value)):continue
+        if _sanitize_candidate(value) or _is_navigation_target(value):
+            seen.add(value);out.append(value)
     return out
 
 
 def _score(url:str)->int:
-    value=url.casefold(); score=0
+    value=url.casefold();score=0
     if _is_media_url(url): score+=1000
     if any(x in value for x in (".m3u8",".mpd")): score+=250
     if any(x in value for x in (".mp4",".m4v",".webm",".mov",".mkv",".ts")): score+=180
@@ -128,10 +128,8 @@ async def _discover(url:str,*,validator)->list[str]:
                     for extracted in _extract_urls(text,base_url=response_url):
                         try:validator(extracted)
                         except Exception:continue
-                        if _sanitize_candidate(extracted):
-                            candidates.add(extracted)
-                        elif any(h in extracted.casefold() for h in PLAYER_HINTS) and len(queue)<MAX_NAV_TARGETS:
-                            if extracted not in visited and extracted not in queue:queue.append(extracted)
+                        if _sanitize_candidate(extracted): candidates.add(extracted)
+                        elif _is_navigation_target(extracted) and len(queue)<MAX_NAV_TARGETS and extracted not in visited and extracted not in queue: queue.append(extracted)
                 page.on("response",on_response)
                 try:
                     await page.goto(page_url,wait_until="domcontentloaded",timeout=base.TIMEOUT_MS);await page.wait_for_timeout(SETTLE_MS)
@@ -155,6 +153,7 @@ async def _discover(url:str,*,validator)->list[str]:
                         try:validator(extracted)
                         except Exception:continue
                         if _sanitize_candidate(extracted):candidates.add(extracted)
+                        elif _is_navigation_target(extracted) and len(queue)<MAX_NAV_TARGETS and extracted not in visited and extracted not in queue:queue.append(extracted)
                 except Exception as exc:print(f"⚠️ Shhaiid4u Player Bridge: page failed ({type(exc).__name__})",flush=True)
                 finally:await page.close()
             await context.close()
