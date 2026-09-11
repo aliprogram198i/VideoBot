@@ -146,18 +146,20 @@ def create_dataset_version(
         for row in rows:
             labels_by_telemetry[int(row["telemetry_id"])].append(int(row["label"]))
 
+        assignments: list[tuple[int, str]] = []
         counts = {split: 0 for split in SPLITS}
         for telemetry_id in telemetry_ids:
             split = _assign_split(_stable_bucket(seed, telemetry_id), train_ratio, validation_ratio)
-            conn.execute(
-                "INSERT INTO smart_dataset_membership(version,telemetry_id,split) VALUES(?,?,?)",
-                (version, telemetry_id, split),
-            )
+            assignments.append((telemetry_id, split))
             counts[split] += 1
 
         positive = sum(sum(labels) for labels in labels_by_telemetry.values())
         candidate_count = len(rows)
         negative = candidate_count - positive
+
+        # The membership table has a foreign key to the version row, so the
+        # parent must be committed before children can be inserted when
+        # foreign_keys=ON. Keep the whole snapshot atomic in this transaction.
         conn.execute(
             """INSERT INTO smart_dataset_versions(
                 version,source_min_id,source_max_id,telemetry_count,candidate_count,
@@ -169,6 +171,10 @@ def create_dataset_version(
                 candidate_count, positive, negative, counts["train"],
                 counts["validation"], counts["unseen"], seed, _utc_now(),
             ),
+        )
+        conn.executemany(
+            "INSERT INTO smart_dataset_membership(version,telemetry_id,split) VALUES(?,?,?)",
+            ((version, telemetry_id, split) for telemetry_id, split in assignments),
         )
         conn.commit()
         return {
