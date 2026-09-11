@@ -32,6 +32,7 @@ from .admin_fallback_intelligence import register_admin_fallback_intelligence
 from .admin_backup_recovery import register_admin_backup_recovery
 from .admin_security_center import register_admin_security_center
 from .admin_smart_analytics import register_admin_smart_analytics
+from .admin_image_ai import register_admin_image_ai
 from .download_log_enrichment import register_download_log_enrichment
 from .admin_stats import register_admin_stats
 from .admin_broadcast import register_admin_broadcast, process_broadcast
@@ -141,6 +142,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_backup_recovery(app, admin_id, get_db)
     register_admin_security_center(app, admin_id, get_db)
     register_admin_smart_analytics(app, get_db, admin_id)
+    register_admin_image_ai(app, get_db, admin_id)
 
     # Explicit owner-only phase-3 commands provide safe entry points without
     # altering the existing top-level keyboard layout.
