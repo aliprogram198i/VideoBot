@@ -5,19 +5,16 @@ public provider URLs discovered from shhaiid4u.net when the normal generic
 fallback cannot preserve the source-page referrer or when the provider page
 needs browser JavaScript to expose its media response.
 
-It does not use accounts, cookies supplied by users, CAPTCHA solving, DRM
-bypass, or access-control workarounds. Browser cookies are only those created
-by the public page navigation during this bounded session.
+It does not use accounts, user-supplied cookies, CAPTCHA solving, DRM bypass,
+or access-control workarounds. Browser state is created only by bounded public
+page navigation.
 """
 from __future__ import annotations
 
 import asyncio
-import inspect
 import os
 import re
 import subprocess
-import tempfile
-from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -32,10 +29,7 @@ MIN_VIDEO_BYTES = 2 * 1024 * 1024
 MIN_VIDEO_DURATION = 45.0
 MEDIA_EXTENSIONS = (".mp4", ".m4v", ".webm", ".mov", ".mkv", ".m3u8", ".mpd", ".ts")
 MEDIA_CONTENT_HINTS = ("video/", "audio/", "mpegurl", "dash+xml")
-SUPPORTED_HOSTS = {
-    "megaup.net",
-    "streamtape.com",
-}
+SUPPORTED_HOSTS = {"megaup.net", "streamtape.com"}
 USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
@@ -141,6 +135,44 @@ def _verify_file(path: str, *, is_audio: bool) -> bool:
         return False
 
 
+def _extract_streamtape_direct_urls(html: str, page_url: str) -> list[str]:
+    """Extract Streamtape's public get_video URL from the rendered page source.
+
+    Streamtape's public player exposes a token and an obfuscated path in the
+    page itself. We only reconstruct the public playback URL; no account,
+    CAPTCHA, DRM, or access-control bypass is involved.
+    """
+    if _hostname(page_url) != "streamtape.com" or not isinstance(html, str):
+        return []
+
+    token_matches = re.findall(r"token=([^&'\"\s]+)", html, flags=re.IGNORECASE)
+    link_matches = re.findall(
+        r"id=[\"']ideoooolink[\"'][^>]*>([^<]+)<",
+        html,
+        flags=re.IGNORECASE,
+    )
+    if not token_matches or not link_matches:
+        return []
+
+    token = token_matches[-1]
+    results: list[str] = []
+    for raw_link in reversed(link_matches):
+        value = raw_link.strip().replace("\\/", "/")
+        if value.startswith("//"):
+            value = "https:" + value
+        elif value.startswith("https:/") and not value.startswith("https://"):
+            value = "https://" + value[len("https:/"):].lstrip("/")
+        elif value.startswith("http:/") and not value.startswith("http://"):
+            value = "http://" + value[len("http:/"):].lstrip("/")
+        if not _is_http(value):
+            continue
+        separator = "&" if "?" in value else "?"
+        direct = f"{value}{separator}token={token}&dl=1"
+        if direct not in results:
+            results.append(direct)
+    return results[:4]
+
+
 async def _run_ytdlp(
     candidate_url: str,
     *,
@@ -176,9 +208,7 @@ async def _run_ytdlp(
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=PROVIDER_TIMEOUT_S
-            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=PROVIDER_TIMEOUT_S)
         except asyncio.TimeoutError:
             if process.returncode is None:
                 process.terminate()
@@ -224,9 +254,8 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
             browser = await playwright.chromium.launch(
                 headless=True,
                 args=[
-                    "--no-sandbox", "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage", "--no-first-run",
-                    "--no-default-browser-check",
+                    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+                    "--no-first-run", "--no-default-browser-check",
                 ],
             )
         except Exception:
@@ -239,11 +268,7 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
             )
             source_page = await context.new_page()
             try:
-                await source_page.goto(
-                    referer_url,
-                    wait_until="domcontentloaded",
-                    timeout=BROWSER_TIMEOUT_MS,
-                )
+                await source_page.goto(referer_url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
                 await source_page.wait_for_timeout(SETTLE_MS)
             except Exception:
                 pass
@@ -271,20 +296,14 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
 
                 page.on("response", on_response)
                 try:
-                    await page.goto(
-                        page_url,
-                        wait_until="domcontentloaded",
-                        timeout=BROWSER_TIMEOUT_MS,
-                        referer=referer_url,
-                    )
+                    await page.goto(page_url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS, referer=referer_url)
                     await page.wait_for_timeout(SETTLE_MS)
                     selector = "a[href], button, [role='button'], video, source, iframe[src], embed[src]"
                     try:
                         rows = await page.locator(selector).evaluate_all(
                             """els => els.map(el => ({
                                 url: el.currentSrc || el.src || el.href || '',
-                                text: (el.innerText || el.textContent || '').trim(),
-                                html: el.outerHTML || ''
+                                text: (el.innerText || el.textContent || '').trim()
                             }))"""
                         )
                     except Exception:
@@ -302,6 +321,9 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
                         html = await page.content()
                     except Exception:
                         html = ""
+                    if _hostname(page_url) == "streamtape.com":
+                        for direct in _extract_streamtape_direct_urls(html, page_url):
+                            remember(direct)
                     for value in re.findall(r"https?://[^\"'<>\s]+", html):
                         value = value.rstrip(".,);]}")
                         if _is_http(value) and _looks_like_media(value):
@@ -351,8 +373,6 @@ async def download_candidates(
             return path, diagnostics
         entry["initial_error"] = str(stderr or "")[-500:]
 
-        # Streamtape is not a generic yt-dlp extractor. Use the public page
-        # in a bounded browser session to expose its actual media response.
         if provider == "streamtape.com":
             media_urls = await _discover_browser_media(candidate, referer_url=source_url)
             entry["browser_media_count"] = len(media_urls)
@@ -383,22 +403,14 @@ def install(bot_module) -> None:
         if isinstance(url, str) and _hostname(url) == "shhaiid4u.net":
             try:
                 from downloader.shhaiid4u_player_bridge import resolve
-                candidates = await asyncio.to_thread(
-                    resolve,
-                    url,
-                    validator=bot_module.validate_public_http_url,
-                )
+                candidates = await asyncio.to_thread(resolve, url, validator=bot_module.validate_public_http_url)
                 if candidates:
                     path, diagnostics = await download_candidates(
                         candidates,
                         source_url=url,
                         temp_dir=temp_dir,
                         is_audio=is_audio,
-                        max_size=(
-                            bot_module.MAX_AUDIO_DOWNLOAD_BYTES
-                            if is_audio
-                            else bot_module.MAX_VIDEO_DOWNLOAD_BYTES
-                        ),
+                        max_size=(bot_module.MAX_AUDIO_DOWNLOAD_BYTES if is_audio else bot_module.MAX_VIDEO_DOWNLOAD_BYTES),
                     )
                     if path:
                         return path, "", "", {
@@ -412,18 +424,10 @@ def install(bot_module) -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                print(
-                    f"⚠️ Shhaiid4u Provider Downloader: failed ({type(exc).__name__})",
-                    flush=True,
-                )
+                print(f"⚠️ Shhaiid4u Provider Downloader: failed ({type(exc).__name__})", flush=True)
         return await original(
-            url,
-            temp_dir,
-            output_template,
-            format_option,
-            is_audio=is_audio,
-            attempt_id=attempt_id,
-            attempt_number=attempt_number,
+            url, temp_dir, output_template, format_option,
+            is_audio=is_audio, attempt_id=attempt_id, attempt_number=attempt_number,
         )
 
     wrapped._shhaiid4u_provider_downloader = True
