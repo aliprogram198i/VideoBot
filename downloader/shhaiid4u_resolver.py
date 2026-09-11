@@ -5,8 +5,9 @@ bypass authentication, CAPTCHA, DRM, paywalls, or access controls.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 from urllib.parse import urlparse
-
 
 HOST_SUFFIX = "shhaiid4u.net"
 MAX_CANDIDATES = 12
@@ -77,7 +78,7 @@ def _normalize(candidates: list[str]) -> list[str]:
 
 
 def resolve(url: str, *, validator) -> list[str]:
-    """Discover public media candidates from shhaiid4u.net via the bounded browser layer."""
+    """Discover public media candidates from shhaiid4u.net via bounded browser discovery."""
     if not is_platform_url(url):
         return []
     try:
@@ -103,3 +104,35 @@ def resolve(url: str, *, validator) -> list[str]:
     else:
         print("🎯 Shhaiid4u Resolver: no public media candidate found", flush=True)
     return normalized
+
+
+def install(bot_module) -> None:
+    """Install an isolated extraction hook before the generic bridge is composed."""
+    original = getattr(bot_module, "extract_direct_media_urls", None)
+    if not callable(original) or getattr(original, "_shhaiid4u_resolver", False):
+        return
+
+    async def wrapped(url, *args, **kwargs):
+        if is_platform_url(url):
+            try:
+                candidates = await asyncio.to_thread(
+                    resolve,
+                    url,
+                    validator=bot_module.validate_public_http_url,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"⚠️ Shhaiid4u Resolver: extraction hook failed ({type(exc).__name__})", flush=True)
+                candidates = []
+            if candidates:
+                return candidates
+            print("🎯 Shhaiid4u Resolver: falling through to generic extraction", flush=True)
+        result = original(url, *args, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    wrapped._shhaiid4u_resolver = True
+    bot_module.extract_direct_media_urls = wrapped
+    print("🎯 Shhaiid4u Resolver: ENABLED", flush=True)
