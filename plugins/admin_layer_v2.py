@@ -33,6 +33,7 @@ from .admin_backup_recovery import register_admin_backup_recovery
 from .admin_security_center import register_admin_security_center
 from .admin_smart_analytics import register_admin_smart_analytics
 from .admin_image_ai import register_admin_image_ai
+from .admin_image_ai_site import register_admin_image_ai_site, site_start_callback
 from .download_log_enrichment import register_download_log_enrichment
 from .admin_stats import register_admin_stats
 from .admin_broadcast import register_admin_broadcast, process_broadcast
@@ -143,11 +144,13 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_security_center(app, admin_id, get_db)
     register_admin_smart_analytics(app, get_db, admin_id)
     register_admin_image_ai(app, get_db, admin_id)
+    register_admin_image_ai_site(app, get_db, admin_id)
 
     # Explicit owner-only phase-3 commands provide safe entry points without
     # altering the existing top-level keyboard layout.
     app.add_handler(CommandHandler("adminsecurity", lambda u, c: _phase3_security_entry(u, c, admin_id, get_db)), group=-200)
     app.add_handler(CommandHandler("adminbackup", lambda u, c: _phase3_backup_entry(u, c, admin_id)), group=-200)
+    app.add_handler(CommandHandler("aiwebsite", lambda u, c: site_start_callback(u, c, get_db, admin_id)), group=-200)
 
     # Canonical user workspace: list/filters + user detail/actions + download links.
     register_admin_users_plus(app, get_db, admin_id)
