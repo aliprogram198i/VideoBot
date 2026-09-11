@@ -32,6 +32,25 @@ def test_media_detection_accepts_extension_and_content_type():
     assert not provider._looks_like_media("https://streamtape.com/v/abc", "text/html")
 
 
+def test_streamtape_public_link_reconstruction():
+    html = '''
+    <script>document.getElementById('norobotlink').innerHTML = "?token=ABC123&expires=999";</script>
+    <div id="ideoooolink" style="display:none;">//streamtape.com/get_video?id=XYZ</div>
+    '''
+    result = provider._extract_streamtape_direct_urls(
+        html,
+        "https://streamtape.com/v/XYZ",
+    )
+    assert result == [
+        "https://streamtape.com/get_video?id=XYZ&token=ABC123&dl=1"
+    ]
+
+
+def test_streamtape_reconstruction_is_host_isolated():
+    html = '<div id="ideoooolink">//example.com/video.mp4</div><script>token=ABC</script>'
+    assert provider._extract_streamtape_direct_urls(html, "https://example.com/v/1") == []
+
+
 def test_non_provider_urls_are_never_owned():
     values = [
         "https://shhaiid4u.net/episode/test",
