@@ -150,8 +150,8 @@ def _save_instruction(text: str) -> None:
     conn = _connect()
     try:
         conn.execute(
-            "INSERT INTO image_ai_instructions(instruction, active, created_at, updated_at) "
-            "VALUES (?,1,?,?)", (value, now, now)
+            "INSERT INTO image_ai_instructions(instruction, active, created_at, updated_at) VALUES (?,1,?,?)",
+            (value, now, now),
         )
         conn.commit()
     finally:
@@ -165,7 +165,7 @@ def _save_example(source_file_id: str, result_file_id: str, instruction: str) ->
         conn.execute(
             "INSERT INTO image_ai_examples "
             "(source_file_id,result_file_id,instruction,status,created_at,updated_at) "
-            "VALUES (?,?,?,'dataset',?,?,?)".replace(",?,?,?)", ",?, ?, ?"),
+            "VALUES (?,?,?,'dataset',?,?)",
             (source_file_id, result_file_id, instruction[:_MAX_PROMPT], now, now),
         )
         conn.commit()
@@ -177,8 +177,7 @@ def _job_start(instruction: str, model: str) -> int:
     conn = _connect()
     try:
         cur = conn.execute(
-            "INSERT INTO image_ai_jobs(mode,instruction,model,status,created_at) "
-            "VALUES ('edit',?,?, 'running',?)",
+            "INSERT INTO image_ai_jobs(mode,instruction,model,status,created_at) VALUES ('edit',?,?, 'running',?)",
             (instruction[:_MAX_PROMPT], model, _now()),
         )
         conn.commit()
@@ -294,10 +293,9 @@ async def ai_studio_callback(update, context, get_db, owner_id):
     context.user_data.pop(_PENDING_TRAINING_KEY, None)
     await query.edit_message_text(
         "🎨 <b>AliBot AI Studio</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-        "🖼️ تعديل الصور بالأوامر\n"
-        "🎓 تعليم سلوك النظام وحفظ أمثلة\n"
+        "🖼️ تعديل الصور بالأوامر\n🎓 تعليم سلوك النظام وحفظ أمثلة\n"
         f"📚 تعليمات نشطة: <b>{_count('image_ai_instructions','active=1')}</b>\n"
-        f"🧩 أمثلة محفوظة: <b>{_count('image_ai_examples','status=\'dataset\'')}</b>\n\n"
+        f"🧩 أمثلة محفوظة: <b>{_count('image_ai_examples',\"status='dataset'\")}</b>\n\n"
         "اختر العملية المطلوبة:", parse_mode="HTML", reply_markup=_keyboard()
     )
     raise ApplicationHandlerStop
@@ -350,9 +348,8 @@ async def dataset_callback(update, context, get_db, owner_id):
     finally:
         conn.close()
     lines = [
-        "📚 <b>بيانات تعلم Image AI</b>",
-        "━━━━━━━━━━━━━━━━━━",
-        f"أمثلة محفوظة: <b>{_count('image_ai_examples','status=\'dataset\'')}</b>",
+        "📚 <b>بيانات تعلم Image AI</b>", "━━━━━━━━━━━━━━━━━━",
+        f"أمثلة محفوظة: <b>{_count('image_ai_examples',\"status='dataset'\")}</b>",
         f"تعليمات نشطة: <b>{_count('image_ai_instructions','active=1')}</b>", "",
     ]
     if not rows:
@@ -417,8 +414,8 @@ async def text_handler(update, context, get_db, owner_id):
     _save_instruction(text)
     context.user_data.pop(_MODE_KEY, None)
     await update.effective_message.reply_text(
-        "✅ تم حفظ التعليمات في ذاكرة Image AI.\n\n"
-        "ستدخل في سياق عمليات التعديل القادمة.", reply_markup=_back_keyboard()
+        "✅ تم حفظ التعليمات في ذاكرة Image AI.\n\nستدخل في سياق عمليات التعديل القادمة.",
+        reply_markup=_back_keyboard(),
     )
     raise ApplicationHandlerStop
 
@@ -435,7 +432,6 @@ async def photo_handler(update, context, get_db, owner_id):
     if photo.file_size and photo.file_size > _MAX_IMAGE_BYTES:
         await message.reply_text("❌ الصورة أكبر من الحد المسموح به (20MB).")
         raise ApplicationHandlerStop
-
     if mode == "teach":
         if not caption:
             await message.reply_text("أرسل الصورة مع وصف قصير لما تريد أن يتعلمه النظام منها.")
@@ -450,7 +446,6 @@ async def photo_handler(update, context, get_db, owner_id):
             reply_markup=_back_keyboard()
         )
         raise ApplicationHandlerStop
-
     if not caption:
         await message.reply_text("❌ اكتب أمر التعديل في تعليق الصورة.")
         raise ApplicationHandlerStop
@@ -466,14 +461,12 @@ async def photo_handler(update, context, get_db, owner_id):
         await telegram_file.download_to_drive(temp_path)
         image_bytes = Path(temp_path).read_bytes()
         output, used_model = await _run_generation(image_bytes, "image/jpeg", caption)
-        if len(output) > 20 * 1024 * 1024:
+        if len(output) > _MAX_IMAGE_BYTES:
             raise RuntimeError("IMAGE_AI_OUTPUT_TOO_LARGE")
         _job_finish(job_id, "success")
         await status_message.delete()
         await message.reply_photo(
-            photo=output,
-            caption=f"🎨 AliBot Image AI\n🤖 {used_model}",
-            reply_markup=_back_keyboard(),
+            photo=output, caption=f"🎨 AliBot Image AI\n🤖 {used_model}", reply_markup=_back_keyboard()
         )
     except Exception as exc:
         _job_finish(job_id, "failed", type(exc).__name__)
@@ -505,8 +498,8 @@ async def training_result_photo_handler(update, context, get_db, owner_id):
     _save_example(pending["source_file_id"], result_photo.file_id, pending["instruction"])
     context.user_data.pop(_PENDING_TRAINING_KEY, None)
     await message.reply_text(
-        "✅ تم حفظ زوج الصورة الأصلية/النتيجة كبيانات تدريب.\n\n"
-        "لن يتم تغيير أوزان النموذج أو نسخة الإنتاج تلقائياً.", reply_markup=_back_keyboard()
+        "✅ تم حفظ زوج الصورة الأصلية/النتيجة كبيانات تدريب.\n\nلن يتم تغيير أوزان النموذج أو نسخة الإنتاج تلقائياً.",
+        reply_markup=_back_keyboard()
     )
     raise ApplicationHandlerStop
 
