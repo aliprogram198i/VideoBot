@@ -34,6 +34,7 @@ from .admin_security_center import register_admin_security_center
 from .admin_smart_analytics import register_admin_smart_analytics
 from .admin_image_ai import register_admin_image_ai
 from .admin_image_ai_site import register_admin_image_ai_site, site_start_callback
+from .admin_image_ai_site_ui import patch_image_ai_keyboard
 from .download_log_enrichment import register_download_log_enrichment
 from .admin_stats import register_admin_stats
 from .admin_broadcast import register_admin_broadcast, process_broadcast
@@ -144,6 +145,9 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_security_center(app, admin_id, get_db)
     register_admin_smart_analytics(app, get_db, admin_id)
     register_admin_image_ai(app, get_db, admin_id)
+    # Add Website Learning to the existing Image AI Studio keyboard through
+    # the isolated UI bridge; no existing Image AI handler is replaced.
+    patch_image_ai_keyboard()
     register_admin_image_ai_site(app, get_db, admin_id)
 
     # Explicit owner-only phase-3 commands provide safe entry points without
