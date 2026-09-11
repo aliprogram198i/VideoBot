@@ -1,0 +1,105 @@
+"""Dedicated bounded resolver for the independent shhaiid4u.net platform.
+
+This layer only discovers public player/server/media candidates. It does not
+bypass authentication, CAPTCHA, DRM, paywalls, or access controls.
+"""
+from __future__ import annotations
+
+from urllib.parse import urlparse
+
+
+HOST_SUFFIX = "shhaiid4u.net"
+MAX_CANDIDATES = 12
+TIMEOUT_MS = 35_000
+SETTLE_MS = 3_500
+MAX_PAGES = 10
+_AD_HOST_HINTS = (
+    "doubleclick", "googlesyndication", "googleadservices", "adservice",
+    "adsystem", "advertising", "adserver", "popads", "propellerads",
+)
+_MEDIA_HINTS = (
+    ".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".ts",
+    "secure_stream", "direct_stream", "download", "تحميل", "تنزيل",
+)
+_PLAYER_HINTS = (
+    "player", "embed", "iframe", "server", "servers", "source", "stream",
+    "سيرفر", "سيرفرات", "مشغل", "مشاهدة", "تشغيل", "تحميل", "تنزيل",
+)
+
+
+def _is_http(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
+
+def is_platform_url(url: str) -> bool:
+    if not isinstance(url, str) or not _is_http(url):
+        return False
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    return host == HOST_SUFFIX or host.endswith("." + HOST_SUFFIX)
+
+
+def _is_ad_host(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except Exception:
+        return True
+    return any(host == hint or host.endswith("." + hint) for hint in _AD_HOST_HINTS)
+
+
+def _score(url: str) -> int:
+    value = url.casefold()
+    score = 0
+    for marker in _MEDIA_HINTS:
+        if marker.casefold() in value:
+            score += 20
+    for marker in _PLAYER_HINTS:
+        if marker.casefold() in value:
+            score += 5
+    if _is_ad_host(url):
+        score -= 500
+    return score
+
+
+def _normalize(candidates: list[str]) -> list[str]:
+    unique: dict[str, int] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not _is_http(candidate):
+            continue
+        if _is_ad_host(candidate):
+            continue
+        unique[candidate] = max(unique.get(candidate, -10**9), _score(candidate))
+    ranked = sorted(unique.items(), key=lambda item: (-item[1], item[0]))
+    return [url for url, score in ranked if score > 0][:MAX_CANDIDATES]
+
+
+def resolve(url: str, *, validator) -> list[str]:
+    """Discover public media candidates from shhaiid4u.net via the bounded browser layer."""
+    if not is_platform_url(url):
+        return []
+    try:
+        validator(url)
+    except Exception:
+        return []
+    try:
+        from downloader import browser_media_resolver
+        candidates = browser_media_resolver.resolve(
+            url,
+            validator=validator,
+            timeout_ms=TIMEOUT_MS,
+            settle_ms=SETTLE_MS,
+            max_candidates=MAX_CANDIDATES,
+            max_pages=MAX_PAGES,
+        )
+    except Exception as exc:
+        print(f"⚠️ Shhaiid4u Resolver: browser discovery failed ({type(exc).__name__})", flush=True)
+        return []
+    normalized = _normalize(candidates or [])
+    if normalized:
+        print(f"🎯 Shhaiid4u Resolver: discovered {len(normalized)} public candidate(s)", flush=True)
+    else:
+        print("🎯 Shhaiid4u Resolver: no public media candidate found", flush=True)
+    return normalized
