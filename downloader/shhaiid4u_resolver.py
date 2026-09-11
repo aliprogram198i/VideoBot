@@ -100,7 +100,9 @@ def _extract_urls_from_text(text: str) -> list[str]:
         return []
     # Handles normal URLs and common JSON/JS escaped URLs without executing JS.
     raw = re.findall(r"https?://[^\\\"'<>\s]+", text)
-    escaped = re.findall(r"https?:\\/\\/[^\\\"'<>\s]+", text)
+    # Escaped JSON/JS URLs may contain \\/ throughout the URL, so the body
+    # matcher must allow backslashes and normalization happens afterwards.
+    escaped = re.findall(r"https?:\\/\\/[^\"'<>\s]+", text)
     values = raw + [item.replace("\\/", "/") for item in escaped]
     return [item.rstrip(".,);]}") for item in values if _looks_like_candidate(item)]
 
