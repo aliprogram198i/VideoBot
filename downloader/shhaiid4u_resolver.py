@@ -48,7 +48,7 @@ def _is_ad_host(url: str) -> bool:
         host = (urlparse(url).hostname or "").lower().rstrip(".")
     except Exception:
         return True
-    return any(host == hint or host.endswith("." + hint) for hint in _AD_HOST_HINTS)
+    return any(hint in host for hint in _AD_HOST_HINTS)
 
 
 def _score(url: str) -> int:
