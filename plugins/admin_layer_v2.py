@@ -128,6 +128,10 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
 
     # Canonical dashboard/navigation: one owner per top-level callback.
     _register_core_callback(app, admin_control_center_callback, r"^admin_home$", get_db, admin_id)
+    # Compatibility alias: existing admin submodules historically used
+    # admin_control_center for their return buttons. Keep one canonical owner
+    # for that callback while routing it to the current admin home UI.
+    _register_core_callback(app, admin_control_center_callback, r"^admin_control_center$", get_db, admin_id)
     _register_core_callback(app, admin_records_callback, r"^admin_records$", get_db, admin_id)
     _register_core_callback(app, admin_health_callback, r"^admin_health$", get_db, admin_id)
     _register_core_callback(app, admin_audit_callback, r"^admin_audit$", get_db, admin_id)
