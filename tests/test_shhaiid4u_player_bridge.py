@@ -23,13 +23,21 @@ def test_interesting_response_is_player_scoped():
 
 def test_unresolved_template_is_rejected():
     assert not bridge._sanitize_candidate('https://www.youtube.com/embed/${videoId}')
-    assert not bridge._sanitize_candidate('https://www.youtube.com/embed/${videoId}')
+    assert not bridge._sanitize_candidate('https://www.youtube.com/embed/{{videoId}}')
 
 
-def test_content_pages_are_rejected():
+def test_content_pages_are_rejected_as_media_candidates():
     assert not bridge._sanitize_candidate('https://shhaiid4u.net/download/episode-slug')
     assert not bridge._sanitize_candidate('https://shhaiid4u.net/tag/episode-slug')
     assert not bridge._sanitize_candidate('https://shhaiid4u.net/episode/episode-slug')
+
+
+def test_download_page_remains_a_bounded_navigation_target():
+    assert bridge._is_navigation_target('https://shhaiid4u.net/download/episode-slug')
+    assert 'https://shhaiid4u.net/download/episode-slug' in bridge._extract_urls(
+        'https://shhaiid4u.net/download/episode-slug',
+        base_url='https://shhaiid4u.net/episode/test',
+    )
 
 
 def test_real_media_and_player_candidates_are_kept():
