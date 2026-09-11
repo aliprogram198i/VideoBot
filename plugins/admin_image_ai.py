@@ -18,13 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    ApplicationHandlerStop,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from .admin_common import authorize
 
@@ -45,6 +39,7 @@ _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _MODEL_ENV = "IMAGE_AI_MODEL"
 _DEFAULT_MODEL = "gemini-2.5-flash-image"
 _PERMISSION = "center.view"
+_DATASET_WHERE = "status='dataset'"
 
 
 def _root_dir() -> Path:
@@ -120,8 +115,7 @@ def _active_instructions() -> list[str]:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT instruction FROM image_ai_instructions "
-            "WHERE active=1 ORDER BY id DESC LIMIT 30"
+            "SELECT instruction FROM image_ai_instructions WHERE active=1 ORDER BY id DESC LIMIT 30"
         ).fetchall()
         return [str(row["instruction"]) for row in rows]
     finally:
@@ -295,7 +289,7 @@ async def ai_studio_callback(update, context, get_db, owner_id):
         "🎨 <b>AliBot AI Studio</b>\n━━━━━━━━━━━━━━━━━━\n\n"
         "🖼️ تعديل الصور بالأوامر\n🎓 تعليم سلوك النظام وحفظ أمثلة\n"
         f"📚 تعليمات نشطة: <b>{_count('image_ai_instructions','active=1')}</b>\n"
-        f"🧩 أمثلة محفوظة: <b>{_count('image_ai_examples',\"status='dataset'\")}</b>\n\n"
+        f"🧩 أمثلة محفوظة: <b>{_count('image_ai_examples', _DATASET_WHERE)}</b>\n\n"
         "اختر العملية المطلوبة:", parse_mode="HTML", reply_markup=_keyboard()
     )
     raise ApplicationHandlerStop
@@ -349,7 +343,7 @@ async def dataset_callback(update, context, get_db, owner_id):
         conn.close()
     lines = [
         "📚 <b>بيانات تعلم Image AI</b>", "━━━━━━━━━━━━━━━━━━",
-        f"أمثلة محفوظة: <b>{_count('image_ai_examples',\"status='dataset'\")}</b>",
+        f"أمثلة محفوظة: <b>{_count('image_ai_examples', _DATASET_WHERE)}</b>",
         f"تعليمات نشطة: <b>{_count('image_ai_instructions','active=1')}</b>", "",
     ]
     if not rows:
