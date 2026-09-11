@@ -71,11 +71,10 @@ def main() -> None:
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
         install_download_guards(bot_module)
-        # The enhanced provider-specific layer runs first and remains isolated
-        # to shhaiid4u.net. If it finds nothing, the existing resolver remains
-        # available as the next bounded fallback before the generic bridge.
-        install_shhaiid4u_network_discovery(bot_module)
+        # Install the existing bounded resolver first so the enhanced layer
+        # becomes the outer wrapper and gets the first opportunity on failure.
         install_shhaiid4u_resolver(bot_module)
+        install_shhaiid4u_network_discovery(bot_module)
         # Install the movie gate before Smart Media Bridge so rejected direct
         # artifacts are treated as a failed attempt and the bridge can continue
         # through its existing candidate/browser fallback chain.
