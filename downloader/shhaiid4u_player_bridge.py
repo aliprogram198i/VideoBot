@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from downloader import shhaiid4u_resolver as base
+
 MAX_RESPONSES=180
 MAX_BODY_BYTES=768*1024
 MAX_BODY_SCANS=36
@@ -12,10 +13,57 @@ MAX_NAV_TARGETS=8
 SETTLE_MS=2500
 RESPONSE_HINTS=("admin-ajax.php","/ajax","ajax=","player","embed","source","server","stream","media","episode","watch")
 MEDIA_CONTENT_HINTS=("video/","audio/","mpegurl","dash+xml")
+MEDIA_EXTENSIONS=(".m3u8",".mpd",".mp4",".m4v",".webm",".mov",".mkv",".ts")
+PLAYER_HINTS=("player","embed","iframe","stream","source","server","servers","direct_stream","secure_stream")
+CONTENT_PAGE_PATHS=("/episode/","/watch/","/tag/","/category/")
+UNRESOLVED_MARKERS=("${","}","{{","}}","<%","%}")
+
+
 def _is_interesting_response(url:str,content_type:str)->bool:
     if not base._is_http(url) or base._is_ad_host(url): return False
     value=f"{url} {content_type}".casefold()
     return any(x in value for x in RESPONSE_HINTS) or any(x in content_type.casefold() for x in MEDIA_CONTENT_HINTS)
+
+
+def _is_unresolved_template(url:str)->bool:
+    value=str(url or "")
+    return any(marker in value for marker in UNRESOLVED_MARKERS) or re.search(r"\$\{[^}]*$", value) is not None
+
+
+def _is_media_url(url:str)->bool:
+    value=url.casefold()
+    path=urlparse(url).path.casefold()
+    return any(path.endswith(ext) or ext+"?" in value or ext+"&" in value for ext in MEDIA_EXTENSIONS)
+
+
+def _is_content_page(url:str)->bool:
+    try:
+        parsed=urlparse(url)
+        host=(parsed.hostname or "").casefold().rstrip(".")
+        path=(parsed.path or "/").casefold()
+    except Exception:
+        return True
+    if host != base.HOST_SUFFIX and not host.endswith("."+base.HOST_SUFFIX):
+        return False
+    if _is_media_url(url):
+        return False
+    if any(path.startswith(prefix) for prefix in CONTENT_PAGE_PATHS):
+        return True
+    if path == "/download" or path.startswith("/download/"):
+        return True
+    return False
+
+
+def _sanitize_candidate(url:str)->bool:
+    if not isinstance(url,str) or not url or not base._is_http(url): return False
+    if base._is_ad_host(url) or _is_unresolved_template(url): return False
+    if _is_content_page(url): return False
+    value=url.casefold()
+    if _is_media_url(url): return True
+    if any(hint in value for hint in PLAYER_HINTS): return True
+    return False
+
+
 def _extract_urls(text:str,*,base_url:str)->list[str]:
     if not isinstance(text,str) or not text:return []
     values=re.findall(r"https?://[^\\\"'<>\s]+",text)+[x.replace("\\/","/") for x in re.findall(r"https?:\\/\\/[^\"'<>\s]+",text)]
@@ -23,18 +71,27 @@ def _extract_urls(text:str,*,base_url:str)->list[str]:
     out=[];seen=set()
     for value in values:
         value=value.replace("\\/","/").rstrip(".,);]}")
-        if value in seen or not base._is_http(value) or base._is_ad_host(value):continue
-        if base._looks_like_candidate(value) or any(x in value.casefold() for x in ("player","embed","iframe","stream","source","server","admin-ajax.php")):
-            seen.add(value);out.append(value)
+        if value in seen or not _sanitize_candidate(value):continue
+        seen.add(value);out.append(value)
     return out
+
+
 def _score(url:str)->int:
-    v=url.casefold();s=100 if base._looks_like_candidate(url) else 0
-    s+=35 if ".m3u8" in v or ".mpd" in v else 0
-    s+=25 if any(x in v for x in ("player","embed","iframe")) else 0
-    s+=20 if any(x in v for x in ("stream","source","server")) else 0
-    return s
+    value=url.casefold(); score=0
+    if _is_media_url(url): score+=1000
+    if any(x in value for x in (".m3u8",".mpd")): score+=250
+    if any(x in value for x in (".mp4",".m4v",".webm",".mov",".mkv",".ts")): score+=180
+    if any(x in value for x in ("player","embed","iframe")): score+=120
+    if any(x in value for x in ("stream","source","server")): score+=80
+    if base.is_platform_url(url): score-=80
+    return score
+
+
 def _rank(urls:set[str])->list[str]:
-    return [u for u,_ in sorted(((u,_score(u)) for u in urls),key=lambda x:(-x[1],x[0]))[:base.MAX_CANDIDATES]]
+    valid={u for u in urls if _sanitize_candidate(u)}
+    return [u for u,_ in sorted(((u,_score(u)) for u in valid),key=lambda x:(-x[1],x[0]))[:base.MAX_CANDIDATES]]
+
+
 async def _discover(url:str,*,validator)->list[str]:
     try: from playwright.async_api import async_playwright
     except Exception as exc:
@@ -57,7 +114,7 @@ async def _discover(url:str,*,validator)->list[str]:
                     try: ct=(response.headers.get("content-type") or "").casefold();cl=int(response.headers.get("content-length") or "0")
                     except Exception:ct="";cl=0
                     if not _is_interesting_response(response_url,ct):return
-                    if base._looks_like_candidate(response_url):
+                    if _sanitize_candidate(response_url):
                         try:validator(response_url)
                         except Exception:return
                         candidates.add(response_url);return
@@ -71,8 +128,9 @@ async def _discover(url:str,*,validator)->list[str]:
                     for extracted in _extract_urls(text,base_url=response_url):
                         try:validator(extracted)
                         except Exception:continue
-                        if base._looks_like_candidate(extracted):candidates.add(extracted)
-                        elif any(h in extracted.casefold() for h in ("player","embed","iframe","server","source")) and len(queue)<MAX_NAV_TARGETS:
+                        if _sanitize_candidate(extracted):
+                            candidates.add(extracted)
+                        elif any(h in extracted.casefold() for h in PLAYER_HINTS) and len(queue)<MAX_NAV_TARGETS:
                             if extracted not in visited and extracted not in queue:queue.append(extracted)
                 page.on("response",on_response)
                 try:
@@ -96,12 +154,14 @@ async def _discover(url:str,*,validator)->list[str]:
                     for extracted in _extract_urls(html,base_url=page.url):
                         try:validator(extracted)
                         except Exception:continue
-                        if base._looks_like_candidate(extracted):candidates.add(extracted)
+                        if _sanitize_candidate(extracted):candidates.add(extracted)
                 except Exception as exc:print(f"⚠️ Shhaiid4u Player Bridge: page failed ({type(exc).__name__})",flush=True)
                 finally:await page.close()
             await context.close()
         finally:await browser.close()
     ranked=_rank(candidates);print(f"🎯 Shhaiid4u Player Bridge: {'found '+str(len(ranked))+' candidate(s)' if ranked else 'no player media candidate found'}",flush=True);return ranked
+
+
 def resolve(url:str,*,validator)->list[str]:
     if not base.is_platform_url(url):return []
     canonical_url=base._canonical_page_url(url)
@@ -113,6 +173,8 @@ def resolve(url:str,*,validator)->list[str]:
         try:return loop.run_until_complete(_discover(canonical_url,validator=validator))
         finally:loop.close()
     except Exception as exc:print(f"⚠️ Shhaiid4u Player Bridge: failed ({type(exc).__name__})",flush=True);return []
+
+
 def install(bot_module):
     original=getattr(bot_module,"extract_direct_media_urls",None)
     if not callable(original) or getattr(original,"_shhaiid4u_player_bridge",False):return
