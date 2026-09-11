@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 HOST_SUFFIX = "shhaiid4u.net"
 MAX_CANDIDATES = 12
@@ -41,6 +41,18 @@ def is_platform_url(url: str) -> bool:
         return False
     host = (urlparse(url).hostname or "").lower().rstrip(".")
     return host == HOST_SUFFIX or host.endswith("." + HOST_SUFFIX)
+
+
+def _canonical_page_url(url: str) -> str:
+    """Map the site's legacy /watch/<slug> route to its indexed /episode/<slug>."""
+    if not is_platform_url(url):
+        return url
+    parsed = urlparse(url)
+    path = parsed.path or ""
+    if path == "/watch" or path.startswith("/watch/"):
+        canonical_path = "/episode" + path[len("/watch"):]
+        return urlunparse(parsed._replace(path=canonical_path))
+    return url
 
 
 def _is_ad_host(url: str) -> bool:
@@ -81,14 +93,17 @@ def resolve(url: str, *, validator) -> list[str]:
     """Discover public media candidates from shhaiid4u.net via bounded browser discovery."""
     if not is_platform_url(url):
         return []
+    canonical_url = _canonical_page_url(url)
     try:
-        validator(url)
+        validator(canonical_url)
     except Exception:
         return []
+    if canonical_url != url:
+        print("🎯 Shhaiid4u Resolver: normalized /watch/ route to /episode/", flush=True)
     try:
         from downloader import browser_media_resolver
         candidates = browser_media_resolver.resolve(
-            url,
+            canonical_url,
             validator=validator,
             timeout_ms=TIMEOUT_MS,
             settle_ms=SETTLE_MS,
