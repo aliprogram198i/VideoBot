@@ -74,12 +74,7 @@ def _navigation_score(text: str, href: str) -> int:
 
 
 def _verify_media_file(path: str, *, is_audio: bool, min_bytes: int, min_duration: float, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> bool:
-    """Reject empty, tiny, non-media, or implausibly short provider files.
-
-    max_file_bytes is normally the global 500 MB limit. Provider-specific
-    callers may explicitly pass a larger bounded limit so the normal delivery
-    layer can split large videos after a verified local file is obtained.
-    """
+    """Reject empty, tiny, non-media, or implausibly short provider files."""
     try:
         size = os.path.getsize(path)
     except OSError:
@@ -147,29 +142,41 @@ def _stream_with_browser_context(url: str, output_dir: str, *, cookies: list[dic
     if not _is_http_url(url):
         return None
     cookie_header = "; ".join(f"{c.get('name')}={c.get('value')}" for c in cookies if c.get('name'))
-    headers = {"User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36", "Accept": "*/*"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
+        "Accept": "*/*",
+    }
     if cookie_header:
         headers["Cookie"] = cookie_header
     if referer_url:
         headers["Referer"] = referer_url
-    parsed = urlparse(url)
-    if parsed.scheme == "https":
-        headers.setdefault("Origin", f"https://{parsed.netloc}")
-    suffix = Path(parsed.path).suffix.lower()
+    suffix = Path(urlparse(url).path).suffix.lower()
     if suffix not in _MEDIA_FILE_EXTENSIONS:
         suffix = ".m4a" if is_audio else ".mp4"
     fd, target = tempfile.mkstemp(prefix="browser_", suffix=suffix, dir=output_dir)
     os.close(fd)
     try:
         with urlopen(Request(url, headers=headers), timeout=timeout_s) as response, open(target, "wb") as output:
-            total = 0
+            status = getattr(response, "status", None)
+            content_type = response.headers.get("Content-Type", "")
             content_length = response.headers.get("Content-Length")
+            if status is not None and not 200 <= int(status) < 300:
+                print(f"⚠️ Browser Download Handoff: media response rejected (status={status})", flush=True)
+                return None
+            if not _is_media_response(url, content_type, response.headers.get("Content-Disposition")):
+                print(f"⚠️ Browser Download Handoff: media response rejected (content_type={content_type or 'unknown'})", flush=True)
+                return None
             if content_length:
                 try:
-                    if int(content_length) > max_file_bytes:
+                    declared = int(content_length)
+                    if declared > max_file_bytes:
+                        return None
+                    if declared > 0 and not is_audio and min_bytes > 0 and declared < min_bytes:
+                        print(f"⚠️ Browser Download Handoff: media response declared too small ({declared} bytes; content_type={content_type or 'unknown'})", flush=True)
                         return None
                 except ValueError:
                     pass
+            total = 0
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
@@ -178,6 +185,7 @@ def _stream_with_browser_context(url: str, output_dir: str, *, cookies: list[dic
                 if total > max_file_bytes:
                     return None
                 output.write(chunk)
+            print(f"🌐 Browser Download Handoff: media response status={status or 'unknown'} content_type={content_type or 'unknown'} declared={content_length or 'unknown'} received={total}", flush=True)
         if _verify_media_file(target, is_audio=is_audio, min_bytes=min_bytes, min_duration=min_duration, max_file_bytes=max_file_bytes):
             print(f"🌐 Browser Download Handoff: streamed {total} bytes", flush=True)
             return target
@@ -277,6 +285,8 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                         content_type = headers.get("content-type")
                         disposition = headers.get("content-disposition")
                         response_url = response.url
+                        status = response.status
+                        content_length = headers.get("content-length")
                     except Exception:
                         return
                     if _is_media_response(response_url, content_type, disposition):
@@ -284,8 +294,21 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                             validator(response_url)
                         except Exception:
                             return
+                        if status < 200 or status >= 300:
+                            print(f"⚠️ Browser Download Handoff: captured media response rejected (status={status})", flush=True)
+                            return
+                        if content_length:
+                            try:
+                                declared = int(content_length)
+                                if declared > max_file_bytes:
+                                    return
+                                if declared > 0 and not is_audio and min_video_bytes > 0 and declared < min_video_bytes:
+                                    print(f"⚠️ Browser Download Handoff: captured media response rejected as too small ({declared} bytes)", flush=True)
+                                    return
+                            except ValueError:
+                                pass
                         remember_media(response_url)
-                        print("🌐 Browser Download Handoff: captured media response", flush=True)
+                        print(f"🌐 Browser Download Handoff: captured media response status={status} content_type={content_type or 'unknown'} declared={content_length or 'unknown'}", flush=True)
 
                 async def on_download(download) -> None:
                     try:
