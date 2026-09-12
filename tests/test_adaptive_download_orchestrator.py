@@ -38,4 +38,5 @@ def test_order_candidates_supports_mapping_candidates():
 def test_order_candidates_keeps_non_urls_safe():
     candidates = [None, "not-a-url", "https://cdn.example/master.m3u8"]
     ordered = order_candidates(candidates, {"kind:hls": 30.0})
-    assert ordered[-1] == "https://cdn.example/master.m3u8"
+    assert ordered[0] == "https://cdn.example/master.m3u8"
+    assert set(ordered) == set(candidates)
