@@ -32,6 +32,38 @@ COPY --chown=videobot:videobot jobs ./jobs
 COPY --chown=videobot:videobot security ./security
 COPY --chown=videobot:videobot plugins ./plugins
 COPY --chown=videobot:videobot telegram_layer ./telegram_layer
+RUN python - <<'PY'
+from pathlib import Path
+import re
+path = Path('bot.py')
+text = path.read_text(encoding='utf-8')
+marker = 'youtube_smart_extraction_not_applicable'
+if marker not in text:
+    pattern = r'(?m)^(?P<indent>\s*)smart_file, smart_diagnostics = await download_with_smart_extraction\(\n(?P<body>.*?)(?P=indent)\)'
+    matches = list(re.finditer(pattern, text, re.DOTALL))
+    if len(matches) != 1:
+        raise SystemExit(f'Expected exactly one Smart Extraction call, found {len(matches)}')
+    m = matches[0]
+    indent = m.group('indent')
+    original = m.group(0)
+    replacement = (
+        f'{indent}if is_youtube:\n'
+        f'{indent}    smart_file = None\n'
+        f'{indent}    smart_diagnostics = {{\n'
+        f'{indent}        "candidate_count": 0,\n'
+        f'{indent}        "valid_candidate_count": 0,\n'
+        f'{indent}        "skipped": "youtube_smart_extraction_not_applicable",\n'
+        f'{indent}    }}\n'
+        f'{indent}    print("ℹ️ Skipping generic Smart Extraction fallback for YouTube")\n'
+        f'{indent}else:\n'
+        + '\n'.join(indent + '    ' + line if line else line for line in original.splitlines())
+        + '\n'
+    )
+    path.write_text(text[:m.start()] + replacement + text[m.end():], encoding='utf-8')
+    print('Applied YouTube fallback isolation during image build')
+else:
+    print('YouTube fallback isolation already present')
+PY
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
     && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/smart_search.py downloader/smart_media_bridge.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py downloader/smart_learning_foundation.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer_v2.py plugins/admin_operations_center.py plugins/admin_fallback_intelligence.py plugins/admin_backup_recovery.py plugins/admin_security_center.py plugins/admin_smart_analytics.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/user_features.py plugins/yoinku_compat.py plugins/whatsapp_audio.py telegram_layer/media_retry.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
