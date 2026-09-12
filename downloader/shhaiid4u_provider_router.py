@@ -1,6 +1,6 @@
 """Provider router for public Shhaiid4u candidates.
 
-Shhaiid4u is treated as a source page, not as a media provider.  The router
+Shhaiid4u is treated as a source page, not as a media provider. The router
 identifies the actual provider by canonical hostname and hands only owned,
 public provider URLs to the existing provider-specific downloader logic.
 
@@ -22,8 +22,10 @@ class ProviderSpec:
     enabled: bool = True
 
 
+# These hosts deliberately mirror the providers that have a verified,
+# public downloader implementation in shhaiid4u_provider_downloader.py.
 PROVIDERS: tuple[ProviderSpec, ...] = (
-    ProviderSpec("megaup", ("megaup.net", "megaup.cc")),
+    ProviderSpec("megaup", ("megaup.net",)),
     ProviderSpec("streamtape", ("streamtape.com",)),
 )
 
@@ -50,7 +52,7 @@ def identify_provider(url: str) -> ProviderSpec | None:
 
 
 def route_candidates(candidates: list[str]) -> dict[str, list[str]]:
-    """Group candidates by provider without changing ordering or ownership."""
+    """Group owned candidates by provider without changing candidate URLs."""
     routed: dict[str, list[str]] = {}
     seen: set[str] = set()
     for candidate in candidates:
@@ -65,6 +67,7 @@ def route_candidates(candidates: list[str]) -> dict[str, list[str]]:
 
 
 def owned_candidates(candidates: list[str]) -> list[str]:
+    """Return owned candidates in deterministic provider order."""
     routed = route_candidates(candidates)
     result: list[str] = []
     for provider in PROVIDERS:
@@ -86,14 +89,13 @@ async def _resolve_and_download(
     discovered = await asyncio.to_thread(resolve, url, validator=validator)
     routed = route_candidates(discovered)
     if not routed:
-        return None, {"status": "skipped", "reason": "no_supported_provider", "discovered": len(discovered)}
+        return None, {
+            "status": "skipped",
+            "reason": "no_supported_provider",
+            "discovered": len(discovered),
+        }
 
-    # Preserve the discovery order while making provider ownership explicit.
-    ordered: list[str] = []
-    for candidate in discovered:
-        if identify_provider(candidate) is not None:
-            ordered.append(candidate)
-
+    ordered = [candidate for candidate in discovered if identify_provider(candidate) is not None]
     path, diagnostics = await download_candidates(
         ordered,
         source_url=url,
