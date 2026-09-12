@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 from urllib.parse import urlparse
 
 
@@ -29,7 +30,31 @@ def install(bot_module) -> None:
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
     browser_handoff = __import__("downloader.browser_download_handoff", fromlist=["resolve_to_file"])
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
+    telemetry_module = __import__("downloader.resolver_outcome_telemetry", fromlist=["ResolverOutcomeTelemetry"])
+    telemetry = telemetry_module.ResolverOutcomeTelemetry()
     browser_candidate_cache = {}
+
+    async def _run_resolver(name, operation, *args, **kwargs):
+        """Run one existing resolver and record only its technical outcome."""
+        started = time.monotonic()
+        try:
+            result = operation(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            count = len(result) if isinstance(result, (list, tuple)) else int(bool(result))
+            telemetry.record(name, success=bool(result), candidate_count=count, elapsed_ms=(time.monotonic() - started) * 1000)
+            return result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            telemetry.record(
+                name,
+                success=False,
+                candidate_count=0,
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                failure_reason=type(exc).__name__,
+            )
+            raise
 
     def _is_local_file(value, temp_dir):
         if not isinstance(value, (str, os.PathLike)) or not temp_dir:
@@ -60,7 +85,15 @@ def install(bot_module) -> None:
     async def wrapped(url, *args, **kwargs):
         print("🔎 Smart Media Bridge: entered", flush=True)
         try:
-            provider_resolved = await asyncio.to_thread(shahid4u_resolver.resolve, url, validator=bot_module.validate_public_http_url, request_factory=bot_module.Request, open_function=bot_module.safe_urlopen, read_function=bot_module.read_limited)
+            provider_resolved = await _run_resolver(
+                "shahid4u",
+                shahid4u_resolver.resolve,
+                url,
+                validator=bot_module.validate_public_http_url,
+                request_factory=bot_module.Request,
+                open_function=bot_module.safe_urlopen,
+                read_function=bot_module.read_limited,
+            )
         except Exception as exc:
             print(f"⚠️ Shahid4u Resolver failed: {type(exc).__name__}", flush=True)
             provider_resolved = []
@@ -69,9 +102,7 @@ def install(bot_module) -> None:
             print(f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff", flush=True)
             return provider_resolved
         try:
-            existing = original(url, *args, **kwargs)
-            if inspect.isawaitable(existing):
-                existing = await existing
+            existing = await _run_resolver("legacy_extractor", original, url, *args, **kwargs)
         except Exception as exc:
             print(f"⚠️ Smart Search legacy extractor failed: {type(exc).__name__}", flush=True)
             existing = []
@@ -80,7 +111,15 @@ def install(bot_module) -> None:
             return existing
         try:
             print("🔎 Smart Media Bridge: static resolver starting", flush=True)
-            resolved = await asyncio.to_thread(resolver.resolve, url, validator=bot_module.validate_public_http_url, request_factory=bot_module.Request, open_function=bot_module.safe_urlopen, read_function=bot_module.read_limited)
+            resolved = await _run_resolver(
+                "smart_media",
+                resolver.resolve,
+                url,
+                validator=bot_module.validate_public_http_url,
+                request_factory=bot_module.Request,
+                open_function=bot_module.safe_urlopen,
+                read_function=bot_module.read_limited,
+            )
         except Exception as exc:
             print(f"⚠️ Smart Search Resolver failed: {type(exc).__name__}", flush=True)
             resolved = []
@@ -89,7 +128,12 @@ def install(bot_module) -> None:
             return resolved
         try:
             print("🌐 Smart Media Bridge: browser resolver starting", flush=True)
-            browser_resolved = await asyncio.to_thread(browser_resolver.resolve, url, validator=bot_module.validate_public_http_url)
+            browser_resolved = await _run_resolver(
+                "browser_media",
+                browser_resolver.resolve,
+                url,
+                validator=bot_module.validate_public_http_url,
+            )
         except Exception as exc:
             print(f"⚠️ Browser Media Resolver failed: {type(exc).__name__}", flush=True)
             browser_resolved = []
@@ -99,7 +143,7 @@ def install(bot_module) -> None:
             return browser_resolved
         try:
             print("🧩 Smart Media Bridge: Cobalt resolver starting", flush=True)
-            cobalt_resolved = await asyncio.to_thread(cobalt_resolver.resolve, url)
+            cobalt_resolved = await _run_resolver("cobalt", cobalt_resolver.resolve, url)
         except Exception as exc:
             print(f"⚠️ Cobalt Resolver failed: {type(exc).__name__}", flush=True)
             cobalt_resolved = []
@@ -226,3 +270,4 @@ def install(bot_module) -> None:
     if callable(original_fallback):
         print("🌐 Smart Media Bridge: Browser Download Handoff ENABLED", flush=True)
     print("🎯 Shahid4u Provider Resolver: ENABLED", flush=True)
+    print("📊 Resolver Outcome Telemetry: ENABLED", flush=True)
