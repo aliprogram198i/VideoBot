@@ -55,15 +55,20 @@ class ProviderAdapter:
         max_file_bytes: int,
         source_url: str,
     ) -> str | None:
+        candidate = self.normalize(url)
+        # The media request belongs to the provider page, so its Referer must
+        # be the provider candidate rather than the original Shhaiid4u page.
+        # The shared handoff still performs its own bounded browser navigation
+        # and cookie/session handling.
         return resolve_to_file(
-            self.normalize(url),
+            candidate,
             output_dir,
             validator=validator,
             is_audio=is_audio,
             timeout_ms=45_000,
             settle_ms=self.settle_ms,
             max_file_bytes=min(max_file_bytes, MAX_FILE_BYTES),
-            referer_url=source_url,
+            referer_url=candidate,
             min_video_bytes=0 if is_audio else MIN_VIDEO_BYTES,
             min_video_duration=0.0 if is_audio else MIN_VIDEO_DURATION,
         )
