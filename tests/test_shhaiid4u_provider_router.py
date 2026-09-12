@@ -3,7 +3,7 @@ from downloader import shhaiid4u_provider_router as router
 
 def test_provider_identity_is_hostname_based():
     assert router.identify_provider("https://megaup.net/v/abc").provider_id == "megaup"
-    assert router.identify_provider("https://cdn.megaup.cc/v/abc").provider_id == "megaup"
+    assert router.identify_provider("https://cdn.megaup.net/v/abc").provider_id == "megaup"
     assert router.identify_provider("https://streamtape.com/v/abc").provider_id == "streamtape"
     assert router.identify_provider("https://example.com/video.mp4") is None
     assert router.identify_provider("https://shhaiid4u.net/watch/abc") is None
@@ -15,17 +15,17 @@ def test_provider_routing_preserves_order_and_deduplicates():
         "https://megaup.net/v/2",
         "https://streamtape.com/v/1",
         "https://example.com/v/3",
-        "https://megaup.cc/v/4",
+        "https://cdn.megaup.net/v/4",
     ]
     assert router.owned_candidates(values) == [
         "https://megaup.net/v/2",
-        "https://megaup.cc/v/4",
+        "https://cdn.megaup.net/v/4",
         "https://streamtape.com/v/1",
     ]
     routed = router.route_candidates(values)
     assert routed == {
         "streamtape": ["https://streamtape.com/v/1"],
-        "megaup": ["https://megaup.net/v/2", "https://megaup.cc/v/4"],
+        "megaup": ["https://megaup.net/v/2", "https://cdn.megaup.net/v/4"],
     }
 
 
