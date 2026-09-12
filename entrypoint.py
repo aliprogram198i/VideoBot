@@ -61,7 +61,6 @@ def main() -> None:
         install_shhaiid4u_resolver = importlib.import_module("downloader.shhaiid4u_resolver").install
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
-        install_shhaiid4u_provider_router = importlib.import_module("downloader.shhaiid4u_provider_router").install
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
         install_movie_source_guard = importlib.import_module("downloader.movie_source_guard").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
@@ -73,13 +72,11 @@ def main() -> None:
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
         install_download_guards(bot_module)
-        # Shhaiid4u discovery remains isolated. Exactly one canonical provider
-        # boundary then owns the Megaup/Streamtape handoff. Older stacked
-        # provider wrappers are intentionally not installed here.
+        # Keep all Shhaiid4u layers isolated. Install the older layers first;
+        # the player bridge becomes the outer wrapper and gets first opportunity.
         install_shhaiid4u_resolver(bot_module)
         install_shhaiid4u_network_discovery(bot_module)
         install_shhaiid4u_player_bridge(bot_module)
-        install_shhaiid4u_provider_router(bot_module)
         # Install the movie gate before Smart Media Bridge so rejected direct
         # artifacts are treated as a failed attempt and the bridge can continue
         # through its existing candidate/browser fallback chain.
