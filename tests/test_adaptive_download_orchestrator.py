@@ -45,12 +45,13 @@ def test_order_candidates_keeps_non_urls_safe():
 def test_order_candidates_bounds_adaptive_prefix_without_loss():
     candidates = [f"https://cdn.example/{index}.mp4" for index in range(20)]
     weights = {"kind:progressive": 10.0, "kind:hls": 100.0}
-    candidates[15] = "https://cdn.example/master.m3u8"
+    candidates[16] = "https://cdn.example/master.m3u8"
 
     ordered = order_candidates(candidates, weights)
 
-    # Candidate 15 is outside the adaptive prefix and must not be promoted.
-    assert ordered[15].endswith("master.m3u8")
-    assert ordered == [*candidates[:15], candidates[15], *candidates[16:]]
+    # Candidate 16 is outside the adaptive prefix and must not be promoted.
+    assert ordered[16].endswith("master.m3u8")
+    assert ordered[:16] == candidates[:16]
+    assert ordered[17:] == candidates[17:]
     assert len(ordered) == len(candidates)
     assert set(ordered) == set(candidates)
