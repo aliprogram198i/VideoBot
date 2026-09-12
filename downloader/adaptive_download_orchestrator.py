@@ -55,30 +55,24 @@ def _score(url: str, weights: dict[str, float]) -> float:
 
 
 def order_candidates(candidates, weights: dict[str, float] | None = None):
-    """Return candidates in adaptive order while preserving stable ties.
-
-    Non-URL values are never moved ahead of valid URLs. The function is bounded
-    and deterministic, and returns the original object values unchanged.
-    """
+    """Adaptively order only the bounded candidate prefix, preserving the tail."""
     if not isinstance(candidates, (list, tuple)) or len(candidates) < 2:
         return candidates
     original = list(candidates)
     if weights is None:
         weights = {}
-    indexed = list(enumerate(original))
+
+    # Bound adaptive work to the first N candidates. The untouched tail remains
+    # byte-for-byte/order-for-order identical, so no candidate is lost or moved
+    # across the safety boundary.
+    prefix = original[:_MAX_CANDIDATES]
     scored = []
-    for index, item in indexed:
+    for index, item in enumerate(prefix):
         url = _candidate_url(item)
         score = _score(url, weights) if url else float("-inf")
         scored.append((score, -index, item))
     scored.sort(reverse=True)
-    ordered = [item for _, _, item in scored]
-    if len(ordered) > _MAX_CANDIDATES:
-        # Bound the adaptive work without dropping or duplicating candidates.
-        # The remainder stays in the same adaptive order rather than reverting
-        # to the original tail, which could duplicate an item from the top-N set.
-        return ordered[:_MAX_CANDIDATES] + ordered[_MAX_CANDIDATES:]
-    return ordered
+    return [item for _, _, item in scored] + original[_MAX_CANDIDATES:]
 
 
 def install(bot_module, *, store_factory=None) -> None:
