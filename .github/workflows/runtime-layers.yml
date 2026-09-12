@@ -7,12 +7,88 @@ on:
       - 'refactor/**'
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   unit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: One-time YouTube fallback safety patch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('bot.py')
+          text = path.read_text(encoding='utf-8')
+          if 'youtube_smart_extraction_not_applicable' in text:
+              print('YouTube fallback safety patch already present.')
+              raise SystemExit(0)
+          old = '''            # ------------------------------------------------
+            # Smart Extraction fallback
+            # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
+            # ------------------------------------------------
+
+            smart_file, smart_diagnostics = await download_with_smart_extraction(
+                url=url,
+                temp_dir=temp_dir,
+                output_template=output_template,
+                format_option=format_option,
+                is_audio=is_audio,
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+            )
+'''
+          new = '''            # ------------------------------------------------
+            # Smart Extraction fallback
+            # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
+            #
+            # YouTube must never enter the generic HTML/direct-media
+            # extraction layer. That layer is intentionally generic and
+            # can discover unrelated media embedded in a YouTube page.
+            # For YouTube, yt-dlp is authoritative and Yoinku is the
+            # bounded fallback if yt-dlp fails.
+            # ------------------------------------------------
+
+            if is_youtube:
+                smart_file = None
+                smart_diagnostics = {
+                    "candidate_count": 0,
+                    "valid_candidate_count": 0,
+                    "skipped": "youtube_smart_extraction_not_applicable",
+                }
+                print("ℹ️ Skipping generic Smart Extraction fallback for YouTube")
+            else:
+                smart_file, smart_diagnostics = await download_with_smart_extraction(
+                    url=url,
+                    temp_dir=temp_dir,
+                    output_template=output_template,
+                    format_option=format_option,
+                    is_audio=is_audio,
+                    attempt_id=attempt_id,
+                    attempt_number=attempt_number,
+                )
+'''
+          if old not in text:
+              raise SystemExit('Target YouTube Smart Extraction block not found.')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Commit one-time patch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if git diff --quiet -- bot.py; then
+            echo 'No one-time patch changes.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot.py
+          git commit -m 'fix: prevent generic fallback from handling YouTube'
+          git push
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
