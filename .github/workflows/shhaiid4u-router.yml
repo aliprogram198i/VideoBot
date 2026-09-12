@@ -1,0 +1,33 @@
+name: Shhaiid4u Router Validation
+
+on:
+  pull_request:
+    paths:
+      - 'downloader/shhaiid4u_provider_router.py'
+      - 'tests/test_shhaiid4u_provider_router.py'
+      - 'entrypoint.py'
+      - '.github/workflows/shhaiid4u-router.yml'
+  push:
+    branches:
+      - feature/shhaiid4u-provider-router
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependency
+        run: python -m pip install --upgrade pytest
+
+      - name: Compile changed Python modules
+        run: python -m py_compile downloader/shhaiid4u_provider_router.py entrypoint.py tests/test_shhaiid4u_provider_router.py
+
+      - name: Run provider-router tests
+        run: python -m pytest -q tests/test_shhaiid4u_provider_router.py
