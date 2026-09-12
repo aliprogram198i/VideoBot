@@ -55,16 +55,22 @@ class ProviderAdapter:
             return url
         return self.normalizer(url)
 
-    def referer(self, candidate: str) -> str:
-        """Return a normal provider-origin Referer for direct media requests.
+    def referer(self, candidate: str, source_url: str) -> str:
+        """Return the actual player-page context used to discover the candidate.
 
-        Player discovery returns direct media/provider endpoints. Using the
-        endpoint itself as Referer is not a valid browser navigation context
-        for providers that validate hotlink headers, and can produce tiny HTML
-        challenge/error bodies that look like media responses. Keep the
-        handoff bounded and use only the provider origin as the normal
-        navigation/referrer context.
+        Provider servers commonly validate the hotlink against the page that
+        embedded/discovered the media URL. The Shhaiid4u source page is the
+        correct browser navigation/referrer context; using the provider origin
+        alone can yield a small HTML challenge/error response instead of media.
+        Fall back to the provider origin only when the source URL is unusable.
         """
+        if source_url:
+            try:
+                parsed = urlparse(source_url)
+                if parsed.scheme in {"http", "https"} and parsed.netloc:
+                    return source_url
+            except Exception:
+                pass
         return _origin(candidate)
 
     def resolve(
@@ -78,7 +84,7 @@ class ProviderAdapter:
         source_url: str,
     ) -> str | None:
         candidate = self.normalize(url)
-        provider_referer = self.referer(candidate)
+        provider_referer = self.referer(candidate, source_url)
         return resolve_to_file(
             candidate,
             output_dir,
