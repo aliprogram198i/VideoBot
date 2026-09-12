@@ -1799,9 +1799,10 @@ def register_user(user):
             first_name,
             last_name,
             first_seen,
-            last_seen
+            last_seen,
+            language
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, NULL)
 
         ON CONFLICT(user_id)
         DO UPDATE SET
