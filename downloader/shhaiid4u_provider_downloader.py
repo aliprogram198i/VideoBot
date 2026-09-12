@@ -3,8 +3,8 @@
 This layer is isolated from the generic downloader. It owns only public
 MegaUp and Streamtape candidates discovered from Shhaiid4u pages. It first
 tries yt-dlp with the source referrer, then uses the existing public browser
-stack to observe the provider's actual media response and retries yt-dlp on
-that concrete media URL with the provider page as referrer.
+stack to observe the provider's actual media response. Concrete media URLs
+are downloaded directly with the provider Referer before yt-dlp is retried.
 
 No accounts, cookies, CAPTCHA solving, DRM bypass, or access-control
 workarounds are used.
@@ -17,6 +17,8 @@ import re
 import subprocess
 from urllib.parse import urlparse
 
+import httpx
+
 MAX_PROVIDER_CANDIDATES = 6
 MAX_PROVIDER_PAGES = 4
 MAX_MEDIA_RESPONSES = 40
@@ -28,6 +30,7 @@ MIN_VIDEO_BYTES = 2 * 1024 * 1024
 MIN_VIDEO_DURATION = 45.0
 MEDIA_EXTENSIONS = (".mp4", ".m4v", ".webm", ".mov", ".mkv", ".m3u8", ".mpd", ".ts")
 MEDIA_CONTENT_HINTS = ("video/", "audio/", "mpegurl", "dash+xml")
+DIRECT_MEDIA_EXTENSIONS = (".mp4", ".m4v", ".webm", ".mov", ".mkv")
 SUPPORTED_HOSTS = {"megaup.net", "streamtape.com"}
 USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -61,6 +64,12 @@ def _looks_like_media(url: str, content_type: str | None = None) -> bool:
     return any(path.endswith(ext) for ext in MEDIA_EXTENSIONS) or any(
         hint in value for hint in MEDIA_CONTENT_HINTS
     )
+
+
+def _looks_like_direct_media(url: str, content_type: str | None = None) -> bool:
+    path = (urlparse(url).path or "").casefold()
+    value = f"{url} {content_type or ''}".casefold()
+    return any(path.endswith(ext) for ext in DIRECT_MEDIA_EXTENSIONS) or "video/" in value or "audio/" in value
 
 
 def _provider_candidates(candidates: list[str]) -> list[str]:
@@ -196,6 +205,67 @@ async def _run_ytdlp(candidate_url: str, *, temp_dir: str, referer_url: str,
         return None, "", f"provider yt-dlp error: {type(exc).__name__}"
 
 
+async def _download_direct_media(media_url: str, *, temp_dir: str, referer_url: str,
+                                 is_audio: bool, max_size: int, media_index: int) -> tuple[str | None, str]:
+    """Download a concrete public media URL without asking yt-dlp to identify it."""
+    if not _is_http(media_url):
+        return None, "invalid media URL"
+    if not _looks_like_direct_media(media_url):
+        return None, "not a direct media URL"
+    suffix = ".mp3" if is_audio else (os.path.splitext(urlparse(media_url).path)[1].casefold() or ".mp4")
+    if suffix not in ((".mp3",) if is_audio else DIRECT_MEDIA_EXTENSIONS):
+        suffix = ".mp4"
+    path = os.path.join(temp_dir, f"shhaiid4u_direct_{media_index}{suffix}")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Referer": referer_url,
+        "Accept": "video/*,audio/*,*/*;q=0.8",
+        "Accept-Encoding": "identity",
+    }
+    timeout = httpx.Timeout(PROVIDER_TIMEOUT_S, connect=15.0)
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers=headers) as client:
+            async with client.stream("GET", media_url) as response:
+                if response.status_code < 200 or response.status_code >= 300:
+                    return None, f"HTTP {response.status_code}"
+                content_type = (response.headers.get("content-type") or "").casefold()
+                if not _looks_like_direct_media(media_url, content_type):
+                    return None, f"unexpected content-type={content_type or 'unknown'}"
+                try:
+                    declared = int(response.headers.get("content-length") or "0")
+                except ValueError:
+                    declared = 0
+                if declared and declared > max_size:
+                    return None, "content exceeds configured max size"
+                written = 0
+                with open(path, "wb") as output:
+                    async for chunk in response.aiter_bytes(1024 * 1024):
+                        written += len(chunk)
+                        if written > max_size or written > MAX_FILE_BYTES:
+                            output.close()
+                            try:
+                                os.remove(path)
+                            except OSError:
+                                pass
+                            return None, "download exceeded maximum size"
+                        output.write(chunk)
+                if _verify_file(path, is_audio=is_audio):
+                    return path, ""
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                return None, "downloaded file failed media verification"
+    except asyncio.CancelledError:
+        raise
+    except (httpx.HTTPError, OSError) as exc:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None, f"direct HTTP error={type(exc).__name__}"
+
+
 async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> list[str]:
     """Observe public media responses from the provider page for both owned hosts."""
     try:
@@ -297,7 +367,7 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
 
 async def download_candidates(candidates: list[str], *, source_url: str, temp_dir: str,
                               is_audio: bool, max_size: int) -> tuple[str | None, dict]:
-    """Try owned provider URLs with a bounded browser-media fallback."""
+    """Try owned provider URLs with bounded direct-media and yt-dlp fallbacks."""
     if not isinstance(source_url, str) or not _is_http(source_url):
         return None, {"status": "skipped", "reason": "invalid_source"}
     owned = _provider_candidates(candidates)
@@ -327,17 +397,30 @@ async def download_candidates(candidates: list[str], *, source_url: str, temp_di
         entry["browser_media_count"] = len(media_urls)
         print(f"🔎 Shhaiid4u Provider Downloader: browser media candidates={len(media_urls)} provider={provider}", flush=True)
         for media_index, media_url in enumerate(media_urls, 1):
-            path, _, media_stderr = await _run_ytdlp(
+            direct_path, direct_error = await _download_direct_media(
                 media_url, temp_dir=temp_dir, referer_url=candidate,
-                is_audio=is_audio, max_size=max_size,
+                is_audio=is_audio, max_size=max_size, media_index=media_index,
             )
-            if path:
+            if direct_path:
                 entry["status"] = "success"
-                entry["status_detail"] = "browser_media_url"
+                entry["status_detail"] = "direct_http_media"
                 diagnostics["status"] = "success"
-                print(f"✅ Shhaiid4u Provider Downloader: browser media succeeded provider={provider} media={media_index}", flush=True)
-                return path, diagnostics
-            entry["media_error"] = _short_error(media_stderr)
+                print(f"✅ Shhaiid4u Provider Downloader: direct media succeeded provider={provider} media={media_index}", flush=True)
+                return direct_path, diagnostics
+            if direct_error == "not a direct media URL":
+                path, _, media_stderr = await _run_ytdlp(
+                    media_url, temp_dir=temp_dir, referer_url=candidate,
+                    is_audio=is_audio, max_size=max_size,
+                )
+                if path:
+                    entry["status"] = "success"
+                    entry["status_detail"] = "browser_media_url"
+                    diagnostics["status"] = "success"
+                    print(f"✅ Shhaiid4u Provider Downloader: browser media succeeded provider={provider} media={media_index}", flush=True)
+                    return path, diagnostics
+                entry["media_error"] = _short_error(media_stderr)
+            else:
+                entry["direct_media_error"] = _short_error(direct_error)
         if media_urls:
             print(f"⚠️ Shhaiid4u Provider Downloader: browser media URLs exhausted provider={provider}", flush=True)
 
