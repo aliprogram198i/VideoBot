@@ -28,12 +28,13 @@ def admin_keyboard():
          InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
         [InlineKeyboardButton("📥 التنزيلات والبيانات", callback_data="admin_records"),
          InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations")],
-        [InlineKeyboardButton("📢 الإذاعة", callback_data="admin_broadcast"),
-         InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health")],
-        [InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="admin_ai"),
-         InlineKeyboardButton("🧹 التخزين", callback_data="admin_storage")],
-        [InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit"),
-         InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
+        [InlineKeyboardButton("📡 المراقبة الذكية", callback_data="admin_observability"),
+         InlineKeyboardButton("📢 الإذاعة", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🩺 صحة النظام", callback_data="admin_health"),
+         InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="admin_ai")],
+        [InlineKeyboardButton("🧹 التخزين", callback_data="admin_storage"),
+         InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
+        [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
     ])
 
 
@@ -171,7 +172,7 @@ def _home_text(get_db=None):
         f"📥 إجمالي التحميلات: <b>{downloads}</b>\n"
         f"📅 تحميلات اليوم: <b>{today_downloads}</b>\n"
         f"🟢 نشطون اليوم: <b>{today_users}</b>\n\n"
-        "🩺 الصحة • 🤖 العمليات • 🧾 التدقيق • 🛡️ الصلاحيات\n\n"
+        "🩺 الصحة • 🤖 العمليات • 📡 المراقبة • 🧾 التدقيق • 🛡️ الصلاحيات\n\n"
         "اختر القسم المطلوب:"
     )
 
