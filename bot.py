@@ -4475,15 +4475,43 @@ async def download_media(
             # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
             # ------------------------------------------------
 
-            smart_file, smart_diagnostics = await download_with_smart_extraction(
-                url=url,
-                temp_dir=temp_dir,
-                output_template=output_template,
-                format_option=format_option,
-                is_audio=is_audio,
-                attempt_id=attempt_id,
-                attempt_number=attempt_number,
-            )
+            if is_youtube:
+
+                smart_file = None
+
+                smart_diagnostics = {
+
+                    "candidate_count": 0,
+
+                    "valid_candidate_count": 0,
+
+                    "skipped": "youtube_smart_extraction_not_applicable",
+
+                }
+
+                print("ℹ️ Skipping generic Smart Extraction fallback for YouTube")
+
+            else:
+
+
+                            smart_file, smart_diagnostics = await download_with_smart_extraction(
+
+                                url=url,
+
+                                temp_dir=temp_dir,
+
+                                output_template=output_template,
+
+                                format_option=format_option,
+
+                                is_audio=is_audio,
+
+                                attempt_id=attempt_id,
+
+                                attempt_number=attempt_number,
+
+                            )
+
 
             if smart_file:
                 media_file = smart_file
