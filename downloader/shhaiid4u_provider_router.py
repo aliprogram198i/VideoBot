@@ -73,9 +73,11 @@ def owned_candidates(candidates: list[str]) -> list[str]:
     return result
 
 
-async def _resolve_and_download(*, url: str, temp_dir: str, is_audio: bool, max_size: int, validator):
+async def _resolve_and_download(
+    *, url: str, temp_dir: str, is_audio: bool, max_size: int, validator
+):
     from downloader.shhaiid4u_player_bridge import resolve
-    from downloader.shhaiid4u_provider_downloader import download_candidates
+    from downloader.shhaiid4u_provider_downloader import _download_with_adapters
 
     print("🎯 Shhaiid4u Provider Router: resolving provider candidates", flush=True)
     discovered = await asyncio.to_thread(resolve, url, validator=validator)
@@ -92,16 +94,23 @@ async def _resolve_and_download(*, url: str, temp_dir: str, is_audio: bool, max_
             "candidate_count": 0,
         }
 
-    path, diagnostics = await download_candidates(
+    path, diagnostics = await _download_with_adapters(
         ordered[:6],
         source_url=url,
         temp_dir=temp_dir,
         is_audio=is_audio,
         max_size=max_size,
+        validator=validator,
     )
     diagnostics = dict(diagnostics or {})
     diagnostics["router"] = {
-        "providers": sorted({identify_provider(item).provider_id for item in ordered if identify_provider(item)}),
+        "providers": sorted(
+            {
+                provider.provider_id
+                for item in ordered
+                if (provider := identify_provider(item)) is not None
+            }
+        ),
         "candidate_count": min(len(ordered), 6),
         "discovered_count": len(discovered),
     }
