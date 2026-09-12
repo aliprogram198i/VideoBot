@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: stage YouTube fallback safety fix'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
