@@ -62,6 +62,7 @@ def main() -> None:
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
+        install_adaptive_orchestrator = importlib.import_module("downloader.adaptive_download_orchestrator").install
         install_movie_source_guard = importlib.import_module("downloader.movie_source_guard").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
         register_admin_layer = importlib.import_module("plugins.admin_layer_v2").register_admin_layer
@@ -82,6 +83,10 @@ def main() -> None:
         # through its existing candidate/browser fallback chain.
         install_movie_source_guard(bot_module)
         install_smart_media_bridge(bot_module)
+        # The adaptive layer is deliberately outermost around candidate
+        # extraction. It only reorders already-discovered candidates and cannot
+        # bypass validation, download guards, or provider-specific controls.
+        install_adaptive_orchestrator(bot_module)
         install_telegram_media_retry()
 
         original_run_polling = Application.run_polling
