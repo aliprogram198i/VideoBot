@@ -9,7 +9,6 @@ ordering is preserved exactly.
 from __future__ import annotations
 
 import inspect
-import os
 from urllib.parse import urlparse
 
 from .smart_learning import DEFAULT_POLICY_VERSION, SmartTelemetryStore
@@ -73,7 +72,13 @@ def order_candidates(candidates, weights: dict[str, float] | None = None):
         score = _score(url, weights) if url else float("-inf")
         scored.append((score, -index, item))
     scored.sort(reverse=True)
-    return [item for _, _, item in scored[:_MAX_CANDIDATES]] + original[_MAX_CANDIDATES:]
+    ordered = [item for _, _, item in scored]
+    if len(ordered) > _MAX_CANDIDATES:
+        # Bound the adaptive work without dropping or duplicating candidates.
+        # The remainder stays in the same adaptive order rather than reverting
+        # to the original tail, which could duplicate an item from the top-N set.
+        return ordered[:_MAX_CANDIDATES] + ordered[_MAX_CANDIDATES:]
+    return ordered
 
 
 def install(bot_module, *, store_factory=None) -> None:
