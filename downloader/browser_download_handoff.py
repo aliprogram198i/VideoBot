@@ -16,8 +16,8 @@ from urllib.request import Request, urlopen
 LOG = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_MS = 45_000
 DEFAULT_SETTLE_MS = 2_000
-DEFAULT_MAX_PAGES = 4
-DEFAULT_MAX_MEDIA_RESPONSES = 80
+DEFAULT_MAX_PAGES = 6
+DEFAULT_MAX_MEDIA_RESPONSES = 100
 DEFAULT_MAX_CLICKS = 8
 DEFAULT_MAX_FILE_BYTES = 500 * 1024 * 1024
 DEFAULT_MIN_VIDEO_BYTES = 0
@@ -50,9 +50,11 @@ def _looks_like_media(url: str) -> bool:
 
 
 def _is_media_response(url: str, content_type: str | None, disposition: str | None) -> bool:
-    ct = (content_type or "").lower()
+    ct = (content_type or "").split(";", 1)[0].strip().lower()
     cd = (disposition or "").lower()
-    return "attachment" in cd or ct.startswith("video/") or ct.startswith("audio/") or _looks_like_media(url)
+    if ct in {"text/html", "application/xhtml+xml", "text/plain", "application/json"}:
+        return False
+    return "attachment" in cd or ct.startswith("video/") or ct.startswith("audio/")
 
 
 def _score_control(text: str, href: str) -> int:
@@ -339,6 +341,23 @@ async def _save_async(candidate_url: str, output_dir: str, *, validator, is_audi
                         dom_rows = await page.locator("video, audio, source").evaluate_all("""els => els.map(el => el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '')""")
                     except Exception:
                         dom_rows = []
+                    # Provider pages may construct media URLs dynamically without a
+                    # persistent <video>/<source> element. Inspect the browser's
+                    # resource timing entries as an additional, bounded discovery path.
+                    try:
+                        performance_rows = await page.evaluate("""() => performance.getEntriesByType('resource').map(entry => entry.name || '')""")
+                    except Exception:
+                        performance_rows = []
+                    for media_url in performance_rows or []:
+                        if not isinstance(media_url, str) or not _is_http_url(media_url):
+                            continue
+                        if not _looks_like_media(media_url):
+                            continue
+                        try:
+                            validator(media_url)
+                        except Exception:
+                            continue
+                        remember_media(media_url)
                     for media_url in dom_rows or []:
                         if isinstance(media_url, str) and _is_http_url(media_url):
                             try:
