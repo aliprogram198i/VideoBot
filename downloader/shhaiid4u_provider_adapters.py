@@ -26,6 +26,16 @@ def _host(url: str) -> str:
         return ""
 
 
+def _origin(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            return parsed._replace(path="/", params="", query="", fragment="").geturl()
+    except Exception:
+        pass
+    return url
+
+
 def _normalize_streamtape(url: str) -> str:
     if _host(url) not in {"streamtape.com", "streamtape.net"}:
         return url
@@ -45,6 +55,18 @@ class ProviderAdapter:
             return url
         return self.normalizer(url)
 
+    def referer(self, candidate: str) -> str:
+        """Return a normal provider-origin Referer for direct media requests.
+
+        Player discovery returns direct media/provider endpoints. Using the
+        endpoint itself as Referer is not a valid browser navigation context
+        for providers that validate hotlink headers, and can produce tiny HTML
+        challenge/error bodies that look like media responses. Keep the
+        handoff bounded and use only the provider origin as the normal
+        navigation/referrer context.
+        """
+        return _origin(candidate)
+
     def resolve(
         self,
         url: str,
@@ -56,10 +78,7 @@ class ProviderAdapter:
         source_url: str,
     ) -> str | None:
         candidate = self.normalize(url)
-        # The media request belongs to the provider page, so its Referer must
-        # be the provider candidate rather than the original Shhaiid4u page.
-        # The shared handoff still performs its own bounded browser navigation
-        # and cookie/session handling.
+        provider_referer = self.referer(candidate)
         return resolve_to_file(
             candidate,
             output_dir,
@@ -68,7 +87,7 @@ class ProviderAdapter:
             timeout_ms=45_000,
             settle_ms=self.settle_ms,
             max_file_bytes=min(max_file_bytes, MAX_FILE_BYTES),
-            referer_url=candidate,
+            referer_url=provider_referer,
             min_video_bytes=0 if is_audio else MIN_VIDEO_BYTES,
             min_video_duration=0.0 if is_audio else MIN_VIDEO_DURATION,
         )
