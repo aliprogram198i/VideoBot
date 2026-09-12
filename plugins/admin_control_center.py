@@ -217,3 +217,133 @@ async def admin_control_center_callback(update: Update, context: ContextTypes.DE
     audit(get_db, owner_id, "open_control_center")
     await query.edit_message_text(_home_text(get_db), parse_mode="HTML", reply_markup=admin_keyboard())
     raise ApplicationHandlerStop
+
+
+async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id, "history.view"):
+        return
+    audit(get_db, owner_id, "open_records_center")
+    await query.edit_message_text(_records_text(get_db), parse_mode="HTML", reply_markup=_records_keyboard())
+    raise ApplicationHandlerStop
+
+
+def _check_binary(command):
+    try:
+        result = subprocess.run(
+            [command, "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _module_available(name):
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
+async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id, "system.health"):
+        return
+
+    db_ok = False
+    conn = None
+    try:
+        conn = get_db()
+        conn.execute("SELECT 1").fetchone()
+        db_ok = True
+    except Exception:
+        db_ok = False
+    finally:
+        if conn:
+            conn.close()
+
+    try:
+        _, _, free = shutil.disk_usage("/")
+        free_gb = free / (1024 ** 3)
+        disk_status = "🟢" if free_gb >= 1 else "🟠" if free_gb >= 0.25 else "🔴"
+        disk_detail = f"{free_gb:.2f} GB متاح"
+    except Exception:
+        disk_status, disk_detail = "⚪", "غير متاح"
+
+    checks = [
+        ("🗄️ قاعدة البيانات", db_ok, "متصلة" if db_ok else "فشل الاتصال"),
+        ("🎞️ FFmpeg", _check_binary("ffmpeg"), "متاح"),
+        ("📥 yt-dlp", _module_available("yt_dlp"), "متاح"),
+        ("🤖 Telegram", _module_available("telegram"), "المكتبة متاحة"),
+    ]
+    audit(get_db, owner_id, "view_system_health")
+    lines = ["🩺 <b>صحة النظام والتشخيص</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
+    for label, ok, detail in checks:
+        lines.append(f"{label}: {'🟢' if ok else '🔴'} {detail}")
+    lines += [
+        f"💾 التخزين: {disk_status} {disk_detail}",
+        "🤖 خدمة البوت: 🟢 العملية الإدارية مستجيبة",
+        f"🕒 وقت الفحص: {_now()}",
+        "",
+        "ℹ️ الفحص تشخيصي فقط ولا يغيّر إعدادات النظام.",
+    ]
+    await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 تحديث", callback_data="admin_health")],
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
+    ]))
+
+
+async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id, "audit.view"):
+        return
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT admin_id, action, target_id, details, created_at "
+        "FROM admin_audit_logs ORDER BY id DESC LIMIT 15"
+    ).fetchall()
+    conn.close()
+    lines = ["🧾 <b>سجل التدقيق الإداري</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
+    if not rows:
+        lines.append("لا توجد عمليات مسجلة بعد.")
+    else:
+        for row in rows:
+            target = f" → {row['target_id']}" if row['target_id'] is not None else ""
+            detail = f" — {row['details']}" if row['details'] else ""
+            lines.append(f"• <code>{row['created_at']}</code> | {row['action']}{target}{detail}")
+    audit(get_db, owner_id, "view_audit_log")
+    await query.edit_message_text("\n".join(lines)[:3900], parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 تحديث", callback_data="admin_audit")],
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
+    ]))
+
+
+async def admin_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int):
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id, "roles.view"):
+        return
+    conn = get_db()
+    rows = conn.execute("SELECT user_id, role, permissions, updated_at FROM admin_roles ORDER BY updated_at DESC").fetchall()
+    conn.close()
+    lines = ["🛡️ <b>الأدوار والصلاحيات</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
+    for row in rows:
+        lines.append(f"• 👤 <code>{row['user_id']}</code> — <b>{html_escape_role(row['role'])}</b> — {html_escape_role(row['updated_at'])}")
+    if not rows:
+        lines.append("لا توجد أدوار مسجلة.")
+    await query.edit_message_text("\n".join(lines)[:3900], parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
+    ]))
+
+
+def html_escape_role(value):
+    import html
+    return html.escape(str(value or ""))
