@@ -4,10 +4,10 @@ This layer is isolated from the generic downloader. It owns only public
 MegaUp and Streamtape candidates discovered from Shhaiid4u pages. It first
 tries yt-dlp with the source referrer, then uses the existing public browser
 stack to observe the provider's actual media response. Concrete media URLs
-are downloaded directly with the provider Referer before yt-dlp is retried.
+are downloaded directly with the provider Referer and the same public browser
+session context when needed.
 
-No accounts, cookies, CAPTCHA solving, DRM bypass, or access-control
-workarounds are used.
+No accounts, CAPTCHA solving, DRM bypass, or access-control workarounds are used.
 """
 from __future__ import annotations
 
@@ -206,12 +206,14 @@ async def _run_ytdlp(candidate_url: str, *, temp_dir: str, referer_url: str,
 
 
 async def _download_direct_media(media_url: str, *, temp_dir: str, referer_url: str,
-                                 is_audio: bool, max_size: int, media_index: int) -> tuple[str | None, str]:
-    """Download a concrete public media URL without asking yt-dlp to identify it."""
+                                 is_audio: bool, max_size: int, media_index: int,
+                                 content_type_hint: str = "", browser_cookies: list[dict] | None = None) -> tuple[str | None, str]:
+    """Download concrete public media using the provider browser session when available."""
     if not _is_http(media_url):
         return None, "invalid media URL"
-    if not _looks_like_direct_media(media_url):
+    if not _looks_like_direct_media(media_url, content_type_hint):
         return None, "not a direct media URL"
+
     suffix = ".mp3" if is_audio else (os.path.splitext(urlparse(media_url).path)[1].casefold() or ".mp4")
     if suffix not in ((".mp3",) if is_audio else DIRECT_MEDIA_EXTENSIONS):
         suffix = ".mp4"
@@ -222,14 +224,23 @@ async def _download_direct_media(media_url: str, *, temp_dir: str, referer_url: 
         "Accept": "video/*,audio/*,*/*;q=0.8",
         "Accept-Encoding": "identity",
     }
+    cookies = httpx.Cookies()
+    media_host = _hostname(media_url)
+    for item in browser_cookies or []:
+        name = str(item.get("name") or "")
+        value = str(item.get("value") or "")
+        domain = str(item.get("domain") or "").lstrip(".").casefold()
+        if name and value and domain and (media_host == domain or media_host.endswith("." + domain)):
+            cookies.set(name, value, domain=domain, path=str(item.get("path") or "/"))
+
     timeout = httpx.Timeout(PROVIDER_TIMEOUT_S, connect=15.0)
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers=headers) as client:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers=headers, cookies=cookies) as client:
             async with client.stream("GET", media_url) as response:
-                if response.status_code < 200 or response.status_code >= 300:
-                    return None, f"HTTP {response.status_code}"
                 content_type = (response.headers.get("content-type") or "").casefold()
-                if not _looks_like_direct_media(media_url, content_type):
+                if response.status_code < 200 or response.status_code >= 300:
+                    return None, f"HTTP {response.status_code} content-type={content_type or 'unknown'}"
+                if not _looks_like_direct_media(media_url, content_type or content_type_hint):
                     return None, f"unexpected content-type={content_type or 'unknown'}"
                 try:
                     declared = int(response.headers.get("content-length") or "0")
@@ -250,12 +261,12 @@ async def _download_direct_media(media_url: str, *, temp_dir: str, referer_url: 
                             return None, "download exceeded maximum size"
                         output.write(chunk)
                 if _verify_file(path, is_audio=is_audio):
-                    return path, ""
+                    return path, f"HTTP {response.status_code} content-type={content_type or content_type_hint or 'unknown'} bytes={written}"
                 try:
                     os.remove(path)
                 except OSError:
                     pass
-                return None, "downloaded file failed media verification"
+                return None, f"downloaded file failed media verification content-type={content_type or 'unknown'} bytes={written}"
     except asyncio.CancelledError:
         raise
     except (httpx.HTTPError, OSError) as exc:
@@ -266,24 +277,24 @@ async def _download_direct_media(media_url: str, *, temp_dir: str, referer_url: 
         return None, f"direct HTTP error={type(exc).__name__}"
 
 
-async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> list[str]:
-    """Observe public media responses from the provider page for both owned hosts."""
+async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> tuple[list[dict], list[dict]]:
+    """Observe public media responses and retain only the same public browser session cookies."""
     try:
         from playwright.async_api import async_playwright
     except Exception as exc:
         print(f"⚠️ Shhaiid4u Provider Downloader: Playwright unavailable ({type(exc).__name__})", flush=True)
-        return []
+        return [], []
 
-    media_urls: list[str] = []
+    media: list[dict] = []
     seen: set[str] = set()
 
-    def remember(value: str) -> None:
+    def remember(value: str, content_type: str = "") -> None:
         if not isinstance(value, str) or not _is_http(value) or value in seen:
             return
-        if len(media_urls) >= MAX_MEDIA_RESPONSES:
+        if len(media) >= MAX_MEDIA_RESPONSES:
             return
         seen.add(value)
-        media_urls.append(value)
+        media.append({"url": value, "content_type": content_type or ""})
 
     async with async_playwright() as playwright:
         try:
@@ -294,7 +305,7 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
             )
         except Exception as exc:
             print(f"⚠️ Shhaiid4u Provider Downloader: Chromium launch failed ({type(exc).__name__})", flush=True)
-            return []
+            return [], []
         try:
             context = await browser.new_context(user_agent=USER_AGENT, java_script_enabled=True, accept_downloads=True)
             source_page = await context.new_page()
@@ -308,7 +319,7 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
 
             queue = [candidate_url]
             visited: set[str] = set()
-            while queue and len(visited) < MAX_PROVIDER_PAGES and not media_urls:
+            while queue and len(visited) < MAX_PROVIDER_PAGES and not media:
                 page_url = queue.pop(0)
                 if page_url in visited:
                     continue
@@ -318,11 +329,11 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
                 async def on_response(response) -> None:
                     try:
                         response_url = response.url
-                        content_type = (response.headers.get("content-type") or "")
+                        content_type = response.headers.get("content-type") or ""
                     except Exception:
                         return
                     if _looks_like_media(response_url, content_type):
-                        remember(response_url)
+                        remember(response_url, content_type)
 
                 page.on("response", on_response)
                 try:
@@ -359,10 +370,12 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
                     print(f"⚠️ Shhaiid4u Provider Downloader: browser page failed ({type(exc).__name__})", flush=True)
                 finally:
                     await page.close()
+
+            cookies = await context.cookies()
             await context.close()
         finally:
             await browser.close()
-    return media_urls[:MAX_MEDIA_RESPONSES]
+    return media[:MAX_MEDIA_RESPONSES], cookies
 
 
 async def download_candidates(candidates: list[str], *, source_url: str, temp_dir: str,
@@ -393,13 +406,16 @@ async def download_candidates(candidates: list[str], *, source_url: str, temp_di
         entry["initial_error"] = _short_error(stderr)
         print(f"⚠️ Shhaiid4u Provider Downloader: yt-dlp failed provider={provider}: {_short_error(stderr)}", flush=True)
 
-        media_urls = await _discover_browser_media(candidate, referer_url=source_url)
-        entry["browser_media_count"] = len(media_urls)
-        print(f"🔎 Shhaiid4u Provider Downloader: browser media candidates={len(media_urls)} provider={provider}", flush=True)
-        for media_index, media_url in enumerate(media_urls, 1):
+        media, browser_cookies = await _discover_browser_media(candidate, referer_url=source_url)
+        entry["browser_media_count"] = len(media)
+        print(f"🔎 Shhaiid4u Provider Downloader: browser media candidates={len(media)} provider={provider}", flush=True)
+        for media_index, item in enumerate(media, 1):
+            media_url = str(item.get("url") or "")
+            content_type = str(item.get("content_type") or "")
             direct_path, direct_error = await _download_direct_media(
                 media_url, temp_dir=temp_dir, referer_url=candidate,
                 is_audio=is_audio, max_size=max_size, media_index=media_index,
+                content_type_hint=content_type, browser_cookies=browser_cookies,
             )
             if direct_path:
                 entry["status"] = "success"
@@ -421,7 +437,8 @@ async def download_candidates(candidates: list[str], *, source_url: str, temp_di
                 entry["media_error"] = _short_error(media_stderr)
             else:
                 entry["direct_media_error"] = _short_error(direct_error)
-        if media_urls:
+                print(f"⚠️ Shhaiid4u Provider Downloader: direct media failed provider={provider} media={media_index}: {_short_error(direct_error)}", flush=True)
+        if media:
             print(f"⚠️ Shhaiid4u Provider Downloader: browser media URLs exhausted provider={provider}", flush=True)
 
     return None, diagnostics
