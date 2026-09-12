@@ -1,13 +1,13 @@
-"""Bounded provider download handoff for shhaiid4u.net candidates.
+"""Bounded provider download handoff for public Shhaiid4u candidates.
 
-This layer is intentionally isolated from the generic downloader. It handles
-public provider URLs discovered from shhaiid4u.net when the normal generic
-fallback cannot preserve the source-page referrer or when the provider page
-needs browser JavaScript to expose its media response.
+This layer is isolated from the generic downloader. It owns only public
+MegaUp and Streamtape candidates discovered from Shhaiid4u pages. It first
+tries yt-dlp with the source referrer, then uses the existing public browser
+stack to observe the provider's actual media response and retries yt-dlp on
+that concrete media URL with the provider page as referrer.
 
-It does not use accounts, user-supplied cookies, CAPTCHA solving, DRM bypass,
-or access-control workarounds. Browser state is created only by bounded public
-page navigation.
+No accounts, cookies, CAPTCHA solving, DRM bypass, or access-control
+workarounds are used.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import os
 import re
 import subprocess
 from urllib.parse import urlparse
-
 
 MAX_PROVIDER_CANDIDATES = 6
 MAX_PROVIDER_PAGES = 4
@@ -44,7 +43,6 @@ def _hostname(url: str) -> str:
 
 
 def is_supported_candidate(url: str) -> bool:
-    """Return True only for the public provider hosts this layer owns."""
     host = _hostname(url)
     return host in SUPPORTED_HOSTS or any(host.endswith("." + item) for item in SUPPORTED_HOSTS)
 
@@ -87,9 +85,7 @@ def _safe_output_path(temp_dir: str, stdout_text: str, extensions: tuple[str, ..
         if not value:
             continue
         real = os.path.realpath(value)
-        if not real.startswith(root) or not os.path.isfile(real):
-            continue
-        if real.casefold().endswith(extensions):
+        if real.startswith(root) and os.path.isfile(real) and real.casefold().endswith(extensions):
             return real
     try:
         paths = []
@@ -97,11 +93,9 @@ def _safe_output_path(temp_dir: str, stdout_text: str, extensions: tuple[str, ..
             path = os.path.realpath(os.path.join(temp_dir, name))
             if path.startswith(root) and os.path.isfile(path) and path.casefold().endswith(extensions):
                 paths.append(path)
-        if paths:
-            return max(paths, key=os.path.getmtime)
+        return max(paths, key=os.path.getmtime) if paths else None
     except OSError:
         return None
-    return None
 
 
 def _verify_file(path: str, *, is_audio: bool) -> bool:
@@ -117,47 +111,33 @@ def _verify_file(path: str, *, is_audio: bool) -> bool:
         return False
     try:
         probe = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1", path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=20, check=False,
         )
         if probe.returncode != 0:
             return False
-        duration = float((probe.stdout or "").strip())
-        return duration >= MIN_VIDEO_DURATION
+        return float((probe.stdout or "").strip()) >= MIN_VIDEO_DURATION
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
 
-def _extract_streamtape_direct_urls(html: str, page_url: str) -> list[str]:
-    """Extract Streamtape's public get_video URL from the rendered page source.
+def _short_error(text: str | None) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    return value[-600:] if value else "no provider error text"
 
-    Streamtape's public player exposes a token and an obfuscated path in the
-    page itself. We only reconstruct the public playback URL; no account,
-    CAPTCHA, DRM, or access-control bypass is involved.
-    """
+
+def _extract_streamtape_direct_urls(html: str, page_url: str) -> list[str]:
     if _hostname(page_url) != "streamtape.com" or not isinstance(html, str):
         return []
-
-    token_matches = re.findall(r"token=([^&'\"\s]+)", html, flags=re.IGNORECASE)
-    link_matches = re.findall(
-        r"id=[\"']ideoooolink[\"'][^>]*>([^<]+)<",
-        html,
-        flags=re.IGNORECASE,
-    )
-    if not token_matches or not link_matches:
+    tokens = re.findall(r"token=([^&'\"\s]+)", html, flags=re.IGNORECASE)
+    links = re.findall(r"id=[\"']ideoooolink[\"'][^>]*>([^<]+)<", html, flags=re.IGNORECASE)
+    if not tokens or not links:
         return []
-
-    token = token_matches[-1]
+    token = tokens[-1]
     results: list[str] = []
-    for raw_link in reversed(link_matches):
-        value = raw_link.strip().replace("\\/", "/")
+    for raw in reversed(links):
+        value = raw.strip().replace("\\/", "/")
         if value.startswith("//"):
             value = "https:" + value
         elif value.startswith("https:/") and not value.startswith("https://"):
@@ -166,46 +146,30 @@ def _extract_streamtape_direct_urls(html: str, page_url: str) -> list[str]:
             value = "http://" + value[len("http:/"):].lstrip("/")
         if not _is_http(value):
             continue
-        separator = "&" if "?" in value else "?"
-        direct = f"{value}{separator}token={token}&dl=1"
+        direct = f"{value}{'&' if '?' in value else '?'}token={token}&dl=1"
         if direct not in results:
             results.append(direct)
     return results[:4]
 
 
-async def _run_ytdlp(
-    candidate_url: str,
-    *,
-    temp_dir: str,
-    referer_url: str,
-    is_audio: bool,
-    max_size: int,
-) -> tuple[str | None, str, str]:
+async def _run_ytdlp(candidate_url: str, *, temp_dir: str, referer_url: str,
+                     is_audio: bool, max_size: int) -> tuple[str | None, str, str]:
     extensions = (".mp3", ".m4a", ".opus", ".aac", ".wav") if is_audio else (".mp4", ".mkv", ".webm", ".mov")
     command = [
-        "python", "-m", "yt_dlp",
-        "--no-playlist",
-        "--retries", "5",
-        "--fragment-retries", "5",
-        "--socket-timeout", "45",
-        "--max-filesize", str(max_size),
-        "--referer", referer_url,
-        "--user-agent", USER_AGENT,
-        "--print", "after_move:filepath",
-        "--no-warnings",
-        "-o", os.path.join(temp_dir, "shhaiid4u_provider_%(id)s.%(ext)s"),
+        "python", "-m", "yt_dlp", "--no-playlist", "--retries", "5",
+        "--fragment-retries", "5", "--socket-timeout", "45",
+        "--max-filesize", str(max_size), "--referer", referer_url,
+        "--user-agent", USER_AGENT, "--print", "after_move:filepath",
+        "--no-warnings", "-o", os.path.join(temp_dir, "shhaiid4u_provider_%(id)s.%(ext)s"),
     ]
     if is_audio:
         command.extend(["-x", "--audio-format", "mp3"])
     else:
         command.extend(["--merge-output-format", "mp4"])
     command.append(candidate_url)
-
     try:
         process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=PROVIDER_TIMEOUT_S)
@@ -233,9 +197,11 @@ async def _run_ytdlp(
 
 
 async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> list[str]:
+    """Observe public media responses from the provider page for both owned hosts."""
     try:
         from playwright.async_api import async_playwright
-    except Exception:
+    except Exception as exc:
+        print(f"⚠️ Shhaiid4u Provider Downloader: Playwright unavailable ({type(exc).__name__})", flush=True)
         return []
 
     media_urls: list[str] = []
@@ -253,19 +219,14 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
         try:
             browser = await playwright.chromium.launch(
                 headless=True,
-                args=[
-                    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                    "--no-first-run", "--no-default-browser-check",
-                ],
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+                      "--no-first-run", "--no-default-browser-check"],
             )
-        except Exception:
+        except Exception as exc:
+            print(f"⚠️ Shhaiid4u Provider Downloader: Chromium launch failed ({type(exc).__name__})", flush=True)
             return []
         try:
-            context = await browser.new_context(
-                user_agent=USER_AGENT,
-                java_script_enabled=True,
-                accept_downloads=True,
-            )
+            context = await browser.new_context(user_agent=USER_AGENT, java_script_enabled=True, accept_downloads=True)
             source_page = await context.new_page()
             try:
                 await source_page.goto(referer_url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
@@ -286,9 +247,8 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
 
                 async def on_response(response) -> None:
                     try:
-                        headers = response.headers
-                        content_type = headers.get("content-type") or ""
                         response_url = response.url
+                        content_type = (response.headers.get("content-type") or "")
                     except Exception:
                         return
                     if _looks_like_media(response_url, content_type):
@@ -301,10 +261,7 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
                     selector = "a[href], button, [role='button'], video, source, iframe[src], embed[src]"
                     try:
                         rows = await page.locator(selector).evaluate_all(
-                            """els => els.map(el => ({
-                                url: el.currentSrc || el.src || el.href || '',
-                                text: (el.innerText || el.textContent || '').trim()
-                            }))"""
+                            """els => els.map(el => ({url: el.currentSrc || el.src || el.href || '', text: (el.innerText || el.textContent || '').trim()}))"""
                         )
                     except Exception:
                         rows = []
@@ -314,8 +271,8 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
                         value = str(row.get("url") or "")
                         if _is_http(value) and _looks_like_media(value):
                             remember(value)
-                        elif _is_http(value) and any(token in value.casefold() for token in ("stream", "source", "player", "download")) and len(queue) < MAX_PROVIDER_PAGES:
-                            if value not in visited and value not in queue:
+                        elif _is_http(value) and any(x in value.casefold() for x in ("stream", "source", "player", "download")):
+                            if value not in visited and value not in queue and len(queue) < MAX_PROVIDER_PAGES:
                                 queue.append(value)
                     try:
                         html = await page.content()
@@ -328,8 +285,8 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
                         value = value.rstrip(".,);]}")
                         if _is_http(value) and _looks_like_media(value):
                             remember(value)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"⚠️ Shhaiid4u Provider Downloader: browser page failed ({type(exc).__name__})", flush=True)
                 finally:
                     await page.close()
             await context.close()
@@ -338,57 +295,51 @@ async def _discover_browser_media(candidate_url: str, *, referer_url: str) -> li
     return media_urls[:MAX_MEDIA_RESPONSES]
 
 
-async def download_candidates(
-    candidates: list[str],
-    *,
-    source_url: str,
-    temp_dir: str,
-    is_audio: bool,
-    max_size: int,
-) -> tuple[str | None, dict]:
-    """Try provider candidates while preserving the original source referrer."""
+async def download_candidates(candidates: list[str], *, source_url: str, temp_dir: str,
+                              is_audio: bool, max_size: int) -> tuple[str | None, dict]:
+    """Try owned provider URLs with a bounded browser-media fallback."""
     if not isinstance(source_url, str) or not _is_http(source_url):
         return None, {"status": "skipped", "reason": "invalid_source"}
-
     owned = _provider_candidates(candidates)
     if not owned:
         return None, {"status": "skipped", "reason": "no_owned_candidates"}
 
     diagnostics = {"status": "failed", "providers": [], "candidate_count": len(owned)}
-    for candidate in owned:
+    for index, candidate in enumerate(owned, 1):
         provider = _hostname(candidate)
         entry = {"provider": provider, "candidate": candidate, "status": "failed"}
         diagnostics["providers"].append(entry)
+        print(f"🎯 Shhaiid4u Provider Downloader: candidate {index}/{len(owned)} provider={provider}", flush=True)
 
         path, _, stderr = await _run_ytdlp(
-            candidate,
-            temp_dir=temp_dir,
-            referer_url=source_url,
-            is_audio=is_audio,
-            max_size=max_size,
+            candidate, temp_dir=temp_dir, referer_url=source_url,
+            is_audio=is_audio, max_size=max_size,
         )
         if path:
             entry["status"] = "success"
             diagnostics["status"] = "success"
+            print(f"✅ Shhaiid4u Provider Downloader: yt-dlp succeeded provider={provider}", flush=True)
             return path, diagnostics
-        entry["initial_error"] = str(stderr or "")[-500:]
+        entry["initial_error"] = _short_error(stderr)
+        print(f"⚠️ Shhaiid4u Provider Downloader: yt-dlp failed provider={provider}: {_short_error(stderr)}", flush=True)
 
-        if provider == "streamtape.com":
-            media_urls = await _discover_browser_media(candidate, referer_url=source_url)
-            entry["browser_media_count"] = len(media_urls)
-            for media_url in media_urls:
-                path, _, media_stderr = await _run_ytdlp(
-                    media_url,
-                    temp_dir=temp_dir,
-                    referer_url=candidate,
-                    is_audio=is_audio,
-                    max_size=max_size,
-                )
-                if path:
-                    entry["status"] = "success"
-                    diagnostics["status"] = "success"
-                    return path, diagnostics
-                entry["media_error"] = str(media_stderr or "")[-500:]
+        media_urls = await _discover_browser_media(candidate, referer_url=source_url)
+        entry["browser_media_count"] = len(media_urls)
+        print(f"🔎 Shhaiid4u Provider Downloader: browser media candidates={len(media_urls)} provider={provider}", flush=True)
+        for media_index, media_url in enumerate(media_urls, 1):
+            path, _, media_stderr = await _run_ytdlp(
+                media_url, temp_dir=temp_dir, referer_url=candidate,
+                is_audio=is_audio, max_size=max_size,
+            )
+            if path:
+                entry["status"] = "success"
+                entry["status_detail"] = "browser_media_url"
+                diagnostics["status"] = "success"
+                print(f"✅ Shhaiid4u Provider Downloader: browser media succeeded provider={provider} media={media_index}", flush=True)
+                return path, diagnostics
+            entry["media_error"] = _short_error(media_stderr)
+        if media_urls:
+            print(f"⚠️ Shhaiid4u Provider Downloader: browser media URLs exhausted provider={provider}", flush=True)
 
     return None, diagnostics
 
@@ -406,20 +357,15 @@ def install(bot_module) -> None:
                 candidates = await asyncio.to_thread(resolve, url, validator=bot_module.validate_public_http_url)
                 if candidates:
                     path, diagnostics = await download_candidates(
-                        candidates,
-                        source_url=url,
-                        temp_dir=temp_dir,
-                        is_audio=is_audio,
+                        candidates, source_url=url, temp_dir=temp_dir, is_audio=is_audio,
                         max_size=(bot_module.MAX_AUDIO_DOWNLOAD_BYTES if is_audio else bot_module.MAX_VIDEO_DOWNLOAD_BYTES),
                     )
                     if path:
                         return path, "", "", {
-                            "attempt_id": attempt_id,
-                            "attempt_number": attempt_number,
+                            "attempt_id": attempt_id, "attempt_number": attempt_number,
                             "candidate_count": len(candidates),
                             "candidates": diagnostics.get("providers", []),
-                            "provider_handoff": diagnostics,
-                            "total_duration_ms": 0,
+                            "provider_handoff": diagnostics, "total_duration_ms": 0,
                         }
             except asyncio.CancelledError:
                 raise
