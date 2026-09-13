@@ -115,45 +115,54 @@ class ResolverOutcomeTelemetry:
     def resolver_policy(self, *, min_attempts: int = _DEFAULT_MIN_ATTEMPTS,
                         max_resolvers: int = _DEFAULT_MAX_RESOLVERS) -> list[dict[str, Any]]:
         """Return a conservative global ranking from observed outcomes."""
-        min_attempts = max(1, int(min_attempts))
-        max_resolvers = max(1, min(int(max_resolvers), _DEFAULT_MAX_RESOLVERS))
-        with self._connect() as conn:
-            rows = conn.execute("""
-                SELECT resolver, COUNT(*) AS attempts, SUM(success) AS successes,
-                       AVG(elapsed_ms) AS avg_elapsed_ms
-                FROM resolver_outcomes GROUP BY resolver HAVING COUNT(*) >= ?
-            """, (min_attempts,)).fetchall()
-        ranked = []
-        for row in rows:
-            attempts, successes = int(row[1]), int(row[2] or 0)
-            ranked.append({"resolver": str(row[0])[:_MAX_RESOLVER], "attempts": attempts,
-                           "successes": successes, "success_rate": successes / attempts if attempts else 0.0,
-                           "avg_elapsed_ms": max(0.0, float(row[3] or 0.0))})
-        ranked.sort(key=lambda item: (-item["success_rate"], item["avg_elapsed_ms"], -item["attempts"], item["resolver"]))
-        return ranked[:max_resolvers]
+        return self._policy_where(None, None, min_attempts=min_attempts, max_resolvers=max_resolvers)
+
+    def platform_policy(self, *, platform: str = "unknown",
+                        min_attempts: int = _DEFAULT_MIN_ATTEMPTS,
+                        max_resolvers: int = _DEFAULT_MAX_RESOLVERS) -> list[dict[str, Any]]:
+        """Rank resolvers across all media kinds for one bounded platform class."""
+        platform_name = _bounded_context(platform, _ALLOWED_PLATFORMS)
+        return self._policy_where(platform_name, None, min_attempts=min_attempts, max_resolvers=max_resolvers)
 
     def contextual_policy(self, *, platform: str = "unknown", media_kind: str = "unknown",
                           min_attempts: int = _DEFAULT_MIN_ATTEMPTS,
                           max_resolvers: int = _DEFAULT_MAX_RESOLVERS) -> list[dict[str, Any]]:
         """Rank resolvers only within a bounded, sanitized context."""
-        min_attempts = max(1, int(min_attempts))
-        max_resolvers = max(1, min(int(max_resolvers), _DEFAULT_MAX_RESOLVERS))
         platform_name = _bounded_context(platform, _ALLOWED_PLATFORMS)
         media_kind_name = _bounded_context(media_kind, _ALLOWED_MEDIA_KINDS)
+        return self._policy_where(platform_name, media_kind_name, min_attempts=min_attempts, max_resolvers=max_resolvers)
+
+    def _policy_where(self, platform: str | None, media_kind: str | None, *,
+                      min_attempts: int, max_resolvers: int) -> list[dict[str, Any]]:
+        min_attempts = max(1, int(min_attempts))
+        max_resolvers = max(1, min(int(max_resolvers), _DEFAULT_MAX_RESOLVERS))
+        where = []
+        params: list[Any] = []
+        if platform is not None:
+            where.append("platform = ?")
+            params.append(platform)
+        if media_kind is not None:
+            where.append("media_kind = ?")
+            params.append(media_kind)
+        predicate = f"WHERE {' AND '.join(where)}" if where else ""
         with self._connect() as conn:
-            rows = conn.execute("""
+            rows = conn.execute(f"""
                 SELECT resolver, COUNT(*) AS attempts, SUM(success) AS successes,
                        AVG(elapsed_ms) AS avg_elapsed_ms
                 FROM resolver_outcomes
-                WHERE platform = ? AND media_kind = ?
+                {predicate}
                 GROUP BY resolver HAVING COUNT(*) >= ?
-            """, (platform_name, media_kind_name, min_attempts)).fetchall()
+            """, (*params, min_attempts)).fetchall()
         ranked = []
         for row in rows:
             attempts, successes = int(row[1]), int(row[2] or 0)
-            ranked.append({"resolver": str(row[0])[:_MAX_RESOLVER], "attempts": attempts,
-                           "successes": successes, "success_rate": successes / attempts if attempts else 0.0,
-                           "avg_elapsed_ms": max(0.0, float(row[3] or 0.0)),
-                           "platform": platform_name, "media_kind": media_kind_name})
+            item = {"resolver": str(row[0])[:_MAX_RESOLVER], "attempts": attempts,
+                    "successes": successes, "success_rate": successes / attempts if attempts else 0.0,
+                    "avg_elapsed_ms": max(0.0, float(row[3] or 0.0))}
+            if platform is not None:
+                item["platform"] = platform
+            if media_kind is not None:
+                item["media_kind"] = media_kind
+            ranked.append(item)
         ranked.sort(key=lambda item: (-item["success_rate"], item["avg_elapsed_ms"], -item["attempts"], item["resolver"]))
         return ranked[:max_resolvers]
