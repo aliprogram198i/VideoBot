@@ -14,6 +14,7 @@ import os
 import sqlite3
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -138,7 +139,7 @@ class ResolverEvidenceStore:
                              platform_name, media_name))
             if len(rows) < 2 or len({row[1] for row in rows}) != len(rows):
                 return False
-            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             with self._lock, self._connect() as conn:
                 conn.executemany("""
                     INSERT INTO resolver_evidence(
