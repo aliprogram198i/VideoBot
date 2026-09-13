@@ -45,7 +45,7 @@ def test_collect_records_paired_outcomes(monkeypatch):
             media_kind="unknown",
             source_url="https://youtube.com/watch?v=x",
             resolvers={"smart_media": first, "browser_media": second},
-            rng=random.Random(0),
+            rng=random.Random(31),
         )
     )
 
@@ -79,7 +79,7 @@ def test_collect_is_fail_open_on_probe_errors(monkeypatch):
             media_kind="iframe",
             source_url="https://instagram.com/reel/x",
             resolvers={"smart_media": broken, "cobalt": healthy},
-            rng=random.Random(0),
+            rng=random.Random(31),
         )
     )
 
