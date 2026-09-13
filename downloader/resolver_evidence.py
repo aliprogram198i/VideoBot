@@ -154,6 +154,35 @@ class ResolverEvidenceStore:
         except Exception:
             return False
 
+    def paired_outcomes(
+        self,
+        resolver_a: str,
+        resolver_b: str,
+        *,
+        platform: str = "unknown",
+        media_kind: str = "unknown",
+    ) -> list[tuple[bool, bool, float, float]]:
+        """Return aligned outcomes for two resolvers on identical samples."""
+        first = _bounded(resolver_a, _MAX_RESOLVER, "")
+        second = _bounded(resolver_b, _MAX_RESOLVER, "")
+        if not first or not second or first == second:
+            return []
+        platform_name = _context(platform, _ALLOWED_PLATFORMS)
+        media_name = _context(media_kind, _ALLOWED_MEDIA_KINDS)
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT a.success, b.success, a.elapsed_ms, b.elapsed_ms
+                FROM resolver_evidence AS a
+                JOIN resolver_evidence AS b
+                  ON a.sample_id = b.sample_id
+                 AND a.platform = b.platform
+                 AND a.media_kind = b.media_kind
+                WHERE a.platform = ? AND a.media_kind = ?
+                  AND a.resolver = ? AND b.resolver = ?
+                ORDER BY a.sample_id ASC
+            """, (platform_name, media_name, first, second)).fetchall()
+        return [(bool(a), bool(b), float(at), float(bt)) for a, b, at, bt in rows]
+
     def paired_policy(
         self,
         *,
