@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ARG DENO_VERSION=2.8.3
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip gosu \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 videobot \
     && curl -fsSL "https://dl.deno.land/release/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && python -c "from importlib.metadata import distribution; from pathlib import Path; import shutil; src=Path(distribution('yt-dlp-threads').locate_file('yt_dlp_plugins/extractor/threads.py')); assert src.is_file(), 'yt-dlp-threads extractor file not found'; shutil.copy2(src, '/opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py')" \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers python -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers \
-    && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
+    && printf '%s\\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
 COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot entrypoint.py .
 COPY --chown=videobot:videobot stats_entrypoint.py .
@@ -39,7 +39,7 @@ path = Path('bot.py')
 text = path.read_text(encoding='utf-8')
 marker = 'youtube_smart_extraction_not_applicable'
 if marker not in text:
-    pattern = r'(?m)^(?P<indent>\s*)smart_file, smart_diagnostics = await download_with_smart_extraction\(\n(?P<body>.*?)(?P=indent)\)'
+    pattern = r'(?m)^(?P<indent>\\s*)smart_file, smart_diagnostics = await download_with_smart_extraction\\(\\n(?P<body>.*?)(?P=indent)\\)'
     matches = list(re.finditer(pattern, text, re.DOTALL))
     if len(matches) != 1:
         raise SystemExit(f'Expected exactly one Smart Extraction call, found {len(matches)}')
@@ -72,5 +72,7 @@ ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 ENV ALIBOT_PLUGINS_ENABLED=1
 ENV ALIBOT_BROWSER_RESOLVER=1
-USER videobot
-CMD ["python", "-u", "entrypoint.py"]
+# Railway volumes mounted at runtime can be root-owned. Start as root only long enough
+# to repair the mounted data directory, then drop privileges before running the bot.
+USER root
+CMD ["/bin/sh", "-c", "chown -R videobot:videobot /app/data && exec gosu videobot python -u entrypoint.py"]
