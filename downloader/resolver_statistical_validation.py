@@ -27,11 +27,25 @@ def _exact_mcnemar_p_value(a_only: int, b_only: int) -> float:
     if discordant == 0:
         return 1.0
     smaller = min(a_only, b_only)
-    tail = sum(math.comb(discordant, k) for k in range(smaller + 1)) / (2.0 ** discordant)
+    log_two = math.log(2.0)
+    tail = 0.0
+    for k in range(smaller + 1):
+        log_probability = (
+            math.lgamma(discordant + 1)
+            - math.lgamma(k + 1)
+            - math.lgamma(discordant - k + 1)
+            - discordant * log_two
+        )
+        tail += math.exp(log_probability)
     return min(1.0, 2.0 * tail)
 
 
-def _risk_difference_interval(a_only: int, b_only: int, samples: int) -> tuple[float, float]:
+def _risk_difference_interval(
+    a_only: int,
+    b_only: int,
+    samples: int,
+    min_discordant: int,
+) -> tuple[float, float]:
     """Normal approximation for paired risk difference.
 
     With too few discordant observations the approximation is intentionally
@@ -39,7 +53,7 @@ def _risk_difference_interval(a_only: int, b_only: int, samples: int) -> tuple[f
     """
     discordant = a_only + b_only
     delta = (a_only - b_only) / samples
-    if discordant < _DEFAULT_MIN_DISCORDANT:
+    if discordant < min_discordant:
         return -1.0, 1.0
     variance = (discordant - ((a_only - b_only) ** 2) / samples) / (samples ** 2)
     if variance <= 0 or not math.isfinite(variance):
@@ -118,7 +132,10 @@ def validate_pair(
     a_successes = both_successes + a_only
     b_successes = both_successes + b_only
     delta = (a_successes - b_successes) / samples if samples else 0.0
-    lower, upper = _risk_difference_interval(a_only, b_only, samples) if samples else (-1.0, 1.0)
+    lower, upper = (
+        _risk_difference_interval(a_only, b_only, samples, discordant_minimum)
+        if samples else (-1.0, 1.0)
+    )
     p_value = _exact_mcnemar_p_value(a_only, b_only)
     enough_samples = samples >= minimum
     enough_discordant = (a_only + b_only) >= discordant_minimum
