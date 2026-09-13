@@ -43,7 +43,7 @@ def test_install_preserves_result_and_observes_fail_open(monkeypatch):
     )
 
     class Bot:
-        async def extract(url):
+        async def extract(self, url):
             return [url]
 
     bot = Bot()
@@ -66,7 +66,7 @@ def test_observer_never_reorders_original_result(monkeypatch):
     )
 
     class Bot:
-        async def extract(url):
+        async def extract(self, url):
             return ["established", "order"]
 
     bot = Bot()
