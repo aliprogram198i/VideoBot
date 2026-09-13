@@ -87,6 +87,47 @@ def test_install_preserves_result_and_observes_fail_open(monkeypatch):
     assert len(records) == 1
 
 
+def test_install_hooks_real_download_request_boundary(monkeypatch):
+    monkeypatch.setattr(observer, "ResolverEvidenceStore", lambda: _FakeEvidence())
+    monkeypatch.setattr(observer, "ResolverShadowDecisionStore", _FakeDecisions)
+    monkeypatch.setattr(observer, "validate_resolver_set", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        observer,
+        "evaluate_shadow",
+        lambda order, validations, **kwargs: type("Decision", (), {"original_order": tuple(order), "proposed_order": tuple(order)})(),
+    )
+
+    calls = []
+
+    class Query:
+        data = "video_720"
+
+    class Update:
+        callback_query = Query()
+
+    class Context:
+        user_data = {"video_url": "https://example.com/video"}
+
+    class Bot:
+        async def extract(self, url):
+            return [url]
+
+        async def download(self, update, context):
+            calls.append((update.callback_query.data, context.user_data["video_url"]))
+            return "download-result"
+
+    bot = Bot()
+    bot.extract_direct_media_urls = bot.extract
+    bot.download_media = bot.download
+    observer.install(bot)
+
+    result = asyncio.run(bot.download_media(Update(), Context()))
+
+    assert result == "download-result"
+    assert calls == [("video_720", "https://example.com/video")]
+    assert getattr(bot.download_media, "_paired_evidence_request_hook", False) is True
+
+
 def test_observer_never_reorders_original_result(monkeypatch):
     monkeypatch.setattr(observer, "ResolverEvidenceStore", lambda: _FakeEvidence())
     monkeypatch.setattr(observer, "ResolverShadowDecisionStore", _FakeDecisions)
