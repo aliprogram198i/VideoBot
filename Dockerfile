@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && python -c "from importlib.metadata import distribution; from pathlib import Path; import shutil; src=Path(distribution('yt-dlp-threads').locate_file('yt_dlp_plugins/extractor/threads.py')); assert src.is_file(), 'yt-dlp-threads extractor file not found'; shutil.copy2(src, '/opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py')" \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers python -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers \
-    && printf '%s\\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
+    && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
 COPY --chown=videobot:videobot bot.py .
 COPY --chown=videobot:videobot entrypoint.py .
 COPY --chown=videobot:videobot stats_entrypoint.py .
@@ -39,7 +39,7 @@ path = Path('bot.py')
 text = path.read_text(encoding='utf-8')
 marker = 'youtube_smart_extraction_not_applicable'
 if marker not in text:
-    pattern = r'(?m)^(?P<indent>\\s*)smart_file, smart_diagnostics = await download_with_smart_extraction\\(\\n(?P<body>.*?)(?P=indent)\\)'
+    pattern = r'(?m)^(?P<indent>\s*)smart_file, smart_diagnostics = await download_with_smart_extraction\(\n(?P<body>.*?)(?P=indent)\)'
     matches = list(re.finditer(pattern, text, re.DOTALL))
     if len(matches) != 1:
         raise SystemExit(f'Expected exactly one Smart Extraction call, found {len(matches)}')
