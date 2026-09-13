@@ -18,6 +18,8 @@ from .smart_learning import SmartTelemetryStore
 
 _MAX_REASON = 500
 _MAX_RESOLVER = 80
+_DEFAULT_MIN_ATTEMPTS = 20
+_DEFAULT_MAX_RESOLVERS = 16
 
 
 def _utc_now() -> str:
@@ -120,3 +122,58 @@ class ResolverOutcomeTelemetry:
             }
             for row in rows
         ]
+
+    def resolver_policy(
+        self,
+        *,
+        min_attempts: int = _DEFAULT_MIN_ATTEMPTS,
+        max_resolvers: int = _DEFAULT_MAX_RESOLVERS,
+    ) -> list[dict[str, Any]]:
+        """Return a conservative ranking from observed resolver outcomes.
+
+        Only resolvers with enough observations are ranked. Success rate is the
+        primary signal; latency is a secondary tie-breaker and never overrides a
+        materially better success rate. Unknown or under-sampled resolvers are
+        intentionally omitted so callers can keep their existing safe order.
+        """
+        min_attempts = max(1, int(min_attempts))
+        max_resolvers = max(1, min(int(max_resolvers), _DEFAULT_MAX_RESOLVERS))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT resolver,
+                       COUNT(*) AS attempts,
+                       SUM(success) AS successes,
+                       AVG(elapsed_ms) AS avg_elapsed_ms
+                FROM resolver_outcomes
+                GROUP BY resolver
+                HAVING COUNT(*) >= ?
+                """,
+                (min_attempts,),
+            ).fetchall()
+
+        ranked: list[dict[str, Any]] = []
+        for row in rows:
+            attempts = int(row[1])
+            successes = int(row[2] or 0)
+            success_rate = successes / attempts if attempts else 0.0
+            avg_elapsed_ms = max(0.0, float(row[3] or 0.0))
+            ranked.append(
+                {
+                    "resolver": str(row[0])[:_MAX_RESOLVER],
+                    "attempts": attempts,
+                    "successes": successes,
+                    "success_rate": success_rate,
+                    "avg_elapsed_ms": avg_elapsed_ms,
+                }
+            )
+
+        ranked.sort(
+            key=lambda item: (
+                -item["success_rate"],
+                item["avg_elapsed_ms"],
+                -item["attempts"],
+                item["resolver"],
+            )
+        )
+        return ranked[:max_resolvers]
