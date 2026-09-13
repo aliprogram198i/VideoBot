@@ -17,6 +17,37 @@ SHAHID4U_MIN_VIDEO_BYTES = 5 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_DURATION = 60.0
 
 
+_CONTEXT_PLATFORMS = {
+    "youtube": ("youtube.com", "youtu.be"),
+    "instagram": ("instagram.com", "instagr.am"),
+    "facebook": ("facebook.com", "fb.watch"),
+    "tiktok": ("tiktok.com", "tiktokcdn.com"),
+    "twitter": ("twitter.com", "x.com"),
+    "reddit": ("reddit.com", "redd.it"),
+    "shahid4u": ("shahid4u.run", "shhaiid4u.net", "shahid4u.net"),
+    "telegram": ("t.me", "telegram.me"),
+    "vimeo": ("vimeo.com",),
+    "dailymotion": ("dailymotion.com", "dai.ly"),
+}
+
+
+def _resolver_context(source_url, media_kind="unknown"):
+    """Reduce source URL to an allowlisted platform class without storing the URL."""
+    try:
+        host = (urlparse(str(source_url)).hostname or "").lower().rstrip(".")
+    except Exception:
+        host = ""
+    platform = "unknown"
+    for name, suffixes in _CONTEXT_PLATFORMS.items():
+        if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+            platform = name
+            break
+    kind = str(media_kind or "unknown").lower()
+    if kind not in {"hls", "dash", "progressive", "iframe", "unknown"}:
+        kind = "unknown"
+    return platform, kind
+
+
 def install(bot_module) -> None:
     """Compose legacy, provider-specific, static, browser, and Cobalt fallbacks."""
     original = getattr(bot_module, "extract_direct_media_urls", None)
@@ -34,26 +65,26 @@ def install(bot_module) -> None:
     telemetry = telemetry_module.ResolverOutcomeTelemetry()
     browser_candidate_cache = {}
 
-    async def _run_resolver(name, operation, *args, **kwargs):
-        """Run one existing resolver and record only its technical outcome."""
+    async def _run_resolver(name, operation, *args, source_url=None, media_kind="unknown", **kwargs):
+        """Run one existing resolver and record only bounded contextual outcome."""
         started = time.monotonic()
+        platform, kind = _resolver_context(source_url, media_kind)
         try:
             result = operation(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result
             count = len(result) if isinstance(result, (list, tuple)) else int(bool(result))
-            telemetry.record(name, success=bool(result), candidate_count=count, elapsed_ms=(time.monotonic() - started) * 1000)
+            telemetry.record(name, success=bool(result), candidate_count=count,
+                             elapsed_ms=(time.monotonic() - started) * 1000,
+                             platform=platform, media_kind=kind)
             return result
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            telemetry.record(
-                name,
-                success=False,
-                candidate_count=0,
-                elapsed_ms=(time.monotonic() - started) * 1000,
-                failure_reason=type(exc).__name__,
-            )
+            telemetry.record(name, success=False, candidate_count=0,
+                             elapsed_ms=(time.monotonic() - started) * 1000,
+                             failure_reason=type(exc).__name__,
+                             platform=platform, media_kind=kind)
             raise
 
     def _is_local_file(value, temp_dir):
@@ -84,6 +115,7 @@ def install(bot_module) -> None:
 
     async def wrapped(url, *args, **kwargs):
         print("🔎 Smart Media Bridge: entered", flush=True)
+        context = {"source_url": url, "media_kind": "unknown"}
         try:
             provider_resolved = await _run_resolver(
                 "shahid4u",
@@ -93,6 +125,7 @@ def install(bot_module) -> None:
                 request_factory=bot_module.Request,
                 open_function=bot_module.safe_urlopen,
                 read_function=bot_module.read_limited,
+                **context,
             )
         except Exception as exc:
             print(f"⚠️ Shahid4u Resolver failed: {type(exc).__name__}", flush=True)
@@ -102,7 +135,7 @@ def install(bot_module) -> None:
             print(f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff", flush=True)
             return provider_resolved
         try:
-            existing = await _run_resolver("legacy_extractor", original, url, *args, **kwargs)
+            existing = await _run_resolver("legacy_extractor", original, url, *args, source_url=url, **kwargs)
         except Exception as exc:
             print(f"⚠️ Smart Search legacy extractor failed: {type(exc).__name__}", flush=True)
             existing = []
@@ -119,6 +152,8 @@ def install(bot_module) -> None:
                 request_factory=bot_module.Request,
                 open_function=bot_module.safe_urlopen,
                 read_function=bot_module.read_limited,
+                source_url=url,
+                media_kind="unknown",
             )
         except Exception as exc:
             print(f"⚠️ Smart Search Resolver failed: {type(exc).__name__}", flush=True)
@@ -133,6 +168,8 @@ def install(bot_module) -> None:
                 browser_resolver.resolve,
                 url,
                 validator=bot_module.validate_public_http_url,
+                source_url=url,
+                media_kind="iframe",
             )
         except Exception as exc:
             print(f"⚠️ Browser Media Resolver failed: {type(exc).__name__}", flush=True)
@@ -143,7 +180,7 @@ def install(bot_module) -> None:
             return browser_resolved
         try:
             print("🧩 Smart Media Bridge: Cobalt resolver starting", flush=True)
-            cobalt_resolved = await _run_resolver("cobalt", cobalt_resolver.resolve, url)
+            cobalt_resolved = await _run_resolver("cobalt", cobalt_resolver.resolve, url, source_url=url, media_kind="unknown")
         except Exception as exc:
             print(f"⚠️ Cobalt Resolver failed: {type(exc).__name__}", flush=True)
             cobalt_resolved = []
@@ -270,4 +307,4 @@ def install(bot_module) -> None:
     if callable(original_fallback):
         print("🌐 Smart Media Bridge: Browser Download Handoff ENABLED", flush=True)
     print("🎯 Shahid4u Provider Resolver: ENABLED", flush=True)
-    print("📊 Resolver Outcome Telemetry: ENABLED", flush=True)
+    print("📊 Resolver Outcome Telemetry: ENABLED (context-aware)", flush=True)
