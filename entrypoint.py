@@ -70,6 +70,7 @@ def main() -> None:
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
+        run_evidence_monitor = importlib.import_module("downloader.evidence_monitor").run_periodic
 
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
@@ -101,9 +102,10 @@ def main() -> None:
 
         original_run_polling = Application.run_polling
         registered = False
+        evidence_monitor_started = False
 
         def run_polling_with_layers(self, *args, **kwargs):
-            nonlocal registered
+            nonlocal registered, evidence_monitor_started
             if not registered:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
@@ -117,6 +119,37 @@ def main() -> None:
 
                 print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
+
+                # The evidence monitor is staging-only and starts after PTB
+                # initializes its event loop. It is read-only and fail-open.
+                async def start_evidence_monitor(application):
+                    nonlocal evidence_monitor_started
+                    if evidence_monitor_started:
+                        return
+                    if os.getenv("ALIBOT_RUNTIME_ENV", "").strip().lower() != "staging":
+                        return
+                    if os.getenv("ALIBOT_PAIRED_EVIDENCE_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+                        return
+                    evidence_monitor_started = True
+                    db_path = getattr(getattr(bot_module, "SmartTelemetryStore", None), "db_path", None)
+                    if db_path is None:
+                        try:
+                            db_path = importlib.import_module("plugins.smart_telemetry").SmartTelemetryStore().db_path
+                        except Exception:
+                            db_path = None
+                    if db_path is None:
+                        print("⚠️ Paired Evidence Monitor: DB path unavailable; monitor disabled.", flush=True)
+                        return
+                    asyncio_task = __import__("asyncio").create_task(run_evidence_monitor(db_path))
+                    print("📈 Paired Evidence Monitor: started (staging-only, read-only).", flush=True)
+                    asyncio_task.add_done_callback(
+                        lambda task: print(
+                            f"⚠️ Paired Evidence Monitor stopped: {task.exception()!r}" if not task.cancelled() else "📈 Paired Evidence Monitor cancelled.",
+                            flush=True,
+                        )
+                    )
+
+                self.post_init = start_evidence_monitor
                 registered = True
             return original_run_polling(self, *args, **kwargs)
 
