@@ -1,14 +1,15 @@
 """Evidence-gated resolver selection policy.
 
 This module is deliberately runtime-neutral. It consumes pairwise statistical
-validation results and may propose a new first resolver only when one resolver
-has a validated advantage over every other eligible resolver in the same
-context. Multiple-comparison control is applied with Holm's step-down method.
-No resolver is invoked and no runtime chain is mutated here.
+validation results and may propose a new first resolver only when one
+resolver has a validated advantage over every other eligible resolver in the
+same context. Multiple-comparison control is applied with Holm's step-down
+method. No resolver is invoked and no runtime chain is mutated here.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any, Iterable
 
 from .resolver_adaptive_selector import ELIGIBLE_RESOLVERS
@@ -31,10 +32,6 @@ def _names(original_order: Iterable[str]) -> list[str]:
     return names
 
 
-def _pair_key(first: str, second: str) -> tuple[str, str]:
-    return first, second
-
-
 def _candidate_pair_result(
     candidate: str,
     other: str,
@@ -46,12 +43,10 @@ def _candidate_pair_result(
             continue
         first = str(raw.get("resolver_a", ""))
         second = str(raw.get("resolver_b", ""))
-        if (first, second) == _pair_key(candidate, other):
+        if (first, second) == (candidate, other):
             return raw
-        if (first, second) == _pair_key(other, candidate):
+        if (first, second) == (other, candidate):
             try:
-                # The validation record is directional. Invert the signed
-                # quantities so the policy can apply one consistent rule.
                 return {
                     **raw,
                     "resolver_a": candidate,
@@ -59,7 +54,6 @@ def _candidate_pair_result(
                     "success_rate_delta": -float(raw.get("success_rate_delta", 0.0)),
                     "delta_lower_95": -float(raw.get("delta_upper_95", 0.0)),
                     "delta_upper_95": -float(raw.get("delta_lower_95", 0.0)),
-                    "validated_advantage": bool(raw.get("validated_advantage")) and False,
                 }
             except (TypeError, ValueError):
                 return None
@@ -75,12 +69,14 @@ def _passes_directional_gates(
 ) -> bool:
     try:
         samples = int(result.get("paired_samples", 0))
-        discordant = int(result.get("a_only", 0)) + int(result.get("b_only", 0))
+        a_only = int(result.get("a_only", 0))
+        b_only = int(result.get("b_only", 0))
         delta = float(result.get("success_rate_delta", 0.0))
         lower = float(result.get("delta_lower_95", -1.0))
         p_value = float(result.get("mcnemar_p_value", 1.0))
     except (TypeError, ValueError):
         return False
+    discordant = a_only + b_only
     return (
         samples >= min_samples
         and discordant >= min_discordant
