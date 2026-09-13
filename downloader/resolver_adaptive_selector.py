@@ -16,7 +16,7 @@ DEFAULT_MIN_MARGIN = 0.10
 ELIGIBLE_RESOLVERS = ("legacy_extractor", "smart_media", "browser_media", "cobalt")
 
 
-def _row_map(policy: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _row_map(policy: Iterable[dict[str, Any]], minimum_attempts: int) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for row in policy or ():
         try:
@@ -25,7 +25,7 @@ def _row_map(policy: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             rate = float(row.get("success_rate", 0.0))
         except (AttributeError, TypeError, ValueError):
             continue
-        if name in ELIGIBLE_RESOLVERS and attempts >= DEFAULT_MIN_ATTEMPTS:
+        if name in ELIGIBLE_RESOLVERS and attempts >= minimum_attempts:
             result[name] = {"attempts": attempts, "success_rate": rate}
     return result
 
@@ -48,10 +48,10 @@ def order_resolvers(
         minimum_margin = max(0.0, float(min_margin))
     except (TypeError, ValueError):
         return original
-    rows = _row_map(policy)
+    rows = _row_map(policy, minimum_attempts)
     rows = {
         name: row for name, row in rows.items()
-        if row["attempts"] >= minimum_attempts and 0.0 <= row["success_rate"] <= 1.0
+        if 0.0 <= row["success_rate"] <= 1.0
     }
     eligible = [name for name in original if name in rows]
     if len(eligible) < 2:
@@ -69,5 +69,4 @@ def order_resolvers(
     baseline_rate = baseline["success_rate"]
     if winner_rate < minimum_rate or winner_rate - baseline_rate < minimum_margin:
         return original
-    reordered = [winner] + [name for name in original if name != winner]
-    return reordered
+    return [winner] + [name for name in original if name != winner]
