@@ -8,7 +8,6 @@ invokes a resolver, discovers media, or creates network requests.
 from __future__ import annotations
 
 import json
-import math
 import os
 import sqlite3
 import threading
@@ -23,7 +22,6 @@ from .smart_learning import SmartTelemetryStore
 _MAX_ORDER = 16
 _MAX_NAME = 80
 _MAX_CONTEXT = 40
-_MAX_REASON = 120
 _ALLOWED_PLATFORMS = frozenset({
     "youtube", "instagram", "facebook", "tiktok", "twitter", "reddit",
     "shahid4u", "telegram", "vimeo", "dailymotion", "other", "unknown",
@@ -36,14 +34,21 @@ def _context(value: str | None, allowed: frozenset[str]) -> str:
     return normalized if normalized in allowed else "other"
 
 
-def _order(values: Iterable[str]) -> list[str]:
+def _evaluation_order(values: Iterable[str]) -> list[str]:
+    """Normalize names without changing count or order."""
+    return [str(value).strip() for value in values]
+
+
+def _storage_order(values: Iterable[str]) -> list[str] | None:
+    """Return a bounded unique order suitable for durable telemetry."""
     result: list[str] = []
     for raw in values:
         name = str(raw).strip()[:_MAX_NAME]
-        if name and name not in result:
-            result.append(name)
-        if len(result) >= _MAX_ORDER:
-            break
+        if not name or name in result:
+            return None
+        result.append(name)
+        if len(result) > _MAX_ORDER:
+            return None
     return result
 
 
@@ -87,11 +92,11 @@ def evaluate_shadow(
     min_effect: float = 0.10,
 ) -> ShadowDecision:
     """Evaluate the dormant policy without mutating runtime state."""
-    original = _order(original_order)
+    original = _evaluation_order(original_order)
     platform_name = _context(platform, _ALLOWED_PLATFORMS)
     media_name = _context(media_kind, _ALLOWED_MEDIA_KINDS)
     try:
-        proposed = _order(choose_validated_first(
+        proposed = _evaluation_order(choose_validated_first(
             original,
             validations,
             min_samples=min_samples,
@@ -151,9 +156,13 @@ class ResolverShadowDecisionStore:
     def record(self, decision: ShadowDecision) -> bool:
         """Persist one sanitized decision; telemetry failures never escape."""
         try:
-            original = _order(decision.original_order)
-            proposed = _order(decision.proposed_order)
-            if len(original) != len(proposed) or set(original) != set(proposed):
+            original = _storage_order(decision.original_order)
+            proposed = _storage_order(decision.proposed_order)
+            if original is None or proposed is None:
+                return False
+            if proposed != list(decision.proposed_order) or original != list(decision.original_order):
+                return False
+            if set(original) != set(proposed):
                 return False
             platform_name = _context(decision.platform, _ALLOWED_PLATFORMS)
             media_name = _context(decision.media_kind, _ALLOWED_MEDIA_KINDS)
