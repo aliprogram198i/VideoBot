@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ARG DENO_VERSION=2.8.3
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip gosu \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 videobot \
     && curl -fsSL "https://dl.deno.land/release/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
@@ -72,5 +72,7 @@ ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 ENV ALIBOT_PLUGINS_ENABLED=1
 ENV ALIBOT_BROWSER_RESOLVER=1
-USER videobot
-CMD ["python", "-u", "entrypoint.py"]
+# Railway volumes mounted at runtime can be root-owned. Start as root only long enough
+# to repair the mounted data directory, then drop privileges before running the bot.
+USER root
+CMD ["/bin/sh", "-c", "chown -R videobot:videobot /app/data && exec gosu videobot python -u entrypoint.py"]

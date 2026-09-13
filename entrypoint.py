@@ -62,6 +62,7 @@ def main() -> None:
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
+        install_shadow_runtime_observer = importlib.import_module("downloader.shadow_runtime_observer").install
         install_adaptive_orchestrator = importlib.import_module("downloader.adaptive_download_orchestrator").install
         install_movie_source_guard = importlib.import_module("downloader.movie_source_guard").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
@@ -82,7 +83,16 @@ def main() -> None:
         # artifacts are treated as a failed attempt and the bridge can continue
         # through its existing candidate/browser fallback chain.
         install_movie_source_guard(bot_module)
+        # Capture exactly the callable that Smart Media Bridge records as its
+        # legacy extractor. This is an explicit probe hook; no closure inspection.
+        legacy_probe = getattr(bot_module, "extract_direct_media_urls", None)
         install_smart_media_bridge(bot_module)
+        if callable(legacy_probe):
+            bot_module._alibot_legacy_extractor_probe = legacy_probe
+        # Shadow observation is deliberately outside the existing bridge. It
+        # reads only persisted paired evidence and records a hypothetical
+        # decision; it cannot alter resolver order or create network traffic.
+        install_shadow_runtime_observer(bot_module)
         # The adaptive layer is deliberately outermost around candidate
         # extraction. It only reorders already-discovered candidates and cannot
         # bypass validation, download guards, or provider-specific controls.
