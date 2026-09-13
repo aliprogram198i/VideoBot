@@ -102,6 +102,7 @@ def install(bot_module) -> None:
 
     evidence = ResolverEvidenceStore()
     decisions = ResolverShadowDecisionStore(evidence.db_path)
+    _start_evidence_monitor(evidence.db_path)
 
     async def observed(*args, **kwargs):
         started = time.monotonic()
@@ -173,6 +174,23 @@ def install(bot_module) -> None:
     observed._shadow_runtime_observer = True
     bot_module.extract_direct_media_urls = observed
     print("🧪 Resolver Shadow Runtime Observer: ENABLED (fail-open, no resolver changes)", flush=True)
+
+
+def _start_evidence_monitor(db_path) -> None:
+    """Start exactly one bounded, read-only aggregate monitor in staging."""
+    try:
+        from .paired_evidence_collector import enabled
+        if not enabled():
+            return
+        if getattr(_start_evidence_monitor, "_started", False):
+            return
+        from .evidence_monitor import run_periodic
+        task = asyncio.create_task(run_periodic(db_path))
+        task.add_done_callback(lambda completed: completed.exception() if not completed.cancelled() else None)
+        _start_evidence_monitor._started = True
+        print("📈 Paired Evidence Monitor: ENABLED (aggregate counts only)", flush=True)
+    except Exception:
+        return
 
 
 __all__ = ["install"]
