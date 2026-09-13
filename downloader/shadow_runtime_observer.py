@@ -17,7 +17,7 @@ from .resolver_shadow_decision import ResolverShadowDecisionStore, evaluate_shad
 from .resolver_statistical_validation import validate_resolver_set
 
 _ELIGIBLE_ORDER = ("legacy_extractor", "smart_media", "browser_media", "cobalt")
-_PAIRED_PROBE_ORDER = ("smart_media", "browser_media", "cobalt")
+_PAIRED_PROBE_ORDER = _ELIGIBLE_ORDER
 
 
 def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
@@ -28,19 +28,28 @@ def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
 
 
 def _build_paired_probes(bot_module):
-    """Build isolated probes for resolvers whose call signatures are stable.
+    """Build isolated probes using explicit resolver callables only.
 
-    The legacy extractor is intentionally not guessed through closure inspection.
-    It will be added only when the bridge exposes an explicit probe hook. This
-    keeps evidence collection correct rather than pretending four-way evidence is
-    available when it is not.
+    The legacy extractor is supplied by the entrypoint at the exact point where
+    Smart Media Bridge captures its original callable. No closure inspection or
+    guessed legacy implementation is permitted.
     """
     try:
+        legacy_resolver = getattr(bot_module, "_alibot_legacy_extractor_probe", None)
         resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
         browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
         cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
     except Exception:
         return {}
+
+    probes = {}
+    if callable(legacy_resolver):
+        async def legacy_extractor(source_url: str):
+            result = legacy_resolver(source_url)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        probes["legacy_extractor"] = legacy_extractor
 
     async def smart_media(source_url: str):
         result = resolver.resolve(
@@ -77,11 +86,12 @@ def _build_paired_probes(bot_module):
             result = await result
         return result
 
-    return {
+    probes.update({
         "smart_media": smart_media,
         "browser_media": browser_media,
         "cobalt": cobalt,
-    }
+    })
+    return probes
 
 
 def install(bot_module) -> None:
