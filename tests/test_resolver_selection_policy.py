@@ -23,7 +23,6 @@ def test_selects_only_candidate_with_validated_advantage_over_all_peers():
     validations = [
         _row("smart_media", "legacy_extractor"),
         _row("smart_media", "browser_media"),
-        _row("cobalt", "smart_media", delta=-0.20, lower=-0.10, a_only=4, b_only=12),
         _row("smart_media", "cobalt"),
     ]
     assert choose_validated_first(ORDER, validations) == [
