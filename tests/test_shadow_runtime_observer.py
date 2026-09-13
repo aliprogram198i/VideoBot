@@ -22,6 +22,44 @@ def test_source_url_resolution_is_bounded_to_explicit_url():
     assert observer._source_url((123,), {}) is None
 
 
+def test_build_paired_probes_uses_explicit_legacy_hook(monkeypatch):
+    calls = []
+
+    async def legacy(url):
+        calls.append(url)
+        return [url]
+
+    class Bot:
+        _alibot_legacy_extractor_probe = legacy
+
+        @staticmethod
+        def validate_public_http_url(url):
+            return url
+
+        @staticmethod
+        def Request(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def safe_urlopen(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def read_limited(*args, **kwargs):
+            return b""
+
+    class Resolver:
+        @staticmethod
+        def resolve(*args, **kwargs):
+            return []
+
+    monkeypatch.setattr(observer, "__import__", __import__, raising=False)
+    probes = observer._build_paired_probes(Bot())
+    assert set(probes) == {"legacy_extractor", "smart_media", "browser_media", "cobalt"}
+    assert asyncio.run(probes["legacy_extractor"]("https://example.com/video")) == ["https://example.com/video"]
+    assert calls == ["https://example.com/video"]
+
+
 def test_install_preserves_result_and_observes_fail_open(monkeypatch):
     records = []
 
