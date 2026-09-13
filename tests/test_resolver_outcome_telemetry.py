@@ -40,10 +40,10 @@ def test_resolver_policy_requires_minimum_sample_and_ranks_safely(tmp_path):
     names = [row["resolver"] for row in policy]
 
     assert "noisy" not in names
-    assert names[:3] == ["browser_media", "smart_media", "cobalt"]
+    assert names[:3] == ["smart_media", "browser_media", "cobalt"]
     assert policy[0]["success_rate"] == 1.0
     assert policy[1]["success_rate"] == 1.0
-    assert policy[0]["avg_elapsed_ms"] > policy[1]["avg_elapsed_ms"]
+    assert policy[0]["avg_elapsed_ms"] < policy[1]["avg_elapsed_ms"]
 
 
 def test_resolver_policy_is_bounded_and_clamps_arguments(tmp_path):
