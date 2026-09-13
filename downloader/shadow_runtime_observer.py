@@ -2,7 +2,7 @@
 
 The observer never changes the live resolver order and never uses shadow output to
 serve a request. Paired evidence collection is separately gated to staging and
-runs only as a background task after a real download request completes.
+runs only as a background task after a real extraction request completes.
 """
 
 from __future__ import annotations
@@ -18,18 +18,6 @@ from .resolver_statistical_validation import validate_resolver_set
 
 _ELIGIBLE_ORDER = ("legacy_extractor", "smart_media", "browser_media", "cobalt")
 _PAIRED_PROBE_ORDER = _ELIGIBLE_ORDER
-_DOWNLOAD_CHOICES = {
-    "video_best",
-    "video_1080",
-    "video_720",
-    "video_480",
-    "video_360",
-    "audio_best",
-    "audio_320",
-    "audio_256",
-    "audio_192",
-    "audio_128",
-}
 
 
 def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
@@ -107,30 +95,13 @@ def _build_paired_probes(bot_module):
 
 
 def install(bot_module) -> None:
-    """Install fail-open shadow observation and a real-request evidence hook."""
+    """Install fail-open shadow observation and the extraction evidence hook."""
     original = getattr(bot_module, "extract_direct_media_urls", None)
-    original_download_media = getattr(bot_module, "download_media", None)
     if not callable(original) or getattr(original, "_shadow_runtime_observer", False):
         return
 
     evidence = ResolverEvidenceStore()
     decisions = ResolverShadowDecisionStore(evidence.db_path)
-
-    async def observed(*args, **kwargs):
-        started = time.monotonic()
-        try:
-            result = original(*args, **kwargs)
-        except Exception:
-            _observe(args, kwargs, started)
-            raise
-        if inspect.isawaitable(result):
-            try:
-                result = await result
-            finally:
-                _observe(args, kwargs, started)
-        else:
-            _observe(args, kwargs, started)
-        return result
 
     def _schedule_paired_collection(url: str, platform: str, media_kind: str) -> None:
         """Schedule staging-only paired probes without adding request latency."""
@@ -144,7 +115,7 @@ def install(bot_module) -> None:
                 print("⚠️ Paired Evidence Collector: fewer than 2 resolver probes available.", flush=True)
                 return
             print(
-                f"🧪 Paired Evidence Collector: scheduling real request "
+                f"🧪 Paired Evidence Collector: scheduling real extraction "
                 f"platform={platform} media_kind={media_kind} rate={sample_rate():.3f}",
                 flush=True,
             )
@@ -182,7 +153,7 @@ def install(bot_module) -> None:
             )
 
     def _observe(args: tuple[Any, ...], kwargs: dict[str, Any], started: float) -> None:
-        """Persist only bounded shadow data; all observer failures are ignored."""
+        """Persist bounded shadow data and schedule paired evidence fail-open."""
         del started
         try:
             url = _source_url(args, kwargs)
@@ -204,48 +175,32 @@ def install(bot_module) -> None:
                 media_kind=media_kind,
             )
             decisions.record(decision)
+            # This is the actual collection boundary: the original extraction
+            # callable has finished, so paired probes can run independently.
+            _schedule_paired_collection(url, platform, media_kind)
         except Exception:
             return
 
-    if callable(original_download_media) and not getattr(original_download_media, "_paired_evidence_request_hook", False):
-        async def observed_download_media(update, context, *args, **kwargs):
-            source_url = None
+    async def observed(*args, **kwargs):
+        started = time.monotonic()
+        try:
+            result = original(*args, **kwargs)
+        except Exception:
+            _observe(args, kwargs, started)
+            raise
+        if inspect.isawaitable(result):
             try:
-                query = getattr(update, "callback_query", None)
-                choice = getattr(query, "data", None)
-                user_data = getattr(context, "user_data", {}) or {}
-                candidate_url = user_data.get("video_url")
-                if choice in _DOWNLOAD_CHOICES and isinstance(candidate_url, str) and candidate_url:
-                    source_url = candidate_url
-            except Exception:
-                source_url = None
-
-            try:
-                result = original_download_media(update, context, *args, **kwargs)
-                if inspect.isawaitable(result):
-                    result = await result
-                return result
+                result = await result
             finally:
-                if source_url:
-                    try:
-                        from .smart_media_bridge import _resolver_context
-                        platform, media_kind = _resolver_context(source_url, "unknown")
-                        _schedule_paired_collection(source_url, platform, media_kind)
-                    except Exception as exc:
-                        print(
-                            f"⚠️ Paired Evidence Collector: request hook skipped {type(exc).__name__}.",
-                            flush=True,
-                        )
-
-        observed_download_media._paired_evidence_request_hook = True
-        bot_module.download_media = observed_download_media
-        print("🧪 Paired Evidence Collector: REAL DOWNLOAD REQUEST HOOKED (staging-only)", flush=True)
-    else:
-        print("⚠️ Paired Evidence Collector: download request hook unavailable.", flush=True)
+                _observe(args, kwargs, started)
+        else:
+            _observe(args, kwargs, started)
+        return result
 
     observed._shadow_runtime_observer = True
     bot_module.extract_direct_media_urls = observed
     print("🧪 Resolver Shadow Runtime Observer: ENABLED (fail-open, no resolver changes)", flush=True)
+    print("🧪 Paired Evidence Collector: extraction boundary hooked (staging-only)", flush=True)
 
 
 __all__ = ["install"]
