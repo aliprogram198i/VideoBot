@@ -30,7 +30,7 @@ def test_build_paired_probes_uses_explicit_legacy_hook(monkeypatch):
         return [url]
 
     class Bot:
-        _alibot_legacy_extractor_probe = legacy
+        _alibot_legacy_extractor_probe = staticmethod(legacy)
 
         @staticmethod
         def validate_public_http_url(url):
@@ -48,12 +48,6 @@ def test_build_paired_probes_uses_explicit_legacy_hook(monkeypatch):
         def read_limited(*args, **kwargs):
             return b""
 
-    class Resolver:
-        @staticmethod
-        def resolve(*args, **kwargs):
-            return []
-
-    monkeypatch.setattr(observer, "__import__", __import__, raising=False)
     probes = observer._build_paired_probes(Bot())
     assert set(probes) == {"legacy_extractor", "smart_media", "browser_media", "cobalt"}
     assert asyncio.run(probes["legacy_extractor"]("https://example.com/video")) == ["https://example.com/video"]
