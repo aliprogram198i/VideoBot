@@ -5,6 +5,7 @@ Keeps the bot runtime stable while composing isolated runtime layers before poll
 The administrative UI is owned exclusively by plugins.admin_layer_v2.
 """
 
+import asyncio
 import fcntl
 import importlib
 import os
@@ -71,6 +72,7 @@ def main() -> None:
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
         run_evidence_monitor = importlib.import_module("downloader.evidence_monitor").run_periodic
+        smart_telemetry_store = importlib.import_module("downloader.smart_learning").SmartTelemetryStore
 
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
@@ -131,18 +133,14 @@ def main() -> None:
                     if os.getenv("ALIBOT_PAIRED_EVIDENCE_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
                         return
                     evidence_monitor_started = True
-                    db_path = getattr(getattr(bot_module, "SmartTelemetryStore", None), "db_path", None)
-                    if db_path is None:
-                        try:
-                            db_path = importlib.import_module("plugins.smart_telemetry").SmartTelemetryStore().db_path
-                        except Exception:
-                            db_path = None
-                    if db_path is None:
-                        print("⚠️ Paired Evidence Monitor: DB path unavailable; monitor disabled.", flush=True)
+                    try:
+                        db_path = smart_telemetry_store().db_path
+                    except Exception as exc:
+                        print(f"⚠️ Paired Evidence Monitor: DB path unavailable; monitor disabled: {exc!r}", flush=True)
                         return
-                    asyncio_task = __import__("asyncio").create_task(run_evidence_monitor(db_path))
+                    monitor_task = asyncio.create_task(run_evidence_monitor(db_path))
                     print("📈 Paired Evidence Monitor: started (staging-only, read-only).", flush=True)
-                    asyncio_task.add_done_callback(
+                    monitor_task.add_done_callback(
                         lambda task: print(
                             f"⚠️ Paired Evidence Monitor stopped: {task.exception()!r}" if not task.cancelled() else "📈 Paired Evidence Monitor cancelled.",
                             flush=True,
