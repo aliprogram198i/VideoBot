@@ -2,7 +2,7 @@
 
 The observer never changes the live resolver order and never uses shadow output to
 serve a request. Paired evidence collection is separately gated to staging and
-runs only as a background task after the established extraction call completes.
+runs only as a background task from the established live download fallback entrypoint.
 """
 
 from __future__ import annotations
@@ -95,8 +95,9 @@ def _build_paired_probes(bot_module):
 
 
 def install(bot_module) -> None:
-    """Install one fail-open observer around the established extraction bridge."""
+    """Install one fail-open observer around the live extraction/fallback boundary."""
     original = getattr(bot_module, "extract_direct_media_urls", None)
+    original_fallback = getattr(bot_module, "download_with_fallback", None)
     if not callable(original) or getattr(original, "_shadow_runtime_observer", False):
         return
 
@@ -128,6 +129,7 @@ def install(bot_module) -> None:
                 return
             probes = _build_paired_probes(bot_module)
             if len(probes) < 2:
+                print("⚠️ Paired Evidence Collector: fewer than 2 resolver probes available.", flush=True)
                 return
             task = asyncio.create_task(
                 collect(
@@ -139,7 +141,9 @@ def install(bot_module) -> None:
                     resolvers={name: probes[name] for name in _PAIRED_PROBE_ORDER if name in probes},
                 )
             )
-            task.add_done_callback(lambda completed: completed.exception() if not completed.cancelled() else None)
+            task.add_done_callback(
+                lambda completed: completed.exception() if not completed.cancelled() else None
+            )
         except Exception:
             return
 
@@ -166,9 +170,34 @@ def install(bot_module) -> None:
                 media_kind=media_kind,
             )
             decisions.record(decision)
-            _schedule_paired_collection(url, platform, media_kind)
         except Exception:
             return
+
+    if callable(original_fallback) and not getattr(original_fallback, "_paired_evidence_entrypoint", False):
+        async def observed_fallback(*args, **kwargs):
+            source_url = _source_url(args, kwargs)
+            try:
+                result = original_fallback(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+            finally:
+                if source_url:
+                    try:
+                        from .smart_media_bridge import _resolver_context
+                        platform, media_kind = _resolver_context(
+                            source_url,
+                            kwargs.get("media_kind", "unknown"),
+                        )
+                        _schedule_paired_collection(source_url, platform, media_kind)
+                    except Exception:
+                        pass
+
+        observed_fallback._paired_evidence_entrypoint = True
+        bot_module.download_with_fallback = observed_fallback
+        print("🧪 Paired Evidence Collector: LIVE FALLBACK ENTRYPOINT HOOKED (staging-only)", flush=True)
+    else:
+        print("⚠️ Paired Evidence Collector: live fallback entrypoint unavailable.", flush=True)
 
     observed._shadow_runtime_observer = True
     bot_module.extract_direct_media_urls = observed
