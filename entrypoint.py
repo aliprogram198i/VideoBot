@@ -83,7 +83,12 @@ def main() -> None:
         # artifacts are treated as a failed attempt and the bridge can continue
         # through its existing candidate/browser fallback chain.
         install_movie_source_guard(bot_module)
+        # Capture exactly the callable that Smart Media Bridge records as its
+        # legacy extractor. This is an explicit probe hook; no closure inspection.
+        legacy_probe = getattr(bot_module, "extract_direct_media_urls", None)
         install_smart_media_bridge(bot_module)
+        if callable(legacy_probe):
+            bot_module._alibot_legacy_extractor_probe = legacy_probe
         # Shadow observation is deliberately outside the existing bridge. It
         # reads only persisted paired evidence and records a hypothetical
         # decision; it cannot alter resolver order or create network traffic.
