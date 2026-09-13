@@ -9,16 +9,13 @@ import time
 from urllib.parse import urlparse
 
 
-# Shahid4u may expose legitimate movie files larger than the generic
-# 500 MB extraction guard. The normal delivery layer already splits large
-# videos for Telegram, so this larger bounded limit is isolated to this provider.
 SHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_BYTES = 5 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_DURATION = 60.0
 
 
 def install(bot_module) -> None:
-    """Compose legacy, provider-specific, static, browser, and Cobalt fallbacks."""
+    """Compose existing resolvers and attach bounded contextual telemetry."""
     original = getattr(bot_module, "extract_direct_media_urls", None)
     original_smart = getattr(bot_module, "download_with_smart_extraction", None)
     original_fallback = getattr(bot_module, "download_with_fallback", None)
@@ -34,26 +31,53 @@ def install(bot_module) -> None:
     telemetry = telemetry_module.ResolverOutcomeTelemetry()
     browser_candidate_cache = {}
 
-    async def _run_resolver(name, operation, *args, **kwargs):
-        """Run one existing resolver and record only its technical outcome."""
+    def _context(source_url, media_kind="unknown"):
+        host = "unknown"
+        try:
+            host = (urlparse(str(source_url)).hostname or "").lower().rstrip(".")
+        except Exception:
+            pass
+        platform = "unknown"
+        platform_hosts = {
+            "youtube": ("youtube.com", "youtu.be"),
+            "instagram": ("instagram.com", "instagr.am"),
+            "facebook": ("facebook.com", "fb.watch"),
+            "tiktok": ("tiktok.com", "tiktokcdn.com"),
+            "twitter": ("twitter.com", "x.com"),
+            "reddit": ("reddit.com", "redd.it"),
+            "shahid4u": ("shahid4u.run", "shhaiid4u.net", "shahid4u.net"),
+            "telegram": ("t.me", "telegram.me"),
+            "vimeo": ("vimeo.com",),
+            "dailymotion": ("dailymotion.com", "dai.ly"),
+        }
+        for name, suffixes in platform_hosts.items():
+            if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+                platform = name
+                break
+        kind = str(media_kind or "unknown").lower()
+        if kind not in {"hls", "dash", "progressive", "iframe", "unknown"}:
+            kind = "unknown"
+        return platform, kind
+
+    async def _run_resolver(name, operation, *args, source_url=None, media_kind="unknown", **kwargs):
         started = time.monotonic()
+        platform, kind = _context(source_url, media_kind)
         try:
             result = operation(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result
             count = len(result) if isinstance(result, (list, tuple)) else int(bool(result))
-            telemetry.record(name, success=bool(result), candidate_count=count, elapsed_ms=(time.monotonic() - started) * 1000)
+            telemetry.record(name, success=bool(result), candidate_count=count,
+                             elapsed_ms=(time.monotonic() - started) * 1000,
+                             platform=platform, media_kind=kind)
             return result
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            telemetry.record(
-                name,
-                success=False,
-                candidate_count=0,
-                elapsed_ms=(time.monotonic() - started) * 1000,
-                failure_reason=type(exc).__name__,
-            )
+            telemetry.record(name, success=False, candidate_count=0,
+                             elapsed_ms=(time.monotonic() - started) * 1000,
+                             failure_reason=type(exc).__name__,
+                             platform=platform, media_kind=kind)
             raise
 
     def _is_local_file(value, temp_dir):
@@ -67,9 +91,7 @@ def install(bot_module) -> None:
             return False
 
     def _candidate_from_value(value):
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            return value
-        return None
+        return value if isinstance(value, str) and value.startswith(("http://", "https://")) else None
 
     def _queue_candidates(source_url, values):
         if not source_url:
@@ -84,73 +106,51 @@ def install(bot_module) -> None:
 
     async def wrapped(url, *args, **kwargs):
         print("🔎 Smart Media Bridge: entered", flush=True)
+        context = {"source_url": url, "media_kind": "unknown"}
         try:
-            provider_resolved = await _run_resolver(
-                "shahid4u",
-                shahid4u_resolver.resolve,
-                url,
-                validator=bot_module.validate_public_http_url,
-                request_factory=bot_module.Request,
-                open_function=bot_module.safe_urlopen,
-                read_function=bot_module.read_limited,
-            )
+            provider_resolved = await _run_resolver("shahid4u", shahid4u_resolver.resolve, url,
+                validator=bot_module.validate_public_http_url, request_factory=bot_module.Request,
+                open_function=bot_module.safe_urlopen, read_function=bot_module.read_limited, **context)
         except Exception as exc:
             print(f"⚠️ Shahid4u Resolver failed: {type(exc).__name__}", flush=True)
             provider_resolved = []
         if provider_resolved:
             _queue_candidates(url, provider_resolved)
-            print(f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff", flush=True)
             return provider_resolved
         try:
-            existing = await _run_resolver("legacy_extractor", original, url, *args, **kwargs)
+            existing = await _run_resolver("legacy_extractor", original, url, *args, source_url=url, **kwargs)
         except Exception as exc:
             print(f"⚠️ Smart Search legacy extractor failed: {type(exc).__name__}", flush=True)
             existing = []
         if existing:
-            print(f"🔎 Smart Media Bridge: legacy returned {len(existing)} candidate(s)", flush=True)
             return existing
         try:
-            print("🔎 Smart Media Bridge: static resolver starting", flush=True)
-            resolved = await _run_resolver(
-                "smart_media",
-                resolver.resolve,
-                url,
-                validator=bot_module.validate_public_http_url,
-                request_factory=bot_module.Request,
-                open_function=bot_module.safe_urlopen,
-                read_function=bot_module.read_limited,
-            )
+            resolved = await _run_resolver("smart_media", resolver.resolve, url,
+                validator=bot_module.validate_public_http_url, request_factory=bot_module.Request,
+                open_function=bot_module.safe_urlopen, read_function=bot_module.read_limited,
+                source_url=url, media_kind="unknown")
         except Exception as exc:
             print(f"⚠️ Smart Search Resolver failed: {type(exc).__name__}", flush=True)
             resolved = []
         if resolved:
-            print(f"🔎 Smart Search Resolver: resolved {len(resolved)} public media candidate(s)", flush=True)
             return resolved
         try:
-            print("🌐 Smart Media Bridge: browser resolver starting", flush=True)
-            browser_resolved = await _run_resolver(
-                "browser_media",
-                browser_resolver.resolve,
-                url,
-                validator=bot_module.validate_public_http_url,
-            )
+            browser_resolved = await _run_resolver("browser_media", browser_resolver.resolve, url,
+                validator=bot_module.validate_public_http_url, source_url=url, media_kind="iframe")
         except Exception as exc:
             print(f"⚠️ Browser Media Resolver failed: {type(exc).__name__}", flush=True)
             browser_resolved = []
         if browser_resolved:
             _queue_candidates(url, browser_resolved)
-            print(f"🌐 Browser Media Resolver: resolved {len(browser_resolved)} public media candidate(s); queued for Browser Download Handoff", flush=True)
             return browser_resolved
         try:
-            print("🧩 Smart Media Bridge: Cobalt resolver starting", flush=True)
-            cobalt_resolved = await _run_resolver("cobalt", cobalt_resolver.resolve, url)
+            cobalt_resolved = await _run_resolver("cobalt", cobalt_resolver.resolve, url,
+                source_url=url, media_kind="unknown")
         except Exception as exc:
             print(f"⚠️ Cobalt Resolver failed: {type(exc).__name__}", flush=True)
             cobalt_resolved = []
         if cobalt_resolved:
-            print(f"🧩 Cobalt Resolver: resolved {len(cobalt_resolved)} public media candidate(s)", flush=True)
             return cobalt_resolved
-        print("🔎 Smart Media Search: no public media candidate resolved", flush=True)
         return []
 
     wrapped._smart_search_bridge = True
@@ -164,9 +164,7 @@ def install(bot_module) -> None:
             temp_dir = kwargs.get("temp_dir")
             is_audio = bool(kwargs.get("is_audio", False))
             diagnostics = result[3] if isinstance(result, tuple) and len(result) > 3 else {}
-            source_url = kwargs.get("url")
-            if source_url is None and args:
-                source_url = args[0]
+            source_url = kwargs.get("url") or (args[0] if args else None)
             if isinstance(result, tuple) and result and _is_local_file(result[0], temp_dir):
                 browser_candidate_cache.pop(source_url, None)
                 return result
@@ -188,7 +186,6 @@ def install(bot_module) -> None:
                         candidate_urls.append(candidate)
             if not temp_dir or not candidate_urls:
                 return result
-            print(f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
             source_host = ""
             try:
@@ -198,29 +195,26 @@ def install(bot_module) -> None:
             strict_provider_validation = source_host == "shahid4u.run" or source_host.endswith(".shahid4u.run")
             if strict_provider_validation and not is_audio:
                 max_bytes = max(max_bytes, SHAHID4U_MAX_HANDOFF_BYTES)
-            handoff_kwargs = {"validator": bot_module.validate_public_http_url, "is_audio": is_audio, "max_file_bytes": max_bytes, "referer_url": source_url if isinstance(source_url, str) else None}
+            handoff_kwargs = {"validator": bot_module.validate_public_http_url, "is_audio": is_audio,
+                              "max_file_bytes": max_bytes, "referer_url": source_url if isinstance(source_url, str) else None}
             if strict_provider_validation and not is_audio:
                 handoff_kwargs.update({"min_video_bytes": SHAHID4U_MIN_VIDEO_BYTES, "min_video_duration": SHAHID4U_MIN_VIDEO_DURATION})
-                print("🎯 Shahid4u Handoff: strict media validation enabled (>=5MB, >=60s, max 2GB)", flush=True)
             for candidate in candidate_urls[:12]:
                 try:
-                    print(f"🌐 Browser Download Handoff: trying candidate {candidate.split('?', 1)[0]}", flush=True)
-                    local_path = await asyncio.to_thread(browser_handoff.resolve_to_file, candidate, temp_dir, timeout_ms=45_000, settle_ms=2_000, **handoff_kwargs)
+                    local_path = await asyncio.to_thread(browser_handoff.resolve_to_file, candidate, temp_dir,
+                        timeout_ms=45_000, settle_ms=2_000, **handoff_kwargs)
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:
-                    print(f"⚠️ Browser Download Handoff failed: {type(exc).__name__}", flush=True)
+                except Exception:
                     local_path = None
                 if _is_local_file(local_path, temp_dir):
                     try:
                         size = os.path.getsize(local_path)
                     except OSError:
                         size = 0
-                    print(f"🌐 Browser Download Handoff: succeeded ({size} bytes)", flush=True)
                     handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}
                     handoff_diagnostics.update({"status": "browser_download_handoff_success", "handoff_candidate": candidate, "bytes_downloaded": size})
                     return local_path, "Browser Download Handoff: saved local file", "", handoff_diagnostics
-            print("🌐 Browser Download Handoff: no usable browser file", flush=True)
             return result
         wrapped_fallback._smart_search_bridge = True
         bot_module.download_with_fallback = wrapped_fallback
@@ -229,45 +223,36 @@ def install(bot_module) -> None:
 
     if callable(original_smart) and callable(original_fallback):
         async def wrapped_smart(*args, **kwargs):
-            print("🔎 Smart Media Bridge: smart-extraction handoff active", flush=True)
             try:
                 smart_result = original_smart(*args, **kwargs)
                 if inspect.isawaitable(smart_result):
                     smart_result = await smart_result
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
-                print(f"⚠️ Smart Extraction handoff failed: {type(exc).__name__}", flush=True)
+            except Exception:
                 smart_result = None
             temp_dir = kwargs.get("temp_dir")
             if isinstance(smart_result, tuple) and smart_result and _is_local_file(smart_result[0], temp_dir):
                 return smart_result
-            url = kwargs.get("url")
-            if url is None and args:
-                url = args[0]
+            url = kwargs.get("url") or (args[0] if args else None)
             if not url:
                 return smart_result
-            print("🌐 Smart Media Bridge: handing failed Smart Extraction to direct-media chain", flush=True)
-            fallback_kwargs = {"url": url, "temp_dir": temp_dir, "output_template": kwargs.get("output_template"), "format_option": kwargs.get("format_option"), "is_audio": kwargs.get("is_audio", False), "attempt_id": kwargs.get("attempt_id"), "attempt_number": kwargs.get("attempt_number")}
+            fallback_kwargs = {"url": url, "temp_dir": temp_dir, "output_template": kwargs.get("output_template"),
+                               "format_option": kwargs.get("format_option"), "is_audio": kwargs.get("is_audio", False),
+                               "attempt_id": kwargs.get("attempt_id"), "attempt_number": kwargs.get("attempt_number")}
             try:
                 return_value = wrapped_fallback(**fallback_kwargs) if callable(wrapped_fallback) else original_fallback(**fallback_kwargs)
                 if inspect.isawaitable(return_value):
                     return_value = await return_value
                 if isinstance(return_value, tuple) and return_value and _is_local_file(return_value[0], temp_dir):
-                    print("🌐 Smart Media Bridge: direct-media handoff succeeded", flush=True)
                     return return_value[0], {"handoff": "direct_media_chain", "fallback_diagnostics": return_value[3] if len(return_value) > 3 else {}}
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
-                print(f"⚠️ Smart Media Bridge: direct-media handoff failed: {type(exc).__name__}", flush=True)
+            except Exception:
+                pass
             return smart_result
         wrapped_smart._smart_search_bridge = True
         bot_module.download_with_smart_extraction = wrapped_smart
 
     print("🔎 Smart Search async bridge: ENABLED", flush=True)
-    if callable(original_smart) and callable(original_fallback):
-        print("🌐 Smart Media Bridge: Smart Extraction handoff ENABLED", flush=True)
-    if callable(original_fallback):
-        print("🌐 Smart Media Bridge: Browser Download Handoff ENABLED", flush=True)
-    print("🎯 Shahid4u Provider Resolver: ENABLED", flush=True)
-    print("📊 Resolver Outcome Telemetry: ENABLED", flush=True)
+    print("📊 Resolver Outcome Telemetry: ENABLED (context-aware)", flush=True)
