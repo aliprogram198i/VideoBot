@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from urllib.parse import urlparse
 
 LOG = logging.getLogger(__name__)
@@ -273,14 +274,50 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
     return [item[0] for item in ranked[:max_candidates]]
 
 
+def _run_async_in_worker(coro_factory):
+    """Run one coroutine in a dedicated thread when this thread already has a loop."""
+    result: list[list[str] | None] = [None]
+    error: list[BaseException | None] = [None]
+
+    def runner() -> None:
+        try:
+            result[0] = asyncio.run(coro_factory())
+        except BaseException as exc:
+            error[0] = exc
+
+    thread = threading.Thread(target=runner, name="alibot-browser-resolver", daemon=True)
+    thread.start()
+    thread.join()
+    if error[0] is not None:
+        raise error[0]
+    return result[0]
+
+
 def resolve(url: str, *, validator, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_candidates: int = DEFAULT_MAX_CANDIDATES, max_pages: int = DEFAULT_MAX_PAGES) -> list[str]:
     if not _browser_enabled(): return []
+
+    def make_coro():
+        return _resolve_async(
+            url,
+            validator=validator,
+            timeout_ms=timeout_ms,
+            settle_ms=settle_ms,
+            max_candidates=max_candidates,
+            max_pages=max_pages,
+        )
+
     try:
-        return asyncio.run(_resolve_async(url, validator=validator, timeout_ms=timeout_ms, settle_ms=settle_ms, max_candidates=max_candidates, max_pages=max_pages))
+        asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try: return loop.run_until_complete(_resolve_async(url, validator=validator, timeout_ms=timeout_ms, settle_ms=settle_ms, max_candidates=max_candidates, max_pages=max_pages))
-        finally: loop.close()
+        try:
+            return asyncio.run(make_coro())
+        except Exception as exc:
+            LOG.warning("Browser resolver failed: %s", type(exc).__name__)
+            print(f"⚠️ Browser resolver failed: {type(exc).__name__}", flush=True)
+            return []
+
+    try:
+        return _run_async_in_worker(make_coro)
     except Exception as exc:
         LOG.warning("Browser resolver failed: %s", type(exc).__name__)
         print(f"⚠️ Browser resolver failed: {type(exc).__name__}", flush=True)

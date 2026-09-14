@@ -5,6 +5,7 @@ Keeps the bot runtime stable while composing isolated runtime layers before poll
 The administrative UI is owned exclusively by plugins.admin_layer_v2.
 """
 
+import asyncio
 import fcntl
 import importlib
 import os
@@ -62,6 +63,7 @@ def main() -> None:
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
         install_smart_media_bridge = importlib.import_module("downloader.smart_media_bridge").install
+        install_shadow_runtime_observer = importlib.import_module("downloader.shadow_runtime_observer").install
         install_adaptive_orchestrator = importlib.import_module("downloader.adaptive_download_orchestrator").install
         install_movie_source_guard = importlib.import_module("downloader.movie_source_guard").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
@@ -69,6 +71,8 @@ def main() -> None:
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
+        run_evidence_monitor = importlib.import_module("downloader.evidence_monitor").run_periodic
+        smart_telemetry_store = importlib.import_module("downloader.smart_learning").SmartTelemetryStore
 
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
@@ -82,18 +86,29 @@ def main() -> None:
         # artifacts are treated as a failed attempt and the bridge can continue
         # through its existing candidate/browser fallback chain.
         install_movie_source_guard(bot_module)
+        # Capture exactly the callable that Smart Media Bridge records as its
+        # legacy extractor. This is an explicit probe hook; no closure inspection.
+        legacy_probe = getattr(bot_module, "extract_direct_media_urls", None)
         install_smart_media_bridge(bot_module)
-        # The adaptive layer is deliberately outermost around candidate
-        # extraction. It only reorders already-discovered candidates and cannot
-        # bypass validation, download guards, or provider-specific controls.
+        if callable(legacy_probe):
+            bot_module._alibot_legacy_extractor_probe = legacy_probe
+        # The adaptive layer applies ordering BEFORE observation. It only
+        # reorders already-discovered candidates and cannot bypass validation.
         install_adaptive_orchestrator(bot_module)
+        # Shadow observation is deliberately the outermost wrapper around
+        # candidate extraction. It reads only persisted paired evidence, records
+        # shadow decisions, and schedules background evidence collection. By
+        # being outermost, its finally block guarantees _observe() runs after
+        # Adaptive has completed and returned its result.
+        install_shadow_runtime_observer(bot_module)
         install_telegram_media_retry()
 
         original_run_polling = Application.run_polling
         registered = False
+        evidence_monitor_started = False
 
         def run_polling_with_layers(self, *args, **kwargs):
-            nonlocal registered
+            nonlocal registered, evidence_monitor_started
             if not registered:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
@@ -107,6 +122,33 @@ def main() -> None:
 
                 print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
+
+                # The evidence monitor is staging-only and starts after PTB
+                # initializes its event loop. It is read-only and fail-open.
+                async def start_evidence_monitor(application):
+                    nonlocal evidence_monitor_started
+                    if evidence_monitor_started:
+                        return
+                    if os.getenv("ALIBOT_RUNTIME_ENV", "").strip().lower() != "staging":
+                        return
+                    if os.getenv("ALIBOT_PAIRED_EVIDENCE_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+                        return
+                    evidence_monitor_started = True
+                    try:
+                        db_path = smart_telemetry_store().db_path
+                    except Exception as exc:
+                        print(f"⚠️ Paired Evidence Monitor: DB path unavailable; monitor disabled: {exc!r}", flush=True)
+                        return
+                    monitor_task = asyncio.create_task(run_evidence_monitor(db_path))
+                    print("📈 Paired Evidence Monitor: started (staging-only, read-only).", flush=True)
+                    monitor_task.add_done_callback(
+                        lambda task: print(
+                            f"⚠️ Paired Evidence Monitor stopped: {task.exception()!r}" if not task.cancelled() else "📈 Paired Evidence Monitor cancelled.",
+                            flush=True,
+                        )
+                    )
+
+                self.post_init = start_evidence_monitor
                 registered = True
             return original_run_polling(self, *args, **kwargs)
 
