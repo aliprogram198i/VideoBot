@@ -1,5 +1,6 @@
 import asyncio
 
+import downloader.paired_evidence_collector as collector
 import downloader.shadow_runtime_observer as observer
 
 
@@ -20,6 +21,22 @@ def test_source_url_resolution_is_bounded_to_explicit_url():
     assert observer._source_url((), {"url": "https://example.com/video"}) == "https://example.com/video"
     assert observer._source_url(("https://example.com/video",), {}) == "https://example.com/video"
     assert observer._source_url((123,), {}) is None
+
+
+def test_request_context_reads_real_user_request():
+    class Query:
+        data = "video_720"
+
+    class Update:
+        callback_query = Query()
+
+    class Context:
+        user_data = {"video_url": "https://youtube.com/watch?v=x"}
+
+    assert observer._request_context((Update(), Context()), {}) == (
+        "https://youtube.com/watch?v=x",
+        "video",
+    )
 
 
 def test_build_paired_probes_uses_explicit_legacy_hook(monkeypatch):
@@ -78,13 +95,78 @@ def test_install_preserves_result_and_observes_fail_open(monkeypatch):
         async def extract(self, url):
             return [url]
 
+        async def download(self, update, context):
+            return "downloaded"
+
     bot = Bot()
     bot.extract_direct_media_urls = bot.extract
+    bot.download_media = bot.download
     observer.install(bot)
 
     result = asyncio.run(bot.extract_direct_media_urls("https://youtube.com/watch?v=x"))
     assert result == ["https://youtube.com/watch?v=x"]
     assert len(records) == 1
+
+
+def test_install_collects_at_real_download_request_boundary(monkeypatch):
+    monkeypatch.setenv("ALIBOT_RUNTIME_ENV", "staging")
+    monkeypatch.setenv("ALIBOT_PAIRED_EVIDENCE_ENABLED", "1")
+    monkeypatch.setattr(observer, "ResolverEvidenceStore", lambda: _FakeEvidence())
+    monkeypatch.setattr(observer, "ResolverShadowDecisionStore", _FakeDecisions)
+    monkeypatch.setattr(observer, "validate_resolver_set", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        observer,
+        "evaluate_shadow",
+        lambda order, validations, **kwargs: type("Decision", (), {"original_order": tuple(order), "proposed_order": tuple(order)})(),
+    )
+
+    async def fake_resolver(url, **kwargs):
+        return [url]
+
+    monkeypatch.setattr(
+        observer,
+        "_build_paired_probes",
+        lambda bot: {"legacy_extractor": fake_resolver, "smart_media": fake_resolver},
+    )
+    monkeypatch.setattr(collector, "enabled", lambda: True)
+    monkeypatch.setattr(collector, "sample_rate", lambda: 0.05)
+
+    scheduled = []
+
+    async def fake_collect(*args, **kwargs):
+        scheduled.append((kwargs["platform"], kwargs["media_kind"], kwargs["source_url"]))
+        return True
+
+    monkeypatch.setattr(collector, "collect", fake_collect)
+
+    async def exercise():
+        class Query:
+            data = "video_720"
+
+        class Update:
+            callback_query = Query()
+
+        class Context:
+            user_data = {"video_url": "https://youtube.com/watch?v=x"}
+
+        class Bot:
+            async def extract(self, url):
+                return [url]
+
+            async def download(self, update, context):
+                return "downloaded"
+
+        bot = Bot()
+        bot.extract_direct_media_urls = bot.extract
+        bot.download_media = bot.download
+        observer.install(bot)
+        result = await bot.download_media(Update(), Context())
+        await asyncio.sleep(0)
+        return result
+
+    result = asyncio.run(exercise())
+    assert result == "downloaded"
+    assert scheduled == [("youtube", "video", "https://youtube.com/watch?v=x")]
 
 
 def test_observer_never_reorders_original_result(monkeypatch):
@@ -96,6 +178,7 @@ def test_observer_never_reorders_original_result(monkeypatch):
         "evaluate_shadow",
         lambda order, validations, **kwargs: type("Decision", (), {"original_order": tuple(order), "proposed_order": ("cobalt", "legacy_extractor", "smart_media", "browser_media")})(),
     )
+    monkeypatch.setattr(observer, "_build_paired_probes", lambda bot: {})
 
     class Bot:
         async def extract(self, url):
