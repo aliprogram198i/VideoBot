@@ -6,10 +6,17 @@ import asyncio
 import sqlite3
 from pathlib import Path
 
+from .resolver_evidence import ResolverEvidenceStore
+from .resolver_selection_policy import choose_validated_first
+from .resolver_statistical_validation import validate_resolver_set
+
+_ELIGIBLE_ORDER = ("legacy_extractor", "smart_media", "browser_media", "cobalt")
+
 
 async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> None:
-    """Log aggregate paired-evidence counts without exposing request data."""
+    """Log aggregate paired-evidence counts and read-only statistical gates."""
     path = Path(db_path)
+    last_signature = None
     while True:
         try:
             if path.exists():
@@ -34,11 +41,42 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                             HAVING COUNT(DISTINCT resolver) = 4
                         )
                     """).fetchone()[0])
-                    print(
-                        f"📈 Paired Evidence Monitor: rows={total_rows} samples={distinct_samples} "
-                        f"paired>=2={paired_samples} complete4={complete_samples}",
-                        flush=True,
-                    )
+                    contexts = conn.execute("""
+                        SELECT DISTINCT platform, media_kind
+                        FROM resolver_evidence
+                        WHERE resolver IN ('legacy_extractor','smart_media','browser_media','cobalt')
+                        ORDER BY platform, media_kind
+                    """).fetchall()
+
+                print(
+                    f"📈 Paired Evidence Monitor: rows={total_rows} samples={distinct_samples} "
+                    f"paired>=2={paired_samples} complete4={complete_samples}",
+                    flush=True,
+                )
+
+                signature = (total_rows, distinct_samples, paired_samples, complete_samples, tuple(contexts))
+                if signature != last_signature:
+                    store = ResolverEvidenceStore(path)
+                    validation_summary = []
+                    for platform, media_kind in contexts:
+                        validations = validate_resolver_set(
+                            store,
+                            _ELIGIBLE_ORDER,
+                            platform=platform,
+                            media_kind=media_kind,
+                        )
+                        proposed = choose_validated_first(_ELIGIBLE_ORDER, validations)
+                        validated = proposed != list(_ELIGIBLE_ORDER)
+                        validation_summary.append(
+                            f"{platform}/{media_kind}:pairs={len(validations)} "
+                            f"validated={'yes' if validated else 'no'}"
+                        )
+                    if validation_summary:
+                        print(
+                            "📊 Paired Evidence Validation: " + " | ".join(validation_summary),
+                            flush=True,
+                        )
+                    last_signature = signature
         except Exception:
             # Monitoring must never affect the downloader runtime.
             pass
