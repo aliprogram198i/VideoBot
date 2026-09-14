@@ -41,12 +41,14 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                             HAVING COUNT(DISTINCT resolver) = 4
                         )
                     """).fetchone()[0])
-                    contexts = conn.execute("""
-                        SELECT DISTINCT platform, media_kind
+                    context_counts = conn.execute("""
+                        SELECT platform, media_kind, COUNT(DISTINCT sample_id) AS samples
                         FROM resolver_evidence
                         WHERE resolver IN ('legacy_extractor','smart_media','browser_media','cobalt')
+                        GROUP BY platform, media_kind
                         ORDER BY platform, media_kind
                     """).fetchall()
+                    contexts = [(row[0], row[1]) for row in context_counts]
 
                 print(
                     f"📈 Paired Evidence Monitor: rows={total_rows} samples={distinct_samples} "
@@ -54,11 +56,11 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                     flush=True,
                 )
 
-                signature = (total_rows, distinct_samples, paired_samples, complete_samples, tuple(contexts))
+                signature = (total_rows, distinct_samples, paired_samples, complete_samples, tuple(context_counts))
                 if signature != last_signature:
                     store = ResolverEvidenceStore(path)
                     validation_summary = []
-                    for platform, media_kind in contexts:
+                    for platform, media_kind, sample_count in context_counts:
                         validations = validate_resolver_set(
                             store,
                             _ELIGIBLE_ORDER,
@@ -67,8 +69,20 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                         )
                         proposed = choose_validated_first(_ELIGIBLE_ORDER, validations)
                         validated = proposed != list(_ELIGIBLE_ORDER)
+                        max_discordant = max(
+                            (int(item["a_only"]) + int(item["b_only"]) for item in validations),
+                            default=0,
+                        )
+                        qualifying_pairs = sum(
+                            1
+                            for item in validations
+                            if int(item["paired_samples"]) >= 30
+                            and (int(item["a_only"]) + int(item["b_only"])) >= 10
+                        )
                         validation_summary.append(
-                            f"{platform}/{media_kind}:pairs={len(validations)} "
+                            f"{platform}/{media_kind}:samples={sample_count} "
+                            f"pairs={len(validations)} discordant_max={max_discordant} "
+                            f"gate_ready_pairs={qualifying_pairs} "
                             f"validated={'yes' if validated else 'no'}"
                         )
                     if validation_summary:
