@@ -29,27 +29,44 @@ def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
 
 
 def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str | None, str]:
-    """Extract the real user-request URL/media kind without guessing from internals."""
-    update = args[0] if args else kwargs.get("update")
-    context = args[1] if len(args) > 1 else kwargs.get("context")
+    """Extract a URL from the actual download call without assuming its signature."""
     source_url = None
     media_kind = "unknown"
-    try:
-        if context is not None:
-            user_data = getattr(context, "user_data", None)
-            if isinstance(user_data, dict):
-                value = user_data.get("video_url")
-                if isinstance(value, str):
-                    source_url = value
-        query = getattr(update, "callback_query", None)
-        choice = getattr(query, "data", "")
-        if isinstance(choice, str):
-            if choice.startswith("video_"):
-                media_kind = "video"
-            elif choice.startswith("audio_"):
-                media_kind = "audio"
-    except Exception:
-        pass
+
+    # Prefer explicit URL-like keyword arguments used by download helpers.
+    for key in ("url", "source_url", "video_url", "media_url"):
+        value = kwargs.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            source_url = value
+            break
+
+    # Fall back to any positional URL. This supports download_media signatures
+    # whose first argument is the source URL rather than Telegram Update/Context.
+    if source_url is None:
+        for value in args:
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                source_url = value
+                break
+
+    # Preserve the existing media-kind detection when a Telegram callback is
+    # present, while also accepting explicit media_kind/kind values.
+    for key in ("media_kind", "media_type", "kind"):
+        value = kwargs.get(key)
+        if isinstance(value, str) and value in {"video", "audio", "hls", "dash", "progressive", "iframe", "unknown"}:
+            media_kind = value
+            break
+
+    if media_kind == "unknown":
+        for value in args:
+            choice = getattr(value, "data", "")
+            if isinstance(choice, str):
+                if choice.startswith("video_"):
+                    media_kind = "video"
+                    break
+                if choice.startswith("audio_"):
+                    media_kind = "audio"
+                    break
+
     return source_url, media_kind
 
 
@@ -214,8 +231,10 @@ def install(bot_module) -> None:
                         from .smart_media_bridge import _resolver_context
                         platform, _ = _resolver_context(source_url, media_kind)
                         _schedule_paired_collection(source_url, platform, media_kind)
-                except Exception:
-                    pass
+                    else:
+                        print("⚠️ Paired Evidence Collector: download request had no URL argument.", flush=True)
+                except Exception as exc:
+                    print(f"⚠️ Paired Evidence Collector: request observation skipped {type(exc).__name__}.", flush=True)
 
         observed_download._paired_evidence_request_observer = True
         bot_module.download_media = observed_download
