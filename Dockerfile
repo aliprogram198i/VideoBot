@@ -32,6 +32,8 @@ COPY --chown=videobot:videobot jobs ./jobs
 COPY --chown=videobot:videobot security ./security
 COPY --chown=videobot:videobot plugins ./plugins
 COPY --chown=videobot:videobot telegram_layer ./telegram_layer
+# Test-only helper; does not participate in the production runtime.
+COPY --chown=videobot:videobot tests/manual_resolver_200_urls.py ./tests/manual_resolver_200_urls.py
 RUN python - <<'PY'
 from pathlib import Path
 import re
@@ -54,7 +56,6 @@ if marker not in text:
         f'{indent}        "valid_candidate_count": 0,\n'
         f'{indent}        "skipped": "youtube_smart_extraction_not_applicable",\n'
         f'{indent}    }}\n'
-        f'{indent}    print("ℹ️ Skipping generic Smart Extraction fallback for YouTube")\n'
         f'{indent}else:\n'
         + '\n'.join(indent + '    ' + line if line else line for line in original.splitlines())
         + '\n'
@@ -65,7 +66,7 @@ else:
     print('YouTube fallback isolation already present')
 PY
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
-    && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/smart_search.py downloader/smart_media_bridge.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py downloader/smart_learning_foundation.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer_v2.py plugins/admin_operations_center.py plugins/admin_fallback_intelligence.py plugins/admin_backup_recovery.py plugins/admin_security_center.py plugins/admin_smart_analytics.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/user_features.py plugins/yoinku_compat.py plugins/whatsapp_audio.py telegram_layer/media_retry.py
+    && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/smart_search.py downloader/smart_media_bridge.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py downloader/smart_learning_foundation.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer_v2.py plugins/admin_operations_center.py plugins/admin_fallback_intelligence.py plugins/admin_backup_recovery.py plugins/admin_security_center.py plugins/admin_smart_analytics.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/user_features.py plugins/yoinku_compat.py plugins/whatsapp_audio.py telegram_layer/media_retry.py tests/manual_resolver_200_urls.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
