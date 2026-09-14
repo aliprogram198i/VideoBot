@@ -1,5 +1,6 @@
 import asyncio
 
+import downloader.paired_evidence_collector as collector
 import downloader.shadow_runtime_observer as observer
 
 
@@ -73,6 +74,7 @@ def test_install_preserves_result_and_observes_fail_open(monkeypatch):
         "evaluate_shadow",
         lambda order, validations, **kwargs: type("Decision", (), {"original_order": tuple(order), "proposed_order": tuple(order)})(),
     )
+    monkeypatch.setattr(observer, "_build_paired_probes", lambda bot: {})
 
     class Bot:
         async def extract(self, url):
@@ -87,7 +89,9 @@ def test_install_preserves_result_and_observes_fail_open(monkeypatch):
     assert len(records) == 1
 
 
-def test_install_hooks_real_download_request_boundary(monkeypatch):
+def test_install_schedules_paired_collection_at_extraction_boundary(monkeypatch):
+    monkeypatch.setenv("ALIBOT_RUNTIME_ENV", "staging")
+    monkeypatch.setenv("ALIBOT_PAIRED_EVIDENCE_ENABLED", "1")
     monkeypatch.setattr(observer, "ResolverEvidenceStore", lambda: _FakeEvidence())
     monkeypatch.setattr(observer, "ResolverShadowDecisionStore", _FakeDecisions)
     monkeypatch.setattr(observer, "validate_resolver_set", lambda *args, **kwargs: [])
@@ -97,35 +101,40 @@ def test_install_hooks_real_download_request_boundary(monkeypatch):
         lambda order, validations, **kwargs: type("Decision", (), {"original_order": tuple(order), "proposed_order": tuple(order)})(),
     )
 
-    calls = []
+    async def fake_resolver(url, **kwargs):
+        return [url]
 
-    class Query:
-        data = "video_720"
+    monkeypatch.setattr(
+        observer,
+        "_build_paired_probes",
+        lambda bot: {"legacy_extractor": fake_resolver, "smart_media": fake_resolver},
+    )
+    monkeypatch.setattr(collector, "enabled", lambda: True)
+    monkeypatch.setattr(collector, "sample_rate", lambda: 0.05)
 
-    class Update:
-        callback_query = Query()
+    scheduled = []
 
-    class Context:
-        user_data = {"video_url": "https://example.com/video"}
+    async def fake_collect(*args, **kwargs):
+        scheduled.append((kwargs["platform"], kwargs["media_kind"], kwargs["source_url"]))
+        return True
 
-    class Bot:
-        async def extract(self, url):
-            return [url]
+    monkeypatch.setattr(collector, "collect", fake_collect)
 
-        async def download(self, update, context):
-            calls.append((update.callback_query.data, context.user_data["video_url"]))
-            return "download-result"
+    async def exercise():
+        class Bot:
+            async def extract(self, url):
+                return [url]
 
-    bot = Bot()
-    bot.extract_direct_media_urls = bot.extract
-    bot.download_media = bot.download
-    observer.install(bot)
+        bot = Bot()
+        bot.extract_direct_media_urls = bot.extract
+        observer.install(bot)
+        result = await bot.extract_direct_media_urls("https://youtube.com/watch?v=x")
+        await asyncio.sleep(0)
+        return result
 
-    result = asyncio.run(bot.download_media(Update(), Context()))
-
-    assert result == "download-result"
-    assert calls == [("video_720", "https://example.com/video")]
-    assert getattr(bot.download_media, "_paired_evidence_request_hook", False) is True
+    result = asyncio.run(exercise())
+    assert result == ["https://youtube.com/watch?v=x"]
+    assert scheduled == [("youtube", "unknown", "https://youtube.com/watch?v=x")]
 
 
 def test_observer_never_reorders_original_result(monkeypatch):
@@ -137,6 +146,7 @@ def test_observer_never_reorders_original_result(monkeypatch):
         "evaluate_shadow",
         lambda order, validations, **kwargs: type("Decision", (), {"original_order": tuple(order), "proposed_order": ("cobalt", "legacy_extractor", "smart_media", "browser_media")})(),
     )
+    monkeypatch.setattr(observer, "_build_paired_probes", lambda bot: {})
 
     class Bot:
         async def extract(self, url):
