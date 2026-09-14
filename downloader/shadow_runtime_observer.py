@@ -29,7 +29,7 @@ def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
 
 
 def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str | None, str]:
-    """Extract a URL from the actual download call without assuming its signature."""
+    """Extract the source URL from the actual Telegram download callback context."""
     source_url = None
     media_kind = "unknown"
 
@@ -40,7 +40,23 @@ def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str
             source_url = value
             break
 
-    # Fall back to any positional URL. This supports download_media signatures
+    # A Telegram callback handler receives (Update, Context), while the real
+    # source URL lives in context.user_data["video_url"]. Inspect only the
+    # standard user_data container; never infer URLs from arbitrary attributes.
+    if source_url is None:
+        for value in args:
+            user_data = getattr(value, "user_data", None)
+            if not isinstance(user_data, dict):
+                continue
+            for key in ("video_url", "source_url", "url", "media_url"):
+                candidate = user_data.get(key)
+                if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                    source_url = candidate
+                    break
+            if source_url is not None:
+                break
+
+    # Fall back to any positional URL. This supports download helper signatures
     # whose first argument is the source URL rather than Telegram Update/Context.
     if source_url is None:
         for value in args:
