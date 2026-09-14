@@ -92,14 +92,15 @@ def main() -> None:
         install_smart_media_bridge(bot_module)
         if callable(legacy_probe):
             bot_module._alibot_legacy_extractor_probe = legacy_probe
-        # Shadow observation is deliberately outside the existing bridge. It
-        # reads only persisted paired evidence and records a hypothetical
-        # decision; it cannot alter resolver order or create network traffic.
-        install_shadow_runtime_observer(bot_module)
-        # The adaptive layer is deliberately outermost around candidate
-        # extraction. It only reorders already-discovered candidates and cannot
-        # bypass validation, download guards, or provider-specific controls.
+        # The adaptive layer applies ordering BEFORE observation. It only
+        # reorders already-discovered candidates and cannot bypass validation.
         install_adaptive_orchestrator(bot_module)
+        # Shadow observation is deliberately the outermost wrapper around
+        # candidate extraction. It reads only persisted paired evidence, records
+        # shadow decisions, and schedules background evidence collection. By
+        # being outermost, its finally block guarantees _observe() runs after
+        # Adaptive has completed and returned its result.
+        install_shadow_runtime_observer(bot_module)
         install_telegram_media_retry()
 
         original_run_polling = Application.run_polling
@@ -163,3 +164,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
