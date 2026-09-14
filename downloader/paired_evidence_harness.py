@@ -4,7 +4,12 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import sys
 import time
+
+APP_ROOT = "/app"
+if APP_ROOT not in sys.path:
+    sys.path.insert(0, APP_ROOT)
 
 TEST_URLS = ("https://www.youtube.com/watch?v=dQw4w9WgXcQ",)
 
