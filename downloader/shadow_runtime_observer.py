@@ -5,13 +5,10 @@ serve a request. Paired evidence is collected at the real download-request
 boundary, after the user's download operation completes, so successful primary
 paths are included as well as fallback paths.
 """
-
 from __future__ import annotations
-
 import asyncio
 import inspect
 from typing import Any
-
 from .resolver_evidence import ResolverEvidenceStore
 from .resolver_shadow_decision import ResolverShadowDecisionStore, evaluate_shadow
 from .resolver_statistical_validation import validate_resolver_set
@@ -19,16 +16,13 @@ from .resolver_statistical_validation import validate_resolver_set
 _ELIGIBLE_ORDER = ("legacy_extractor", "smart_media", "browser_media", "cobalt")
 _PAIRED_PROBE_ORDER = _ELIGIBLE_ORDER
 
-
 def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
     value = kwargs.get("url")
     if value is None and args:
         value = args[0]
     return value if isinstance(value, str) else None
 
-
 def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str | None, str]:
-    """Extract the real source URL from download_media(Update, Context) or helper signatures."""
     source_url = None
     media_kind = "unknown"
     for key in ("url", "source_url", "video_url", "media_url"):
@@ -37,13 +31,13 @@ def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str
             source_url = value
             break
     if source_url is None and len(args) >= 2:
-        context = args[1]
-        user_data = getattr(context, "user_data", None)
+        user_data = getattr(args[1], "user_data", None)
         if isinstance(user_data, dict):
             for key in ("video_url", "url", "source_url", "media_url"):
                 value = user_data.get(key)
                 if isinstance(value, str) and value.startswith(("http://", "https://")):
                     source_url = value
+                    media_kind = "video"
                     break
             if user_data.get("is_audio") is True:
                 media_kind = "audio"
@@ -59,9 +53,7 @@ def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str
             break
     return source_url, media_kind
 
-
 def _build_paired_probes(bot_module):
-    """Build isolated probes using explicit resolver callables only."""
     try:
         legacy_resolver = getattr(bot_module, "_alibot_legacy_extractor_probe", None)
         resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
@@ -73,111 +65,76 @@ def _build_paired_probes(bot_module):
     if callable(legacy_resolver):
         async def legacy_extractor(source_url: str):
             result = legacy_resolver(source_url)
-            if inspect.isawaitable(result):
-                result = await result
+            if inspect.isawaitable(result): result = await result
             return result
         probes["legacy_extractor"] = legacy_extractor
     async def smart_media(source_url: str):
         result = resolver.resolve(source_url, validator=bot_module.validate_public_http_url, request_factory=bot_module.Request, open_function=bot_module.safe_urlopen, read_function=bot_module.read_limited, source_url=source_url, media_kind="unknown")
-        if inspect.isawaitable(result):
-            result = await result
+        if inspect.isawaitable(result): result = await result
         return result
     async def browser_media(source_url: str):
         result = browser_resolver.resolve(source_url, validator=bot_module.validate_public_http_url, source_url=source_url, media_kind="iframe")
-        if inspect.isawaitable(result):
-            result = await result
+        if inspect.isawaitable(result): result = await result
         return result
     async def cobalt(source_url: str):
         result = cobalt_resolver.resolve(source_url, source_url=source_url, media_kind="unknown")
-        if inspect.isawaitable(result):
-            result = await result
+        if inspect.isawaitable(result): result = await result
         return result
     probes.update({"smart_media": smart_media, "browser_media": browser_media, "cobalt": cobalt})
     return probes
 
-
 def install(bot_module) -> None:
-    """Install extraction shadow observation and staging evidence collection."""
     original_extractor = getattr(bot_module, "extract_direct_media_urls", None)
-    if not callable(original_extractor) or getattr(original_extractor, "_shadow_runtime_observer", False):
-        return
+    if not callable(original_extractor) or getattr(original_extractor, "_shadow_runtime_observer", False): return
     evidence = ResolverEvidenceStore()
     decisions = ResolverShadowDecisionStore(evidence.db_path)
-
     def _schedule_paired_collection(url: str, platform: str, media_kind: str) -> None:
         try:
             from .paired_evidence_collector import collect, enabled, sample_rate
-            if not enabled():
-                return
+            if not enabled(): return
             probes = _build_paired_probes(bot_module)
             if len(probes) < 2:
-                print("⚠️ Paired Evidence Collector: fewer than 2 resolver probes available.", flush=True)
-                return
+                print("⚠️ Paired Evidence Collector: fewer than 2 resolver probes available.", flush=True); return
             print(f"🧪 Paired Evidence Collector: scheduling real request platform={platform} media_kind={media_kind} rate={sample_rate():.3f}", flush=True)
             task = asyncio.create_task(collect(evidence, sample_id=None, platform=platform, media_kind=media_kind, source_url=url, resolvers={name: probes[name] for name in _PAIRED_PROBE_ORDER if name in probes}))
             def _report_collection(completed):
-                if completed.cancelled():
-                    print("⚠️ Paired Evidence Collector: task cancelled.", flush=True)
-                    return
-                try:
-                    print(f"🧪 Paired Evidence Collector: task finished stored={completed.result()}", flush=True)
-                except Exception as exc:
-                    print(f"⚠️ Paired Evidence Collector: task failed {type(exc).__name__}.", flush=True)
+                if completed.cancelled(): print("⚠️ Paired Evidence Collector: task cancelled.", flush=True); return
+                try: print(f"🧪 Paired Evidence Collector: task finished stored={completed.result()}", flush=True)
+                except Exception as exc: print(f"⚠️ Paired Evidence Collector: task failed {type(exc).__name__}.", flush=True)
             task.add_done_callback(_report_collection)
         except Exception as exc:
             print(f"⚠️ Paired Evidence Collector: scheduling skipped {type(exc).__name__}.", flush=True)
-
     def _observe(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
         try:
             url = _source_url(args, kwargs)
-            if not url:
-                return
+            if not url: return
             from .smart_media_bridge import _resolver_context
             platform, media_kind = _resolver_context(url, "unknown")
             validations = validate_resolver_set(evidence, _ELIGIBLE_ORDER, platform=platform, media_kind=media_kind)
             decision = evaluate_shadow(_ELIGIBLE_ORDER, validations, platform=platform, media_kind=media_kind)
             decisions.record(decision)
-        except Exception:
-            return
-
+        except Exception: return
     async def observed(*args, **kwargs):
-        try:
-            result = original_extractor(*args, **kwargs)
-        except Exception:
-            _observe(args, kwargs)
-            raise
+        try: result = original_extractor(*args, **kwargs)
+        except Exception: _observe(args, kwargs); raise
         if inspect.isawaitable(result):
-            try:
-                result = await result
-            finally:
-                _observe(args, kwargs)
-        else:
-            _observe(args, kwargs)
+            try: result = await result
+            finally: _observe(args, kwargs)
+        else: _observe(args, kwargs)
         return result
-
     observed._shadow_runtime_observer = True
     bot_module.extract_direct_media_urls = observed
     print("🧪 Resolver Shadow Runtime Observer: ENABLED (fail-open, no resolver changes)", flush=True)
-
-    # The real user download boundary is download_media(Update, Context).
-    # Primary yt-dlp downloads do not call download_with_fallback(), so observing
-    # only the fallback helper misses most real traffic. Observe download_media
-    # first and use the fallback only when that boundary is unavailable.
-    download_hook_name = None
     original_download = getattr(bot_module, "download_media", None)
-    if callable(original_download):
-        download_hook_name = "download_media"
-    else:
+    download_hook_name = "download_media" if callable(original_download) else None
+    if not callable(original_download):
         original_download = getattr(bot_module, "download_with_fallback", None)
-        if callable(original_download):
-            download_hook_name = "download_with_fallback"
-
+        download_hook_name = "download_with_fallback" if callable(original_download) else None
     if callable(original_download) and not getattr(original_download, "_paired_evidence_request_observer", False):
         async def observed_download(*args, **kwargs):
             try:
                 result = original_download(*args, **kwargs)
-                if inspect.isawaitable(result):
-                    return await result
+                if inspect.isawaitable(result): return await result
                 return result
             finally:
                 try:
@@ -195,6 +152,5 @@ def install(bot_module) -> None:
         print(f"🧪 Paired Evidence Collector: observing {download_hook_name} (post-request, fail-open)", flush=True)
     else:
         print("⚠️ Paired Evidence Collector: no concrete download boundary found during install.", flush=True)
-
 
 __all__ = ["install"]
