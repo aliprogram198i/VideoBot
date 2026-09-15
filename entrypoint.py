@@ -58,6 +58,7 @@ def main() -> None:
         register_features = importlib.import_module("plugins.recovered_features").register_recovered_features
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
         register_user_features = importlib.import_module("plugins.user_features").register_user_features
+        register_user_location = importlib.import_module("plugins.user_location").register_user_location
         install_shhaiid4u_resolver = importlib.import_module("downloader.shhaiid4u_resolver").install
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
@@ -100,6 +101,7 @@ def main() -> None:
                 register_user_activity(self, bot_module)
                 register_smart_search_pro(self, bot_module)
                 register_user_features(self, bot_module)
+                register_user_location(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 register_whatsapp_audio(self, bot_module)
 
