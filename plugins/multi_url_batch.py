@@ -145,7 +145,10 @@ def install(bot_module) -> None:
             return await original_message(single_update, context)
 
         context.user_data["video_urls"] = valid
-        context.user_data.pop("video_url", None)
+        # Keep the first URL active while the existing type/quality callback
+        # flow runs. Those callbacks validate video_url before download_media
+        # is reached; removing it here makes a fresh batch look expired.
+        context.user_data["video_url"] = valid[0]
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
