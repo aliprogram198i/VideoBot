@@ -48,7 +48,6 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                         GROUP BY platform, media_kind
                         ORDER BY platform, media_kind
                     """).fetchall()
-                    contexts = [(row[0], row[1]) for row in context_counts]
 
                 print(
                     f"📈 Paired Evidence Monitor: rows={total_rows} samples={distinct_samples} "
@@ -79,11 +78,21 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                             if int(item["paired_samples"]) >= 30
                             and (int(item["a_only"]) + int(item["b_only"])) >= 10
                         )
+                        pair_details = ";".join(
+                            f"{item['resolver_a']}>{item['resolver_b']}:n={item['paired_samples']},"
+                            f"d={float(item['success_rate_delta']):.3f},"
+                            f"disc={int(item['a_only']) + int(item['b_only'])},"
+                            f"p={float(item['mcnemar_p_value']):.4f},"
+                            f"lo={float(item['delta_lower_95']):.3f},"
+                            f"adv={'1' if item['validated_advantage'] else '0'}"
+                            for item in validations
+                        )
                         validation_summary.append(
                             f"{platform}/{media_kind}:samples={sample_count} "
                             f"pairs={len(validations)} discordant_max={max_discordant} "
                             f"gate_ready_pairs={qualifying_pairs} "
-                            f"validated={'yes' if validated else 'no'}"
+                            f"validated={'yes' if validated else 'no'} "
+                            f"details=[{pair_details}]"
                         )
                     if validation_summary:
                         print(
@@ -91,9 +100,13 @@ async def run_periodic(db_path: str | Path, *, interval_seconds: int = 60) -> No
                             flush=True,
                         )
                     last_signature = signature
-        except Exception:
-            # Monitoring must never affect the downloader runtime.
-            pass
+        except Exception as exc:
+            # Monitoring must never affect the downloader runtime; surface only
+            # the exception type so diagnostics cannot leak URLs or credentials.
+            print(
+                f"⚠️ Paired Evidence Monitor: validation diagnostics skipped ({type(exc).__name__})",
+                flush=True,
+            )
         await asyncio.sleep(max(30, int(interval_seconds)))
 
 
