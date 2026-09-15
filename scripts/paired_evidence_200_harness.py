@@ -13,9 +13,16 @@ import importlib
 import os
 import random
 import re
+import sys
 import time
 import urllib.request
 from pathlib import Path
+
+# When Python executes ``scripts/foo.py``, sys.path[0] is /app/scripts.
+# The production modules (including bot.py) live one directory above it.
+APP_ROOT = Path(__file__).resolve().parents[1]
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 SOURCE = "https://raw.githubusercontent.com/aliprogram198i/VideoBot/test/resolver-200-url-validation/tests/manual_resolver_200_urls.py"
 DB_PATH = Path(os.getenv("ALIBOT_EVIDENCE_HARNESS_DB", "/app/data/paired_evidence_harness.db"))
