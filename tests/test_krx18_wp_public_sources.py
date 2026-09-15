@@ -26,3 +26,16 @@ def test_plain_url_requires_nearby_server_marker():
     assert extract_server_targets(html, 'https://krx18.com/movies/84170-test/') == [
         'https://playkrx18.site/watch/84170'
     ]
+
+
+def test_nested_markup_server_marker_stays_bounded():
+    html = '''
+    <div class="sources">
+      <span>Server 1</span>
+      <span><a href="https://playkrx18.site/watch/84170">Watch</a></span>
+      <script>const unrelated = "https://ads.example/bad.mp4";</script>
+    </div>
+    '''
+    assert extract_server_targets(html, 'https://krx18.com/movies/84170-test/') == [
+        'https://playkrx18.site/watch/84170'
+    ]
