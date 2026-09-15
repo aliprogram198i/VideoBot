@@ -103,7 +103,7 @@ def _remove_legacy_admin_handlers(app: Any) -> tuple[int, int]:
 
 
 def _register_core_callback(app, callback, pattern: str, get_db, owner_id: int, group: int = -100) -> None:
-    app.add_handler(CallbackQueryHandler(lambda u, c: callback(u, c, get_db, owner_id), pattern=pattern, group=group))
+    app.add_handler(CallbackQueryHandler(lambda u, c: callback(u, c, get_db, owner_id), pattern=pattern), group=group)
 
 
 async def _clear_cancel(update, context, get_db, owner_id: int) -> None:
