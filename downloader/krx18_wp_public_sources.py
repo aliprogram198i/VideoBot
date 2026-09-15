@@ -73,6 +73,18 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
         for href in re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I):
             _add_target(ranked, href, base_url, 120)
 
+    # Bounded nested-markup fallback: an absolute URL is accepted only when a
+    # Server N marker occurs nearby. This preserves explicit source evidence
+    # without turning unrelated page assets into first-hop targets.
+    for value in URL_RE.findall(source_html):
+        target = value.rstrip(".,;)]}")
+        if DIRECT_MEDIA_RE.search(target):
+            continue
+        pos = source_html.find(value)
+        nearby = source_html[max(0, pos - 700):pos + len(value) + 250]
+        if SERVER_RE.search(_clean_text(nearby)):
+            _add_target(ranked, target, base_url, 80)
+
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
     return [url for url, _ in ordered[:max_targets]]
 
@@ -95,6 +107,44 @@ def _extract_public_html(request_factory, open_function, read_function, source_u
     return title, extract_server_targets(text, source_url)
 
 
+def _rest_get(request_factory, open_function, read_function, endpoint: str, source_url: str, timeout: float, max_bytes: int):
+    request = request_factory(
+        endpoint,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; AliBot-KRX18/1.0)",
+            "Accept": "application/json",
+            "Referer": source_url,
+        },
+        method="GET",
+    )
+    with open_function(request, timeout=timeout, max_bytes=max_bytes) as response:
+        raw = read_function(response, max_bytes)
+    return json.loads(raw.decode("utf-8", "replace"))
+
+
+def _rest_candidate_types(request_factory, open_function, read_function, source_url: str, timeout: float, max_bytes: int) -> list[str]:
+    """Discover movie-like public REST post types without guessing endpoints."""
+    endpoint = "https://krx18.com/wp-json/wp/v2/types?_fields=slug,rest_base"
+    try:
+        data = _rest_get(request_factory, open_function, read_function, endpoint, source_url, timeout, max_bytes)
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    ranked = []
+    for value in data.values():
+        if not isinstance(value, dict):
+            continue
+        rest_base = str(value.get("rest_base") or "").strip().strip("/")
+        slug = str(value.get("slug") or "").casefold()
+        base_lower = rest_base.casefold()
+        if not rest_base:
+            continue
+        if any(token in slug or token in base_lower for token in ("movie", "film", "video")):
+            ranked.append(rest_base)
+    return list(dict.fromkeys(ranked))[:4]
+
+
 def fetch_public_post(
     source_url: str,
     *,
@@ -106,34 +156,28 @@ def fetch_public_post(
 ) -> tuple[str, list[str]]:
     """Fetch bounded public KRX18 data and extract explicit server targets.
 
-    WordPress REST is preferred because it is structured. If it is unavailable,
-    the same requested public movie page is fetched directly with the same
-    bounded network policy. This is not an access-control bypass.
+    WordPress REST is preferred because it is structured. The resolver first
+    discovers public movie-like REST types, then falls back to the conventional
+    posts endpoint and finally the same requested public movie page. All paths
+    are bounded and fail closed; no challenge/authentication bypass is used.
     """
     post_id = post_id_from_url(source_url)
     if post_id:
-        endpoint = f"https://krx18.com/wp-json/wp/v2/posts/{post_id}?_fields=id,title,content,link"
-        request = request_factory(
-            endpoint,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; AliBot-KRX18/1.0)",
-                "Accept": "application/json",
-                "Referer": source_url,
-            },
-            method="GET",
-        )
-        try:
-            with open_function(request, timeout=timeout, max_bytes=max_bytes) as response:
-                raw = read_function(response, max_bytes)
-            data = json.loads(raw.decode("utf-8", "replace"))
-            if isinstance(data, dict):
-                title = _clean_text(str(data.get("title", {}).get("rendered", "")))
-                content = str(data.get("content", {}).get("rendered", ""))
-                targets = extract_server_targets(content, source_url)
-                if targets:
-                    return title, targets
-        except Exception:
-            pass
+        endpoints = []
+        for rest_base in _rest_candidate_types(request_factory, open_function, read_function, source_url, timeout, max_bytes):
+            endpoints.append(f"https://krx18.com/wp-json/wp/v2/{rest_base}/{post_id}?_fields=id,title,content,link")
+        endpoints.append(f"https://krx18.com/wp-json/wp/v2/posts/{post_id}?_fields=id,title,content,link")
+        for endpoint in endpoints[:5]:
+            try:
+                data = _rest_get(request_factory, open_function, read_function, endpoint, source_url, timeout, max_bytes)
+                if isinstance(data, dict):
+                    title = _clean_text(str(data.get("title", {}).get("rendered", "")))
+                    content = str(data.get("content", {}).get("rendered", ""))
+                    targets = extract_server_targets(content, source_url)
+                    if targets:
+                        return title, targets
+            except Exception:
+                continue
 
     try:
         return _extract_public_html(request_factory, open_function, read_function, source_url, timeout, max_bytes)
