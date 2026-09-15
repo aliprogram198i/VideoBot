@@ -13,7 +13,8 @@ from urllib.parse import quote_plus, urljoin, urlparse
 
 SERVER_RE = re.compile(r"(?:server|سيرفر)\s*[-_ ]?\d+", re.I)
 URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
-TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div|li|span)[^>]*?(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
+TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
+OPEN_TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button)\b(?P<attrs>[^>]*)>", re.I | re.S)
 ATTR_RE = re.compile(r"(?:href|src|data-server|data-player|data-download|data-url|data-href|onclick)\s*=\s*[\"']([^\"']+)[\"']", re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 DIRECT_MEDIA_RE = re.compile(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", re.I)
@@ -37,10 +38,19 @@ def _clean_text(value: str) -> str:
 
 def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: int) -> None:
     target = html.unescape(str(raw_target or "")).strip()
-    if not target or target.lower().startswith(("javascript:", "#", "mailto:")):
+    if not target:
+        return
+    for candidate in URL_RE.findall(target):
+        candidate = candidate.rstrip(".,;)]}")
+        parsed = urlparse(candidate)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+        if DIRECT_MEDIA_RE.search(parsed.path) or DIRECT_MEDIA_RE.search(parsed.query):
+            continue
+        ranked[candidate] = max(score, ranked.get(candidate, 0))
+    if target.lower().startswith(("javascript:", "#", "mailto:")):
         return
     target = urljoin(base_url, target)
-    target = target.rstrip(".,;)]}")
     parsed = urlparse(target)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return
@@ -49,11 +59,34 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
     ranked[target] = max(score, ranked.get(target, 0))
 
 
+def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[str, int]) -> None:
+    for match in OPEN_TAG_RE.finditer(segment):
+        attrs = match.group("attrs") or ""
+        for raw in ATTR_RE.findall(attrs):
+            lower = raw.casefold()
+            score = 120
+            if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
+                score += 20
+            _add_target(ranked, raw, base_url, score)
+
+
 def extract_server_targets(rendered_html: str, base_url: str, max_targets: int = 3) -> list[str]:
-    """Extract only explicit Server N links/attributes from public content."""
+    """Extract only explicit Server N player/source targets from public content."""
     ranked: dict[str, int] = {}
     source_html = html.unescape(rendered_html or "")
 
+    # Primary path: each Server N marker defines a bounded segment ending at
+    # the next Server N marker. Only real player/source tags are inspected;
+    # script text and generic nearby URLs are deliberately ignored.
+    markers = list(SERVER_RE.finditer(source_html))
+    for index, marker in enumerate(markers):
+        start = marker.start()
+        end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), start + 1800)
+        _extract_server_segment_targets(source_html[start:end], base_url, ranked)
+
+    # Secondary path: explicit server-labelled tags whose own text/attributes
+    # contain the marker. This covers compact HTML where the marker is inside
+    # the same button/anchor and is not isolated in a text node.
     for match in TAG_RE.finditer(source_html):
         attrs = match.group("attrs") or ""
         body = match.group("body") or ""
@@ -61,23 +94,7 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
         if not SERVER_RE.search(label):
             continue
         for raw in ATTR_RE.findall(attrs):
-            score = 115
-            lower = f"{label} {raw}".casefold()
-            if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
-                score += 20
-            _add_target(ranked, raw, base_url, score)
-        if "<" not in body and ">" not in body:
-            for raw in URL_RE.findall(body):
-                _add_target(ranked, raw, base_url, 100)
-
-    anchor_re = re.compile(r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>", re.I | re.S)
-    for match in anchor_re.finditer(source_html):
-        attrs = match.group("attrs") or ""
-        body = match.group("body") or ""
-        if not SERVER_RE.search(_clean_text(f"{attrs} {body}")):
-            continue
-        for href in re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I):
-            _add_target(ranked, href, base_url, 120)
+            _add_target(ranked, raw, base_url, 135)
 
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
     return [url for url, _ in ordered[:max_targets]]
