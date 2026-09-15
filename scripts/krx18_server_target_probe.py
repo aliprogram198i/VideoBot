@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Read-only KRX18 Server Target probe for one public movie URL.
-
-This diagnostic does not download media, bypass access controls, or modify
-production. It discovers the exact public WordPress Server target, then
-probes that target alone and reports what the public player exposes.
-"""
+"""Read-only KRX18 Server Target probe for one public movie URL."""
 from __future__ import annotations
 
 import html
 import json
 import re
-import sys
 import urllib.parse
 import urllib.request
 
@@ -18,57 +12,54 @@ SOURCE_URL = "https://krx18.com/movies/84170-femdom-deadly-thigh-squeeze-her-abs
 UA = "Mozilla/5.0 (compatible; AliBot-KRX18-Probe/1.0)"
 TIMEOUT = 10
 MAX_BYTES = 2 * 1024 * 1024
-MEDIA_RE = re.compile(r"https?://[^\\s\\\"'<>\\\\]+", re.I)
+MEDIA_RE = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
 
 
 def get(url: str, accept: str = "*/*") -> tuple[int, str, str]:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept, "Referer": SOURCE_URL})
     with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
-        data = response.read(MAX_BYTES + 1)
-        if len(data) > MAX_BYTES:
-            data = data[:MAX_BYTES]
+        data = response.read(MAX_BYTES + 1)[:MAX_BYTES]
         charset = response.headers.get_content_charset() or "utf-8"
         return response.status, response.geturl(), data.decode(charset, "replace")
 
 
 def clean(value: str) -> str:
-    return re.sub(r"\\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", value or ""))).strip()
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", value or ""))).strip()
 
 
-def server_targets(content: str, base: str) -> list[str]:
-    marker = re.compile(r"(?:server|سيرفر)\\s*[-_ ]?\\d+", re.I)
-    targets: list[str] = []
-    seen: set[str] = set()
+def server_targets(content: str) -> list[str]:
+    marker = re.compile(r"(?:server|سيرفر)\s*[-_ ]?\d+", re.I)
     source = html.unescape(content)
-    for m in marker.finditer(source):
-        end = min(len(source), m.start() + 1800)
-        segment = source[m.start():end]
+    for match in marker.finditer(source):
+        segment = source[match.start():min(len(source), match.start() + 1800)]
+        targets = []
+        seen = set()
         for raw in MEDIA_RE.findall(segment):
             target = raw.rstrip(".,;)]}")
-            p = urllib.parse.urlparse(target)
-            if p.scheme not in {"http", "https"} or not p.hostname:
+            parsed = urllib.parse.urlparse(target)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 continue
-            if re.search(r"\\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", target, re.I):
+            if re.search(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", target, re.I):
                 continue
             if target not in seen:
                 seen.add(target)
                 targets.append(target)
         if targets:
-            break
-    return targets[:3]
+            return targets[:3]
+    return []
 
 
 def main() -> int:
     print(f"SOURCE={SOURCE_URL}")
     parsed = urllib.parse.urlparse(SOURCE_URL)
-    movie_match = re.search(r"/movies/(\\d+)-([^/]+)/?$", parsed.path, re.I)
+    movie_match = re.search(r"/movies/(\d+)-([^/]+)/?$", parsed.path, re.I)
     movie_id = movie_match.group(1) if movie_match else ""
     slug = movie_match.group(2) if movie_match else ""
     query = urllib.parse.quote(slug.replace("-", " ")[:120])
     search_url = f"https://krx18.com/wp-json/wp/v2/search?search={query}&per_page=10&_fields=id,type,subtype,url,title"
     print(f"WP_SEARCH={search_url}")
     try:
-        status, final_url, raw = get(search_url, "application/json")
+        status, _, raw = get(search_url, "application/json")
         print(f"WP_SEARCH_STATUS={status}")
         data = json.loads(raw)
     except Exception as exc:
@@ -98,11 +89,11 @@ def main() -> int:
             rest_base = "posts" if item.get("type") == "post" else rest_base
         detail_url = f"https://krx18.com/wp-json/wp/v2/{rest_base}/{item.get('id')}?_fields=id,title,content,link"
         try:
-            status, final_url, raw = get(detail_url, "application/json")
+            status, _, raw = get(detail_url, "application/json")
             detail = json.loads(raw)
             title = clean(str(detail.get("title", {}).get("rendered", ""))) if isinstance(detail, dict) else ""
             content = str(detail.get("content", {}).get("rendered", "")) if isinstance(detail, dict) else ""
-            targets = server_targets(content, SOURCE_URL)
+            targets = server_targets(content)
             print(f"WP_DETAIL_STATUS={status}")
             print(f"WP_TITLE={title}")
             print(f"SERVER_TARGET_COUNT={len(targets)}")
@@ -115,9 +106,8 @@ def main() -> int:
                     media = []
                     for value in MEDIA_RE.findall(html.unescape(t_body).replace("\\/", "/")):
                         value = value.rstrip(".,;)]}")
-                        if re.search(r"(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)", value, re.I):
-                            if value not in media:
-                                media.append(value)
+                        if re.search(r"(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)", value, re.I) and value not in media:
+                            media.append(value)
                     print(f"TARGET_{index}_STATUS={t_status}")
                     print(f"TARGET_{index}_FINAL_URL={t_final}")
                     print(f"TARGET_{index}_TITLE={page_title}")
