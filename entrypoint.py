@@ -69,6 +69,7 @@ def main() -> None:
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
+        install_multi_url_batch = importlib.import_module("plugins.multi_url_batch").install
 
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
@@ -87,6 +88,7 @@ def main() -> None:
         # extraction. It only reorders already-discovered candidates and cannot
         # bypass validation, download guards, or provider-specific controls.
         install_adaptive_orchestrator(bot_module)
+        install_multi_url_batch(bot_module)
         install_telegram_media_retry()
 
         original_run_polling = Application.run_polling
