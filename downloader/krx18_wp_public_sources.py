@@ -83,27 +83,6 @@ def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[st
         _add_target(ranked, raw, base_url, 90)
 
 
-def _extract_enclosing_server_tag(source_html: str, marker_start: int, base_url: str, ranked: dict[str, int]) -> None:
-    before = source_html[:marker_start]
-    candidates = list(OPEN_TAG_RE.finditer(before))
-    for match in reversed(candidates[-12:]):
-        attrs = match.group("attrs") or ""
-        tag = (match.group("tag") or "").lower()
-        if not attrs and tag == "div":
-            continue
-        close_match = re.search(rf"</{re.escape(tag)}\s*>", source_html[marker_start:], re.I)
-        if not close_match:
-            continue
-        close_start = marker_start + close_match.start()
-        if not (match.start() < marker_start < close_start):
-            continue
-        before_count = len(ranked)
-        for _, raw in ATTR_RE.findall(attrs):
-            _add_target(ranked, raw, base_url, 135)
-        if len(ranked) > before_count:
-            return
-
-
 def extract_server_targets(rendered_html: str, base_url: str, max_targets: int = 3) -> list[str]:
     """Extract only explicit Server N player/source targets from public content."""
     ranked: dict[str, int] = {}
@@ -111,10 +90,8 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
     markers = list(SERVER_RE.finditer(source_html))
     for index, marker in enumerate(markers):
         local_ranked: dict[str, int] = {}
-        _extract_enclosing_server_tag(source_html, marker.start(), base_url, local_ranked)
-        if not local_ranked:
-            end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), marker.start() + 1800)
-            _extract_server_segment_targets(source_html[marker.start():end], base_url, local_ranked)
+        end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), marker.start() + 1800)
+        _extract_server_segment_targets(source_html[marker.start():end], base_url, local_ranked)
         for target, score in local_ranked.items():
             ranked[target] = max(score, ranked.get(target, 0))
 
