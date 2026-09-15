@@ -48,9 +48,6 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
     ranked: dict[str, int] = {}
     source_html = html.unescape(rendered_html or "")
 
-    # Prefer elements whose visible label or attributes explicitly identify a
-    # server/player. This handles themes that use buttons, data-* attributes,
-    # onclick handlers, or relative URLs instead of ordinary <a href> links.
     for match in TAG_RE.finditer(source_html):
         attrs = match.group("attrs") or ""
         body = match.group("body") or ""
@@ -63,11 +60,10 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
             _add_target(ranked, raw, base_url, score)
-        for raw in URL_RE.findall(body):
-            _add_target(ranked, raw, base_url, 100)
+        if "<" not in body and ">" not in body:
+            for raw in URL_RE.findall(body):
+                _add_target(ranked, raw, base_url, 100)
 
-    # Also inspect anchors even when their server label is supplied by a nested
-    # element rather than the anchor's direct text.
     anchor_re = re.compile(r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>", re.I | re.S)
     for match in anchor_re.finditer(source_html):
         attrs = match.group("attrs") or ""
@@ -76,18 +72,6 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
             continue
         for href in re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I):
             _add_target(ranked, href, base_url, 120)
-
-    # Last bounded fallback: an absolute URL is accepted only when a Server N
-    # marker occurs nearby, and never when that URL is already a direct media
-    # asset. This prevents unrelated ads/assets from becoming first-hop targets.
-    for value in URL_RE.findall(source_html):
-        target = value.rstrip(".,;)]}")
-        if DIRECT_MEDIA_RE.search(target):
-            continue
-        pos = source_html.find(value)
-        nearby = source_html[max(0, pos - 700):pos + len(value) + 250]
-        if SERVER_RE.search(_clean_text(nearby)):
-            _add_target(ranked, target, base_url, 80)
 
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
     return [url for url, _ in ordered[:max_targets]]

@@ -22,6 +22,8 @@ from .krx18_wp_public_sources import fetch_public_post
 NON_SOURCE_HOSTS = {
     "onclckbn.net",
     "cdn.jsdelivr.net",
+    "vcmdiawe.com",
+    "bkcdn.net",
 }
 
 MEDIA_MARKERS = (".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts")
@@ -148,7 +150,8 @@ def _movie_identity(source_url: str, title: str = "") -> tuple[str | None, set[s
 def identity_score(source_url: str, evidence_text: str, evidence_url: str = "", source_title: str = "") -> int:
     """Score only positive public identity evidence; no evidence means reject."""
     movie_id, tokens = _movie_identity(source_url, source_title)
-    haystack = unquote(f"{evidence_text} {evidence_url}").casefold()
+    raw_haystack = unquote(f"{evidence_text} {evidence_url}").casefold()
+    haystack = re.sub(r"\s+", " ", raw_haystack).strip()
     score = 0
     if movie_id and movie_id in haystack:
         score += 100
@@ -160,6 +163,9 @@ def identity_score(source_url: str, evidence_text: str, evidence_url: str = "", 
         score += 40
     elif overlap == 1:
         score += 15
+    normalized_title = re.sub(r"\s+", " ", unquote(source_title or "")).strip().casefold()
+    if len(normalized_title) >= 8 and normalized_title not in {"krx18", "krx18.com"} and normalized_title in haystack:
+        score += 50
     return score
 
 
@@ -226,8 +232,8 @@ async def _collect_public_media(page, validator, candidates: dict[str, tuple[int
         body = await page.locator("body").inner_text(timeout=1200)
     except Exception:
         body = ""
-    evidence = f"{title}\n{body[:12000]}"
-    score_identity = identity_score(source_url, evidence, page.url, source_title)
+    evidence = f"{title}\n{body[:12000]}\n{trusted_target}"
+    score_identity = identity_score(source_url, evidence, f"{page.url} {trusted_target}", source_title)
     if score_identity < 40:
         return
 
@@ -275,7 +281,8 @@ async def _collect_public_media(page, validator, candidates: dict[str, tuple[int
             frame_text = await frame.locator("body").inner_text(timeout=800)
         except Exception:
             frame_text = ""
-        frame_score = identity_score(source_url, f"{frame_title}\n{frame_text[:8000]}", frame.url, source_title)
+        frame_evidence = f"{frame_title}\n{frame_text[:8000]}\n{trusted_target}"
+        frame_score = identity_score(source_url, frame_evidence, f"{frame.url} {trusted_target}", source_title)
         if frame_score < 40:
             continue
         try:
