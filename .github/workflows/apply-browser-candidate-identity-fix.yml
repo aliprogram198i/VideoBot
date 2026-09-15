@@ -1,0 +1,73 @@
+name: Apply browser candidate identity fix
+
+on:
+  push:
+    branches:
+      - fix/browser-candidate-identity-large-media-2026-09-15
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: fix/browser-candidate-identity-large-media-2026-09-15
+
+      - name: Patch Smart Media Bridge
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('downloader/smart_media_bridge.py')
+          s = p.read_text()
+
+          old = '''import time\nfrom urllib.parse import urlparse\n\nSHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024\n'''
+          new = '''import time\nfrom urllib.parse import urlparse\n\nSHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024\nGENERIC_MAX_VIDEO_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024\nMOVIE_MIN_VIDEO_BYTES = 5 * 1024 * 1024\nMOVIE_MIN_VIDEO_DURATION = 60.0\n'''
+          if old not in s:
+              raise SystemExit('import/constants anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    telemetry_module = __import__("downloader.resolver_outcome_telemetry", fromlist=["ResolverOutcomeTelemetry"])\n    telemetry = telemetry_module.ResolverOutcomeTelemetry()\n    browser_candidate_cache = {}\n'''
+          new = '''    telemetry_module = __import__("downloader.resolver_outcome_telemetry", fromlist=["ResolverOutcomeTelemetry"])\n    telemetry = telemetry_module.ResolverOutcomeTelemetry()\n    movie_guard = __import__("downloader.movie_source_guard", fromlist=["should_guard", "is_ad_host", "assess_local_media"])\n    browser_candidate_cache = {}\n'''
+          if old not in s:
+              raise SystemExit('movie guard import anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    def _candidate_from_value(value):\n        if isinstance(value, str) and value.startswith(("http://", "https://")):\n            return value\n        return None\n\n    def _queue_candidates(source_url, values):\n'''
+          new = '''    def _candidate_from_value(value):\n        if isinstance(value, str) and value.startswith(("http://", "https://")):\n            return value\n        return None\n\n    def _post_handoff_gate(path, source_url, candidate_url, is_audio):\n        if not path or is_audio:\n            return True\n        try:\n            if movie_guard.is_ad_host(candidate_url):\n                print("🛡️ Browser candidate gate: rejected advertising host", flush=True)\n                os.remove(path)\n                return False\n        except Exception:\n            pass\n        try:\n            if movie_guard.should_guard(source_url, is_audio=False):\n                gate = movie_guard.assess_local_media(\n                    path,\n                    source_url,\n                    candidate_url=candidate_url,\n                    is_audio=False,\n                    min_bytes=MOVIE_MIN_VIDEO_BYTES,\n                    min_duration=MOVIE_MIN_VIDEO_DURATION,\n                )\n                if not gate.accepted:\n                    print(\n                        f"🛡️ Browser candidate gate: rejected media ({gate.reason})",\n                        flush=True,\n                    )\n                    try:\n                        os.remove(path)\n                    except OSError:\n                        pass\n                    return False\n                print(\n                    f"🛡️ Browser candidate gate: accepted verified media "\n                    f"({gate.duration_seconds:.1f}s, {gate.size_bytes} bytes)",\n                    flush=True,\n                )\n        except Exception as exc:\n            print(\n                f"⚠️ Browser candidate gate failed closed ({type(exc).__name__})",\n                flush=True,\n            )\n            try:\n                os.remove(path)\n            except OSError:\n                pass\n            return False\n        return True\n\n    def _queue_candidates(source_url, values):\n'''
+          if old not in s:
+              raise SystemExit('gate helper anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''            max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)\n            if is_shahid4u and not is_audio:\n                max_bytes = max(max_bytes, SHAHID4U_MAX_HANDOFF_BYTES)\n'''
+          new = '''            max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)\n            if not is_audio:\n                # The local file is delivered through the existing Telegram splitter.\n                # Do not cap browser acquisition at Telegram's per-file limit, or a\n                # valid large source becomes unavailable and a smaller ad candidate\n                # can win instead. Keep the acquisition bound explicit at 2 GiB.\n                max_bytes = max(max_bytes, GENERIC_MAX_VIDEO_HANDOFF_BYTES)\n            if is_shahid4u and not is_audio:\n                max_bytes = max(max_bytes, SHAHID4U_MAX_HANDOFF_BYTES)\n'''
+          if old not in s:
+              raise SystemExit('max bytes anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''                if _is_local_file(local_path, temp_dir):\n                    try:\n                        size = os.path.getsize(local_path)\n                    except OSError:\n                        size = 0\n                    print(f"🌐 Browser Download Handoff: succeeded ({size} bytes)", flush=True)\n                    handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}\n                    handoff_diagnostics.update({"status": "browser_download_handoff_success", "handoff_candidate": candidate, "bytes_downloaded": size})\n                    return local_path, "Browser Download Handoff: saved local file", "", handoff_diagnostics\n'''
+          new = '''                if _is_local_file(local_path, temp_dir):\n                    try:\n                        size = os.path.getsize(local_path)\n                    except OSError:\n                        size = 0\n                    if not _post_handoff_gate(local_path, source_url, candidate, is_audio):\n                        print(\n                            f"🛡️ Browser Download Handoff: candidate rejected after download ({size} bytes); trying next candidate",\n                            flush=True,\n                        )\n                        continue\n                    print(f"🌐 Browser Download Handoff: succeeded ({size} bytes)", flush=True)\n                    handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}\n                    handoff_diagnostics.update({"status": "browser_download_handoff_success", "handoff_candidate": candidate, "bytes_downloaded": size})\n                    return local_path, "Browser Download Handoff: saved local file", "", handoff_diagnostics\n'''
+          if old not in s:
+              raise SystemExit('post gate anchor not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Validate Python
+        run: |
+          python -m py_compile downloader/smart_media_bridge.py downloader/movie_source_guard.py
+
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add downloader/smart_media_bridge.py
+          git commit -m "Prevent browser handoff from selecting ad media for large videos"
+          git rm .github/workflows/apply-browser-candidate-identity-fix.yml
+          git commit -m "Remove temporary browser candidate identity workflow"
+          git push origin HEAD:fix/browser-candidate-identity-large-media-2026-09-15
