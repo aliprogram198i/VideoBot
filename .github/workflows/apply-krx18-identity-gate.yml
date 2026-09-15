@@ -1,7 +1,7 @@
 name: apply-krx18-identity-gate
 on:
-  push:
-    paths: [.github/workflows/apply-krx18-identity-gate.yml]
+  pull_request_target:
+    types: [opened]
 permissions:
   contents: write
 jobs:
@@ -10,6 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: fix/krx18-candidate-identity-2026-09-15
           fetch-depth: 0
       - name: Patch resolver and tests
         run: |
