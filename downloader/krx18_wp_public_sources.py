@@ -13,8 +13,8 @@ from urllib.parse import quote_plus, urljoin, urlparse
 
 SERVER_RE = re.compile(r"(?:server|سيرفر)\s*[-_ ]?\d+", re.I)
 URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
-TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
-OPEN_TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button)\b(?P<attrs>[^>]*)>", re.I | re.S)
+TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
+OPEN_TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div)\b(?P<attrs>[^>]*)>", re.I | re.S)
 ATTR_RE = re.compile(r"(?:href|src|data-server|data-player|data-download|data-url|data-href|onclick)\s*=\s*[\"']([^\"']+)[\"']", re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 DIRECT_MEDIA_RE = re.compile(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", re.I)
@@ -40,14 +40,17 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
     target = html.unescape(str(raw_target or "")).strip()
     if not target:
         return
-    for candidate in URL_RE.findall(target):
-        candidate = candidate.rstrip(".,;)]}")
-        parsed = urlparse(candidate)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            continue
-        if DIRECT_MEDIA_RE.search(parsed.path) or DIRECT_MEDIA_RE.search(parsed.query):
-            continue
-        ranked[candidate] = max(score, ranked.get(candidate, 0))
+    urls = URL_RE.findall(target)
+    if urls:
+        for candidate in urls:
+            candidate = candidate.rstrip(".,;)]}")
+            parsed = urlparse(candidate)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                continue
+            if DIRECT_MEDIA_RE.search(parsed.path) or DIRECT_MEDIA_RE.search(parsed.query):
+                continue
+            ranked[candidate] = max(score, ranked.get(candidate, 0))
+        return
     if target.lower().startswith(("javascript:", "#", "mailto:")):
         return
     target = urljoin(base_url, target)
@@ -60,33 +63,41 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
 
 
 def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[str, int]) -> None:
-    for match in OPEN_TAG_RE.finditer(segment):
+    matches = list(OPEN_TAG_RE.finditer(segment))
+    for match in matches:
         attrs = match.group("attrs") or ""
+        if not attrs:
+            continue
         for raw in ATTR_RE.findall(attrs):
             lower = raw.casefold()
             score = 120
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
             _add_target(ranked, raw, base_url, score)
+        # Only the first explicit candidate tag belongs to this Server N
+        # marker. This prevents later advertising/unrelated links in the same
+        # container from being promoted as the server target.
+        if ranked:
+            return
+    for raw in URL_RE.findall(segment):
+        _add_target(ranked, raw, base_url, 90)
+        if ranked:
+            return
 
 
 def extract_server_targets(rendered_html: str, base_url: str, max_targets: int = 3) -> list[str]:
     """Extract only explicit Server N player/source targets from public content."""
     ranked: dict[str, int] = {}
     source_html = html.unescape(rendered_html or "")
-
-    # Primary path: each Server N marker defines a bounded segment ending at
-    # the next Server N marker. Only real player/source tags are inspected;
-    # script text and generic nearby URLs are deliberately ignored.
     markers = list(SERVER_RE.finditer(source_html))
     for index, marker in enumerate(markers):
         start = marker.start()
         end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), start + 1800)
+        before_count = len(ranked)
         _extract_server_segment_targets(source_html[start:end], base_url, ranked)
+        if len(ranked) == before_count:
+            continue
 
-    # Secondary path: explicit server-labelled tags whose own text/attributes
-    # contain the marker. This covers compact HTML where the marker is inside
-    # the same button/anchor and is not isolated in a text node.
     for match in TAG_RE.finditer(source_html):
         attrs = match.group("attrs") or ""
         body = match.group("body") or ""
@@ -235,7 +246,6 @@ def fetch_public_post(
 ) -> tuple[str, list[str]]:
     """Fetch bounded public KRX18 data and extract explicit server targets."""
     post_id = post_id_from_url(source_url)
-
     try:
         title, targets = _rest_search_post(
             request_factory, open_function, read_function,
