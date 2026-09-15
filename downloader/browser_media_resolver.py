@@ -273,14 +273,21 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
     return [item[0] for item in ranked[:max_candidates]]
 
 
-def resolve(url: str, *, validator, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_candidates: int = DEFAULT_MAX_CANDIDATES, max_pages: int = DEFAULT_MAX_PAGES) -> list[str]:
-    if not _browser_enabled(): return []
+async def resolve(url: str, *, validator, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_candidates: int = DEFAULT_MAX_CANDIDATES, max_pages: int = DEFAULT_MAX_PAGES) -> list[str]:
+    """Resolve browser media asynchronously so it can run inside the bot event loop."""
+    if not _browser_enabled():
+        return []
     try:
-        return asyncio.run(_resolve_async(url, validator=validator, timeout_ms=timeout_ms, settle_ms=settle_ms, max_candidates=max_candidates, max_pages=max_pages))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try: return loop.run_until_complete(_resolve_async(url, validator=validator, timeout_ms=timeout_ms, settle_ms=settle_ms, max_candidates=max_candidates, max_pages=max_pages))
-        finally: loop.close()
+        return await _resolve_async(
+            url,
+            validator=validator,
+            timeout_ms=timeout_ms,
+            settle_ms=settle_ms,
+            max_candidates=max_candidates,
+            max_pages=max_pages,
+        )
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         LOG.warning("Browser resolver failed: %s", type(exc).__name__)
         print(f"⚠️ Browser resolver failed: {type(exc).__name__}", flush=True)
