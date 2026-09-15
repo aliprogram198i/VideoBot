@@ -24,6 +24,15 @@ DEFAULT_MAX_PAGES = 6
 DEFAULT_MAX_NAV_TARGETS = 10
 DEFAULT_MAX_SERVER_CLICKS = 8
 
+# Hosts known to expose many server/player navigation targets. Keep the
+# browser fallback bounded for these hosts without changing the global budget.
+_FAST_NAV_HOSTS = {"krx18.com"}
+FAST_NAV_TIMEOUT_MS = 12_000
+FAST_NAV_SETTLE_MS = 800
+FAST_NAV_MAX_PAGES = 2
+FAST_NAV_MAX_TARGETS = 4
+FAST_NAV_MAX_CLICKS = 4
+
 _MEDIA_CONTENT_TYPES = (
     "video/", "audio/", "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml",
 )
@@ -76,9 +85,25 @@ def _navigation_score(text: str, href: str) -> int:
     score = sum(16 for word in _DOWNLOAD_WORDS if word.casefold() in value)
     score += sum(7 for word in _SERVER_WORDS if word.casefold() in value)
     if re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+", value): score += 12
-    if re.search(r"(?:2160|1440|1080|720|480|360)p", value): score += 14
+    if re.search(r"(?:2160|1440|1080|720|480|360|240)p", value): score += 14
     if any(token in value for token in ("embed", "iframe", "player")): score += 10
     return score
+
+
+def _browser_budget(url: str, timeout_ms: int, settle_ms: int, max_pages: int) -> tuple[int, int, int, int, int]:
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except Exception:
+        host = ""
+    if host in _FAST_NAV_HOSTS or any(host.endswith("." + suffix) for suffix in _FAST_NAV_HOSTS):
+        return (
+            min(timeout_ms, FAST_NAV_TIMEOUT_MS),
+            min(settle_ms, FAST_NAV_SETTLE_MS),
+            min(max_pages, FAST_NAV_MAX_PAGES),
+            FAST_NAV_MAX_TARGETS,
+            FAST_NAV_MAX_CLICKS,
+        )
+    return timeout_ms, settle_ms, max_pages, DEFAULT_MAX_NAV_TARGETS, DEFAULT_MAX_SERVER_CLICKS
 
 
 def _is_download_target(text: str, href: str) -> bool:
@@ -163,6 +188,9 @@ async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, s
 
 
 async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int, max_candidates: int, max_pages: int) -> list[str]:
+    timeout_ms, settle_ms, max_pages, max_nav_targets, max_server_clicks = _browser_budget(
+        url, timeout_ms, settle_ms, max_pages
+    )
     try:
         from playwright.async_api import async_playwright
     except Exception as exc:
@@ -235,14 +263,14 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
 
-                    targets = await _discover_navigation_targets(page, page_url, DEFAULT_MAX_NAV_TARGETS)
+                    targets = await _discover_navigation_targets(page, page_url, max_nav_targets)
                     for target in targets:
                         if target not in visited_pages and target not in queue: queue.append(target)
 
                     # Important: click download/server controls BEFORE leaving the page.
                     # Many hosts only expose the media through a browser download or
                     # a JS-generated player request after the explicit click.
-                    await _click_server_controls(page, DEFAULT_MAX_SERVER_CLICKS)
+                    await _click_server_controls(page, max_server_clicks)
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
 
@@ -251,7 +279,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                         frame_url = frame.url
                         if frame_url and frame_url != page_url and _is_http_url(frame_url) and frame_url not in visited_pages and frame_url not in frame_urls:
                             frame_urls.append(frame_url)
-                    for frame_url in frame_urls[:DEFAULT_MAX_NAV_TARGETS]:
+                    for frame_url in frame_urls[:max_nav_targets]:
                         if frame_url not in queue: queue.append(frame_url)
                 except Exception as exc:
                     LOG.debug("Browser page resolution failed: %s", type(exc).__name__)
