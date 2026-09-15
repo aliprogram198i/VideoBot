@@ -2,7 +2,7 @@
 
 Telegram does not expose a user's country in the normal User object. This module
 therefore only records a country after the user explicitly shares their location.
-No location is requested automatically.
+No location is requested automatically, and raw coordinates are not persisted.
 """
 
 from __future__ import annotations
@@ -17,24 +17,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from telegram import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import CommandHandler, ContextTypes, MessageHandler, filters
 
 logger = logging.getLogger(__name__)
 _GEOCODE_LOCK = asyncio.Lock()
 
 
 def ensure_location_schema(get_db) -> None:
-    """Add only the location fields; existing user/download data is untouched."""
+    """Add only country metadata fields; existing user/download data is untouched."""
     conn = get_db()
     try:
-        columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(users)").fetchall()
-        }
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         additions = {
             "country_code": "TEXT",
-            "location_latitude": "REAL",
-            "location_longitude": "REAL",
             "location_accuracy_m": "REAL",
             "location_updated_at": "TEXT",
             "country_source": "TEXT",
@@ -52,10 +47,10 @@ def _messages(language: str) -> dict[str, str]:
     return {
         "button": {"ar": "📍 تحديد البلد بدقة", "en": "📍 Set country accurately", "tr": "📍 Ülkeyi doğru belirle", "de": "📍 Land genau bestimmen"}[language],
         "prompt": {
-            "ar": "📍 <b>تحديد البلد بدقة</b>\n\nلمعرفة بلدك بدقة، شارك موقعك الحالي مع AliBot.\n\nسيتم استخدام الموقع لتحديد <b>الدولة فقط</b> ولن يتم عرض الإحداثيات في لوحة الإدارة.",
-            "en": "📍 <b>Accurate country</b>\n\nShare your current location with AliBot so we can determine your country accurately.\n\nOnly the <b>country</b> is used in the admin panel; raw coordinates are not displayed there.",
-            "tr": "📍 <b>Doğru ülke</b>\n\nÜlkenizi doğru belirlemek için mevcut konumunuzu AliBot ile paylaşın.\n\nYönetim panelinde yalnızca <b>ülke</b> kullanılır; ham koordinatlar gösterilmez.",
-            "de": "📍 <b>Genaues Land</b>\n\nTeilen Sie Ihren aktuellen Standort, damit AliBot Ihr Land genau bestimmen kann.\n\nIm Adminbereich wird nur das <b>Land</b> verwendet; Rohkoordinaten werden dort nicht angezeigt.",
+            "ar": "📍 <b>تحديد البلد بدقة</b>\n\nلمعرفة بلدك بدقة، شارك موقعك الحالي مع AliBot.\n\nسيتم استخدام الموقع لتحديد <b>الدولة فقط</b> ولن يتم حفظ إحداثيات موقعك.",
+            "en": "📍 <b>Accurate country</b>\n\nShare your current location with AliBot so we can determine your country accurately.\n\nOnly the <b>country</b> is stored; your raw coordinates are not saved.",
+            "tr": "📍 <b>Doğru ülke</b>\n\nÜlkenizi doğru belirlemek için mevcut konumunuzu AliBot ile paylaşın.\n\nYalnızca <b>ülke</b> kaydedilir; ham koordinatlarınız saklanmaz.",
+            "de": "📍 <b>Genaues Land</b>\n\nTeilen Sie Ihren aktuellen Standort, damit AliBot Ihr Land genau bestimmen kann.\n\nNur das <b>Land</b> wird gespeichert; Ihre Rohkoordinaten werden nicht gespeichert.",
         }[language],
         "success": {
             "ar": "✅ تم تحديد بلدك بدقة: <b>{country}</b>.",
@@ -133,11 +128,12 @@ async def _location_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     country, country_code = result
     ensure_location_schema(bot_module.get_db)
     now = datetime.now(timezone.utc).isoformat()
+    accuracy = float(location.horizontal_accuracy) if location.horizontal_accuracy is not None else None
     conn = bot_module.get_db()
     try:
         conn.execute(
-            "UPDATE users SET country = ?, country_code = ?, location_latitude = ?, location_longitude = ?, location_accuracy_m = ?, location_updated_at = ?, country_source = ? WHERE user_id = ?",
-            (country, country_code, float(location.latitude), float(location.longitude), float(location.horizontal_accuracy) if location.horizontal_accuracy is not None else None, now, "telegram_location", user.id),
+            "UPDATE users SET country = ?, country_code = ?, location_accuracy_m = ?, location_updated_at = ?, country_source = ? WHERE user_id = ?",
+            (country, country_code, accuracy, now, "telegram_location", user.id),
         )
         conn.commit()
     finally:
