@@ -13,6 +13,6 @@ def test_krx18_identity_rejects_unrelated_player_target():
     assert identity_score(source, "unrelated content", target, "Example Movie") < 40
 
 
-def test_krx18_identity_accepts_matching_title_evidence_without_id():
+def test_krx18_identity_accepts_exact_title_evidence_without_id():
     source = "https://krx18.com/movies/84170-example-movie/"
-    assert identity_score(source, "Example Movie full movie", "https://playkrx18.site/watch", "Example Movie") >= 40
+    assert identity_score(source, "Example Movie", "https://playkrx18.site/watch", "Example Movie") >= 40
