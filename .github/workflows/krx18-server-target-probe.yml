@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - diagnostic/krx18-server-target
+  pull_request:
+    branches:
+      - main
 
 jobs:
   probe:
