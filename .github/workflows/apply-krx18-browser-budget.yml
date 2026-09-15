@@ -1,0 +1,92 @@
+name: Apply krx18 browser resolver budget fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch browser resolver
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('downloader/browser_media_resolver.py')
+          s = p.read_text()
+          s = s.replace(
+              'DEFAULT_TIMEOUT_MS = 25_000\nDEFAULT_SETTLE_MS = 2_500\nDEFAULT_MAX_CANDIDATES = 8\nDEFAULT_MAX_RESPONSES = 220\nDEFAULT_MAX_PAGES = 6\nDEFAULT_MAX_NAV_TARGETS = 10\nDEFAULT_MAX_SERVER_CLICKS = 8',
+              'DEFAULT_TIMEOUT_MS = 25_000\nDEFAULT_SETTLE_MS = 2_500\nDEFAULT_MAX_CANDIDATES = 8\nDEFAULT_MAX_RESPONSES = 220\nDEFAULT_MAX_PAGES = 6\nDEFAULT_MAX_NAV_TARGETS = 10\nDEFAULT_MAX_SERVER_CLICKS = 8\n\n# Hosts known to expose many server/player navigation targets. Keep the\n# browser fallback bounded for these hosts without changing the global budget.\n_FAST_NAV_HOSTS = {"krx18.com"}\nFAST_NAV_TIMEOUT_MS = 12_000\nFAST_NAV_SETTLE_MS = 800\nFAST_NAV_MAX_PAGES = 2\nFAST_NAV_MAX_TARGETS = 4\nFAST_NAV_MAX_CLICKS = 4'
+          )
+          marker = 'def _is_download_target(text: str, href: str) -> bool:\n'
+          if '_browser_budget(' not in s:
+              insert = '''def _browser_budget(url: str, timeout_ms: int, settle_ms: int, max_pages: int) -> tuple[int, int, int, int, int]:\n    try:\n        host = (urlparse(url).hostname or "").lower().rstrip(".")\n    except Exception:\n        host = ""\n    if host in _FAST_NAV_HOSTS or any(host.endswith("." + suffix) for suffix in _FAST_NAV_HOSTS):\n        return (\n            min(timeout_ms, FAST_NAV_TIMEOUT_MS),\n            min(settle_ms, FAST_NAV_SETTLE_MS),\n            min(max_pages, FAST_NAV_MAX_PAGES),\n            FAST_NAV_MAX_TARGETS,\n            FAST_NAV_MAX_CLICKS,\n        )\n    return timeout_ms, settle_ms, max_pages, DEFAULT_MAX_NAV_TARGETS, DEFAULT_MAX_SERVER_CLICKS\n\n\n'''
+              s = s.replace(marker, insert + marker)
+          old = '''async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int, max_candidates: int, max_pages: int) -> list[str]:\n'''
+          new = '''async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int, max_candidates: int, max_pages: int) -> list[str]:\n    timeout_ms, settle_ms, max_pages, max_nav_targets, max_server_clicks = _browser_budget(\n        url, timeout_ms, settle_ms, max_pages\n    )\n'''
+          if old in s:
+              s = s.replace(old, new)
+          s = s.replace(
+              'targets = await _discover_navigation_targets(page, page_url, DEFAULT_MAX_NAV_TARGETS)',
+              'targets = await _discover_navigation_targets(page, page_url, max_nav_targets)'
+          )
+          s = s.replace(
+              'await _click_server_controls(page, DEFAULT_MAX_SERVER_CLICKS)',
+              'await _click_server_controls(page, max_server_clicks)'
+          )
+          p.write_text(s)
+          PY
+      - name: Add regression tests
+        run: |
+          cat > tests/test_browser_resolver_budget.py <<'PY'
+          from downloader.browser_media_resolver import (
+              DEFAULT_MAX_NAV_TARGETS,
+              DEFAULT_MAX_PAGES,
+              DEFAULT_SETTLE_MS,
+              DEFAULT_TIMEOUT_MS,
+              _browser_budget,
+          )
+
+          def test_krx18_gets_bounded_browser_budget():
+              timeout, settle, pages, targets, clicks = _browser_budget(
+                  'https://krx18.com/example',
+                  DEFAULT_TIMEOUT_MS,
+                  DEFAULT_SETTLE_MS,
+                  DEFAULT_MAX_PAGES,
+              )
+              assert timeout == 12_000
+              assert settle == 800
+              assert pages == 2
+              assert targets == 4
+              assert clicks == 4
+
+          def test_other_hosts_keep_existing_budget():
+              assert _browser_budget(
+                  'https://example.com/video',
+                  DEFAULT_TIMEOUT_MS,
+                  DEFAULT_SETTLE_MS,
+                  DEFAULT_MAX_PAGES,
+              ) == (DEFAULT_TIMEOUT_MS, DEFAULT_SETTLE_MS, DEFAULT_MAX_PAGES, 10, 8)
+          PY
+          python -m py_compile downloader/browser_media_resolver.py
+          pytest -q tests/test_browser_resolver_budget.py
+      - name: Commit patch and remove one-time workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -f .github/workflows/apply-krx18-browser-budget.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add downloader/browser_media_resolver.py tests/test_browser_resolver_budget.py .github/workflows/apply-krx18-browser-budget.yml
+          git commit -m 'fix: bound krx18 browser resolver exploration time'
+          git push origin HEAD:main
