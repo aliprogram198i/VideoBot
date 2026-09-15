@@ -5,16 +5,16 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 import time
 from urllib.parse import urlparse
 
 
-# Shahid4u may expose legitimate movie files larger than the generic
-# 500 MB extraction guard. The normal delivery layer already splits large
-# videos for Telegram, so this larger bounded limit is isolated to this provider.
 SHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_BYTES = 5 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_DURATION = 60.0
+SHAHID4U_PREFLIGHT_READ_BYTES = 64 * 1024
+QUALITY_RE = re.compile(r"(?:2160|1440|1080|720|480|360|240)\s*p", re.I)
 
 
 _CONTEXT_PLATFORMS = {
@@ -32,7 +32,6 @@ _CONTEXT_PLATFORMS = {
 
 
 def _resolver_context(source_url, media_kind="unknown"):
-    """Reduce source URL to an allowlisted platform class without storing the URL."""
     try:
         host = (urlparse(str(source_url)).hostname or "").lower().rstrip(".")
     except Exception:
@@ -46,6 +45,100 @@ def _resolver_context(source_url, media_kind="unknown"):
     if kind not in {"hls", "dash", "progressive", "iframe", "unknown"}:
         kind = "unknown"
     return platform, kind
+
+
+def _quality_from_value(value):
+    if not isinstance(value, str):
+        return None
+    match = QUALITY_RE.search(value)
+    if not match:
+        return None
+    try:
+        return int(match.group(0)[:-1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _requested_quality(format_option):
+    """Infer an explicit height cap from the existing yt-dlp format option."""
+    quality = _quality_from_value(str(format_option or ""))
+    return quality if quality in {2160, 1440, 1080, 720, 480, 360, 240} else None
+
+
+def _order_shahid_candidates(values, requested_quality):
+    """Prefer the requested quality, never preferring a higher quality over a lower fit."""
+    rows = []
+    for index, item in enumerate(values or []):
+        candidate = item.get("url") if isinstance(item, dict) else item
+        if not isinstance(candidate, str) or not candidate.startswith(("http://", "https://")):
+            continue
+        quality = item.get("quality") if isinstance(item, dict) else None
+        if not isinstance(quality, int):
+            quality = _quality_from_value(candidate)
+        if requested_quality is None:
+            bucket = 0 if quality is not None else 1
+            distance = -(quality or 0)
+        elif quality == requested_quality:
+            bucket, distance = 0, 0
+        elif quality is not None and quality < requested_quality:
+            bucket, distance = 1, requested_quality - quality
+        elif quality is None:
+            bucket, distance = 2, 0
+        else:
+            bucket, distance = 3, quality - requested_quality
+        score = -(int(item.get("score", 0)) if isinstance(item, dict) else 0)
+        rows.append((bucket, distance, score, index, item))
+    rows.sort(key=lambda row: row[:4])
+    return [row[4] for row in rows]
+
+
+def _preflight_candidate(bot_module, candidate_url, *, max_bytes, referer_url=None):
+    """Prove a candidate is not oversized without downloading its full body.
+
+    HEAD is attempted first. If size is unavailable, a single-byte Range GET
+    is used. Unknown size is allowed and remains protected by the streaming
+    hard cap in Browser Download Handoff.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36",
+        "Accept": "*/*",
+    }
+    if referer_url:
+        headers["Referer"] = referer_url
+
+    try:
+        request = bot_module.Request(candidate_url, headers=headers, method="HEAD")
+        with bot_module.safe_urlopen(request, timeout=12, max_bytes=max_bytes) as response:
+            raw = response.headers.get("Content-Length")
+            if raw:
+                size = int(raw)
+                if size > max_bytes:
+                    return False, size, "content_length_exceeds_limit"
+                return True, size, "content_length"
+    except Exception as exc:
+        if "exceeds configured size limit" in str(exc).lower():
+            return False, max_bytes + 1, "head_response_exceeds_limit"
+
+    try:
+        range_headers = dict(headers)
+        range_headers["Range"] = "bytes=0-0"
+        request = bot_module.Request(candidate_url, headers=range_headers, method="GET")
+        with bot_module.safe_urlopen(request, timeout=12, max_bytes=SHAHID4U_PREFLIGHT_READ_BYTES) as response:
+            content_range = response.headers.get("Content-Range") or ""
+            match = re.search(r"bytes\s+\d+-\d+/(\d+|\*)", content_range, re.I)
+            if match and match.group(1) != "*":
+                size = int(match.group(1))
+                if size > max_bytes:
+                    return False, size, "content_range_exceeds_limit"
+                return True, size, "content_range"
+            raw = response.headers.get("Content-Length")
+            if raw and int(raw) > max_bytes:
+                return False, int(raw), "range_content_length_exceeds_limit"
+    except Exception as exc:
+        if "exceeds configured size limit" in str(exc).lower():
+            return False, max_bytes + 1, "range_response_exceeds_limit"
+
+    return True, None, "size_unknown"
 
 
 def install(bot_module) -> None:
@@ -66,7 +159,6 @@ def install(bot_module) -> None:
     browser_candidate_cache = {}
 
     async def _run_resolver(name, operation, *args, source_url=None, media_kind="unknown", **kwargs):
-        """Run one existing resolver and record only bounded contextual outcome."""
         started = time.monotonic()
         platform, kind = _resolver_context(source_url, media_kind)
         try:
@@ -108,8 +200,11 @@ def install(bot_module) -> None:
         normalized = []
         for item in values or []:
             candidate = item.get("url") if isinstance(item, dict) else item
-            if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and candidate not in normalized:
-                normalized.append(candidate)
+            if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and not any(
+                (existing.get("url") if isinstance(existing, dict) else existing) == candidate
+                for existing in normalized
+            ):
+                normalized.append(item if isinstance(item, dict) else candidate)
         if normalized:
             browser_candidate_cache[source_url] = normalized[:16]
 
@@ -117,23 +212,36 @@ def install(bot_module) -> None:
         print("🔎 Smart Media Bridge: entered", flush=True)
         context = {"source_url": url, "media_kind": "unknown"}
         try:
-            provider_resolved = await _run_resolver(
-                "shahid4u",
-                shahid4u_resolver.resolve,
-                url,
-                validator=bot_module.validate_public_http_url,
-                request_factory=bot_module.Request,
-                open_function=bot_module.safe_urlopen,
-                read_function=bot_module.read_limited,
-                **context,
-            )
+            resolve_candidates = getattr(shahid4u_resolver, "resolve_candidates", None)
+            if callable(resolve_candidates):
+                provider_resolved = await _run_resolver(
+                    "shahid4u", resolve_candidates, url,
+                    validator=bot_module.validate_public_http_url,
+                    request_factory=bot_module.Request,
+                    open_function=bot_module.safe_urlopen,
+                    read_function=bot_module.read_limited,
+                    **context,
+                )
+                provider_urls = [item.get("url") for item in provider_resolved if isinstance(item, dict) and isinstance(item.get("url"), str)]
+            else:
+                provider_resolved = await _run_resolver(
+                    "shahid4u", shahid4u_resolver.resolve, url,
+                    validator=bot_module.validate_public_http_url,
+                    request_factory=bot_module.Request,
+                    open_function=bot_module.safe_urlopen,
+                    read_function=bot_module.read_limited,
+                    **context,
+                )
+                provider_urls = provider_resolved
         except Exception as exc:
             print(f"⚠️ Shahid4u Resolver failed: {type(exc).__name__}", flush=True)
             provider_resolved = []
-        if provider_resolved:
+            provider_urls = []
+        if provider_urls:
             _queue_candidates(url, provider_resolved)
-            print(f"🎯 Shahid4u Provider: queued {len(provider_resolved)} candidate(s) for Browser Download Handoff", flush=True)
-            return provider_resolved
+            print(f"🎯 Shahid4u Provider: queued {len(provider_urls)} candidate(s) for Browser Download Handoff", flush=True)
+            return provider_urls
+
         try:
             existing = await _run_resolver("legacy_extractor", original, url, *args, source_url=url, **kwargs)
         except Exception as exc:
@@ -144,17 +252,12 @@ def install(bot_module) -> None:
             return existing
         try:
             print("🔎 Smart Media Bridge: static resolver starting", flush=True)
-            resolved = await _run_resolver(
-                "smart_media",
-                resolver.resolve,
-                url,
+            resolved = await _run_resolver("smart_media", resolver.resolve, url,
                 validator=bot_module.validate_public_http_url,
                 request_factory=bot_module.Request,
                 open_function=bot_module.safe_urlopen,
                 read_function=bot_module.read_limited,
-                source_url=url,
-                media_kind="unknown",
-            )
+                source_url=url, media_kind="unknown")
         except Exception as exc:
             print(f"⚠️ Smart Search Resolver failed: {type(exc).__name__}", flush=True)
             resolved = []
@@ -163,14 +266,8 @@ def install(bot_module) -> None:
             return resolved
         try:
             print("🌐 Smart Media Bridge: browser resolver starting", flush=True)
-            browser_resolved = await _run_resolver(
-                "browser_media",
-                browser_resolver.resolve,
-                url,
-                validator=bot_module.validate_public_http_url,
-                source_url=url,
-                media_kind="iframe",
-            )
+            browser_resolved = await _run_resolver("browser_media", browser_resolver.resolve, url,
+                validator=bot_module.validate_public_http_url, source_url=url, media_kind="iframe")
         except Exception as exc:
             print(f"⚠️ Browser Media Resolver failed: {type(exc).__name__}", flush=True)
             browser_resolved = []
@@ -200,6 +297,7 @@ def install(bot_module) -> None:
                 result = await result
             temp_dir = kwargs.get("temp_dir")
             is_audio = bool(kwargs.get("is_audio", False))
+            format_option = kwargs.get("format_option")
             diagnostics = result[3] if isinstance(result, tuple) and len(result) > 3 else {}
             source_url = kwargs.get("url")
             if source_url is None and args:
@@ -210,6 +308,16 @@ def install(bot_module) -> None:
             candidates = diagnostics.get("candidates", []) if isinstance(diagnostics, dict) else []
             candidate_urls = []
             cached_candidates = browser_candidate_cache.pop(source_url, []) if source_url else []
+            is_shahid4u = False
+            try:
+                source_host = (urlparse(str(source_url)).hostname or "").lower().rstrip(".")
+                is_shahid4u = source_host == "shahid4u.run" or source_host.endswith(".shahid4u.run")
+            except Exception:
+                pass
+            if is_shahid4u and not is_audio:
+                requested_quality = _requested_quality(format_option)
+                cached_candidates = _order_shahid_candidates(cached_candidates, requested_quality)
+                print(f"🎚 Shahid4u quality target: {requested_quality or 'best available'}", flush=True)
             for item in cached_candidates:
                 candidate = item.get("url") if isinstance(item, dict) else item
                 if isinstance(candidate, str) and candidate.startswith(("http://", "https://")) and candidate not in candidate_urls:
@@ -227,19 +335,21 @@ def install(bot_module) -> None:
                 return result
             print(f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
-            source_host = ""
-            try:
-                source_host = (urlparse(str(source_url)).hostname or "").lower().rstrip(".")
-            except Exception:
-                pass
-            strict_provider_validation = source_host == "shahid4u.run" or source_host.endswith(".shahid4u.run")
-            if strict_provider_validation and not is_audio:
+            if is_shahid4u and not is_audio:
                 max_bytes = max(max_bytes, SHAHID4U_MAX_HANDOFF_BYTES)
             handoff_kwargs = {"validator": bot_module.validate_public_http_url, "is_audio": is_audio, "max_file_bytes": max_bytes, "referer_url": source_url if isinstance(source_url, str) else None}
-            if strict_provider_validation and not is_audio:
+            if is_shahid4u and not is_audio:
                 handoff_kwargs.update({"min_video_bytes": SHAHID4U_MIN_VIDEO_BYTES, "min_video_duration": SHAHID4U_MIN_VIDEO_DURATION})
                 print("🎯 Shahid4u Handoff: strict media validation enabled (>=5MB, >=60s, max 2GB)", flush=True)
             for candidate in candidate_urls[:12]:
+                if is_shahid4u and not is_audio:
+                    allowed, size, reason = await asyncio.to_thread(
+                        _preflight_candidate, bot_module, candidate,
+                        max_bytes=max_bytes, referer_url=source_url if isinstance(source_url, str) else None)
+                    if not allowed:
+                        print(f"🛑 Shahid4u preflight rejected candidate ({reason}, size={size})", flush=True)
+                        continue
+                    print(f"✅ Shahid4u preflight accepted candidate ({reason}, size={size if size is not None else 'unknown'})", flush=True)
                 try:
                     print(f"🌐 Browser Download Handoff: trying candidate {candidate.split('?', 1)[0]}", flush=True)
                     local_path = await asyncio.to_thread(browser_handoff.resolve_to_file, candidate, temp_dir, timeout_ms=45_000, settle_ms=2_000, **handoff_kwargs)
