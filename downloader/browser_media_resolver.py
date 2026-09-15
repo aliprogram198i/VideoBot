@@ -51,6 +51,26 @@ def _is_http_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
+def _is_krx18_host(value: str) -> bool:
+    try:
+        host = (urlparse(value).hostname or "").lower().rstrip(".")
+    except Exception:
+        return False
+    return host == "krx18.com" or host.endswith(".krx18.com")
+
+
+def _looks_like_krx18_media_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        haystack = f"{parsed.path}?{parsed.query}".lower()
+    except Exception:
+        return False
+    return any(marker in haystack for marker in (
+        "stream", "media", "video", "source", "player", "playlist",
+        "download", "direct", "file", ".m3u8", ".mpd",
+    ))
+
+
 def _is_media_response(url: str, content_type: str | None, content_disposition: str | None = None) -> bool:
     normalized = (content_type or "").split(";", 1)[0].strip().lower()
     if any(normalized.startswith(prefix) for prefix in _MEDIA_CONTENT_TYPES[:2]) or normalized in _MEDIA_CONTENT_TYPES[2:]:
@@ -178,7 +198,7 @@ async def _discover_navigation_targets(page, base_url: str, max_targets: int) ->
     return targets
 
 
-async def _click_server_controls(page, max_clicks: int) -> None:
+async def _click_server_controls(page, max_clicks: int, *, wait_after: bool = True) -> None:
     """Click only server/player/download controls; never arbitrary page buttons."""
     selector = "a[href], button, [role='button'], input[type='button'], input[type='submit']"
     try:
@@ -201,7 +221,23 @@ async def _click_server_controls(page, max_clicks: int) -> None:
         try:
             control = locator.nth(index)
             await control.click(timeout=1800, no_wait_after=True)
-            await page.wait_for_timeout(500)
+            if wait_after:
+                await page.wait_for_timeout(500)
+        except Exception:
+            continue
+
+
+async def _collect_frame_media(page, validator, candidates: dict[str, tuple[int, str | None]], max_clicks: int) -> None:
+    """Inspect player frames directly; many sites keep the real media only there."""
+    for frame in list(page.frames):
+        if frame is page.main_frame:
+            continue
+        try:
+            await _collect_dom_media(frame, validator, candidates)
+            await _collect_script_media(frame, validator, candidates)
+            await _click_server_controls(frame, max_clicks, wait_after=False)
+            await _collect_dom_media(frame, validator, candidates)
+            await _collect_script_media(frame, validator, candidates)
         except Exception:
             continue
 
@@ -269,10 +305,12 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                         content_disposition = headers.get("content-disposition")
                     except Exception:
                         content_type = content_disposition = None
-                    if not _is_media_response(response_url, content_type, content_disposition): return
+                    is_media = _is_media_response(response_url, content_type, content_disposition)
+                    if not is_media and not (_is_krx18_host(url) and _looks_like_krx18_media_url(response_url)):
+                        return
                     try: validator(response_url)
                     except Exception: return
-                    score = _score(response_url, content_type) + (25 if content_disposition and "attachment" in content_disposition.lower() else 0)
+                    score = _score(response_url, content_type) + (8 if not is_media else 0) + (25 if content_disposition and "attachment" in content_disposition.lower() else 0)
                     current = candidates.get(response_url)
                     if current is None or score > current[0]: candidates[response_url] = (score, content_type)
 
@@ -299,6 +337,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
                     await _collect_script_media(page, validator, candidates)
+                    await _collect_frame_media(page, validator, candidates, max_server_clicks)
 
                     targets = await _discover_navigation_targets(page, page_url, max_nav_targets)
                     for target in targets:
@@ -311,14 +350,16 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
                     await _collect_script_media(page, validator, candidates)
+                    await _collect_frame_media(page, validator, candidates, max_server_clicks)
 
                     frame_urls = []
                     for frame in page.frames:
                         frame_url = frame.url
                         if frame_url and frame_url != page_url and _is_http_url(frame_url) and frame_url not in visited_pages and frame_url not in frame_urls:
                             frame_urls.append(frame_url)
-                    for frame_url in frame_urls[:max_nav_targets]:
-                        if frame_url not in queue: queue.append(frame_url)
+                    for frame_url in reversed(frame_urls[:max_nav_targets]):
+                        if frame_url not in visited_pages and frame_url not in queue:
+                            queue.insert(0, frame_url)
                 except Exception as exc:
                     LOG.debug("Browser page resolution failed: %s", type(exc).__name__)
                     print(f"⚠️ Browser page resolution failed: {type(exc).__name__}", flush=True)
