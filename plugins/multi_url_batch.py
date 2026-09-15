@@ -1,9 +1,7 @@
 """Fail-open multi-URL batch adapter for AliBot."""
 from __future__ import annotations
 
-import inspect
 import re
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 _MAX_URLS = 5
@@ -23,7 +21,6 @@ def extract_urls(text: str) -> list[str]:
 
 
 class _QueryProxy:
-    """Keep the original callback data while suppressing edits after item one."""
     def __init__(self, query):
         self._query = query
         self.data = query.data
@@ -43,6 +40,15 @@ class _QueryProxy:
         return getattr(self._query, name)
 
 
+class _UpdateProxy:
+    def __init__(self, update, query):
+        self._update = update
+        self.callback_query = query
+
+    def __getattr__(self, name):
+        return getattr(self._update, name)
+
+
 def install(bot_module) -> None:
     original_message = getattr(bot_module, "handle_message", None)
     original_download = getattr(bot_module, "download_media", None)
@@ -57,20 +63,16 @@ def install(bot_module) -> None:
         urls = extract_urls(text or "")
         if len(urls) <= 1:
             return await original_message(update, context)
-        if len(urls) > _MAX_URLS:
-            user = getattr(update, "effective_user", None)
-            language = bot_module.get_language(user.id) if user else "ar"
-            language = language or "ar"
-            await message.reply_text(
-                {"ar":"❌ الحد الأقصى هو 5 روابط في الرسالة الواحدة.","en":"❌ Maximum 5 links per message.","tr":"❌ Mesaj başına en fazla 5 bağlantı.","de":"❌ Maximal 5 Links pro Nachricht."}.get(language, "❌ Maximum 5 links per message.")
-            return
-
         user = update.effective_user
+        language = bot_module.get_language(user.id) or "ar"
+        if len(urls) > _MAX_URLS:
+            labels = {"ar":"❌ الحد الأقصى هو 5 روابط في الرسالة الواحدة.","en":"❌ Maximum 5 links per message.","tr":"❌ Mesaj başına en fazla 5 bağlantı.","de":"❌ Maximal 5 Links pro Nachricht."}
+            await message.reply_text(labels.get(language, labels["en"]))
+            return
         bot_module.register_user(user)
         if bot_module.is_banned(user.id):
             await message.reply_text(bot_module.TEXTS["ar"]["banned"])
             return
-        language = bot_module.get_language(user.id) or "ar"
         valid = []
         for url in urls:
             try:
@@ -102,13 +104,6 @@ def install(bot_module) -> None:
             await original_download(active_update, context)
         context.user_data.pop("video_url", None)
         context.user_data.pop("video_urls", None)
-
-    class _UpdateProxy:
-        def __init__(self, update, query):
-            self._update = update
-            self.callback_query = query
-        def __getattr__(self, name):
-            return getattr(self._update, name)
 
     handle_message._multi_url_batch = True
     download_media._multi_url_batch = True
