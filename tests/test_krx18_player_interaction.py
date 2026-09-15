@@ -52,7 +52,7 @@ class _FakePage:
 
 
 def test_player_probe_is_bounded_and_clicks_at_most_three_controls():
-    controls = [_FakeControl("Play") for _ in range(6)]
+    controls = [_FakeControl(f"Play {index}") for index in range(6)]
     page = _FakePage(controls)
     clicked = asyncio.run(_probe_player_controls(page, time.monotonic() + 5))
 
