@@ -30,6 +30,8 @@ _AD_HOST_HINTS = (
     "doubleclick", "googlesyndication", "googleadservices", "adservice",
     "adsystem", "advertising", "adserver", "popads", "propellerads",
 )
+_KRX18_HOST = "krx18.com"
+_KRX18_MIN_DURATION = 20.0
 
 
 @dataclass(frozen=True)
@@ -140,7 +142,11 @@ def assess_local_media(
         return MediaGateResult(False, True, "no_video_stream", size, duration)
     if duration is None:
         return MediaGateResult(False, True, "duration_unavailable", size)
-    if duration < min_duration:
+    effective_min_duration = min_duration
+    source_host = _host(source_url)
+    if source_host == _KRX18_HOST or source_host.endswith("." + _KRX18_HOST):
+        effective_min_duration = min(min_duration, _KRX18_MIN_DURATION)
+    if duration < effective_min_duration:
         return MediaGateResult(False, True, "implausibly_short_media", size, duration)
     return MediaGateResult(True, True, "accepted", size, duration)
 
