@@ -1,404 +1,168 @@
 """Deterministic KRX18 public-page resolver.
 
-The resolver follows only the public movie page's explicit Video Sources
-(server/player) links and media exposed by those public player pages. When the
-public WordPress REST representation is exposed, it may be used as a bounded
-source-of-truth fallback for the same movie post. Identity evidence remains
-mandatory before media is accepted.
-
-It never bypasses authentication, CAPTCHA, DRM, paywalls, or other access
-controls.
+Follows only explicit public Video Sources/server links belonging to the
+requested movie. It never bypasses authentication, CAPTCHA, DRM, paywalls,
+or other access controls.
 """
-
 from __future__ import annotations
-
 import asyncio
 import html
 import re
+import time
 from urllib.parse import unquote, urlparse
-
 from .krx18_wp_public_sources import fetch_public_post
 
-NON_SOURCE_HOSTS = {
-    "onclckbn.net",
-    "cdn.jsdelivr.net",
-    "vcmdiawe.com",
-    "bkcdn.net",
-}
+NON_SOURCE_HOSTS={"onclckbn.net","cdn.jsdelivr.net","vcmdiawe.com","bkcdn.net"}
+MEDIA_MARKERS=(".m3u8",".mpd",".mp4",".m4v",".webm",".mov",".mkv",".avi",".ts")
+KRX18_RESOLVE_BUDGET_SECONDS=30.0
+KRX18_SERVER_TIMEOUT_MS=7000
+KRX18_SETTLE_MS=600
+KRX18_MAX_SERVER_TARGETS=3
+KRX18_MAX_CANDIDATES=8
 
-MEDIA_MARKERS = (".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts")
-KRX18_RESOLVE_BUDGET_SECONDS = 32.0
-KRX18_SERVER_TIMEOUT_MS = 7_000
-KRX18_SETTLE_MS = 600
-KRX18_MAX_SERVER_TARGETS = 3
-KRX18_MAX_CANDIDATES = 8
+def is_krx18_url(value:str)->bool:
+    try: host=(urlparse(value).hostname or "").lower().rstrip(".")
+    except Exception: return False
+    return host=="krx18.com" or host.endswith(".krx18.com")
 
+def _host(value:str)->str:
+    try: return (urlparse(value).hostname or "").lower().rstrip(".")
+    except Exception: return ""
 
-def is_krx18_url(value: str) -> bool:
+def _http(value:str)->bool:
     try:
-        host = (urlparse(value).hostname or "").lower().rstrip(".")
-    except Exception:
-        return False
-    return host == "krx18.com" or host.endswith(".krx18.com")
+        p=urlparse(value); return p.scheme in {"http","https"} and bool(p.hostname)
+    except Exception: return False
 
+def _blocked_host(value:str)->bool:
+    h=_host(value); return any(h==x or h.endswith("."+x) for x in NON_SOURCE_HOSTS)
 
-def is_http_url(value: str) -> bool:
-    try:
-        parsed = urlparse(value)
-    except Exception:
-        return False
-    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+def _media_url(value:str)->bool:
+    if not _http(value) or _blocked_host(value): return False
+    p=urlparse(value); hay=f"{p.path}?{p.query}".lower()
+    return any(x in hay for x in MEDIA_MARKERS) or any(x in hay for x in ("stream","playlist","media","source","direct","download"))
 
+def extract_urls_from_onclick(value:str)->list[str]:
+    if not isinstance(value,str): return []
+    out=[]
+    for value in re.findall(r"https?://[^\s\"'<>\\]+",value,re.I):
+        value=value.rstrip("\\.,;)]}")
+        if _http(value): out.append(value)
+    return out
 
-def _host(value: str) -> str:
-    try:
-        return (urlparse(value).hostname or "").lower().rstrip(".")
-    except Exception:
-        return ""
-
-
-def _is_non_source_host(value: str) -> bool:
-    host = _host(value)
-    return any(host == suffix or host.endswith("." + suffix) for suffix in NON_SOURCE_HOSTS)
-
-
-def _explicit_server_label(text: str, row: dict) -> bool:
-    value = str(text or "").casefold()
-    if re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+", value):
-        return True
-    for key in ("data_server", "data_player"):
-        if isinstance(row.get(key), str) and row.get(key).strip():
-            return True
-    return bool(re.fullmatch(r"\s*(?:server|سيرفر)\s*\d*\s*", value))
-
-
-def _score(text: str, href: str, row: dict) -> int:
-    value = f"{text} {href}".casefold()
-    score = 0
-    if _explicit_server_label(text, row):
-        score += 120
-    if any(word in value for word in ("player", "watch", "source", "مشاهدة", "مشغل")):
-        score += 18
-    if re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+", value):
-        score += 40
-    if any(token in value for token in ("embed", "iframe")):
-        score += 12
-    return score
-
-
-def extract_urls_from_onclick(value: str) -> list[str]:
-    if not isinstance(value, str) or not value:
-        return []
-    urls = []
-    for match in re.findall(r"https?://[^\s\"'<>\\]+", value, flags=re.I):
-        candidate = match.rstrip("\\.,;)]}")
-        if is_http_url(candidate):
-            urls.append(candidate)
-    return urls
-
-
-def rank_targets(rows: list[dict], base_url: str, max_targets: int = 8) -> list[str]:
-    """Return only explicit KRX18 Video Sources/server/player targets."""
-    ranked: dict[str, int] = {}
+def rank_targets(rows:list[dict],base_url:str,max_targets:int=8)->list[str]:
+    ranked={}
     for row in rows or []:
-        if not isinstance(row, dict):
-            continue
-        text = " ".join(
-            str(row.get(k) or "")
-            for k in ("text", "attr", "onclick", "label", "data_server", "data_player")
-        )
-        if not _explicit_server_label(text, row):
-            continue
-        values: list[str] = []
-        for key in (
-            "href", "src", "data_server", "data_player", "data_download",
-            "data_url", "data_href",
-        ):
-            value = row.get(key)
-            if isinstance(value, str) and value.strip():
-                values.append(value.strip())
+        if not isinstance(row,dict): continue
+        label=" ".join(str(row.get(k) or "") for k in ("text","attr","onclick","label","data_server","data_player"))
+        if not re.search(r"(?:server|سيرفر)\s*[-_ ]?\d+",label,re.I): continue
+        score=120+(20 if any(x in label.casefold() for x in ("player","watch","source","embed","iframe")) else 0)
+        values=[]
+        for key in ("href","src","data_server","data_player","data_download","data_url","data_href"):
+            raw=row.get(key)
+            if isinstance(raw,str) and raw.strip(): values.append(raw.strip())
         values.extend(extract_urls_from_onclick(str(row.get("onclick") or "")))
-        for href in values:
-            if not is_http_url(href) or href == base_url:
-                continue
-            if _is_non_source_host(href):
-                continue
-            score = _score(text, href, row)
-            if score <= 0:
-                continue
-            ranked[href] = max(score, ranked.get(href, 0))
-    ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
-    return [url for url, _ in ordered[:max_targets]]
+        for raw in values:
+            for candidate in re.findall(r"https?://[^\s\"'<>\\]+",raw,re.I) or [raw]:
+                candidate=html.unescape(candidate).rstrip("\\.,;)]}")
+                if not _http(candidate) or candidate==base_url or _blocked_host(candidate): continue
+                if any(x in candidate.lower() for x in MEDIA_MARKERS): continue
+                ranked[candidate]=max(score,ranked.get(candidate,0))
+    return [u for u,_ in sorted(ranked.items(),key=lambda x:(-x[1],x[0]))[:max_targets]]
 
+def _movie_tokens(source_url:str,title:str=""):
+    path=unquote(urlparse(source_url).path or "")
+    m=re.search(r"/movies/(?:([0-9]+)-)?([^/]+)/?$",path,re.I)
+    movie_id=m.group(1) if m else None; slug=m.group(2) if m else ""
+    tokens={x for x in re.split(r"[^a-z0-9]+",f"{slug} {title}".casefold()) if len(x)>=3}
+    if movie_id: tokens.add(movie_id)
+    return movie_id,tokens
 
-def _movie_identity(source_url: str, title: str = "") -> tuple[str | None, set[str]]:
-    parsed = urlparse(source_url)
-    path = unquote(parsed.path or "")
-    match = re.search(r"/movies/(?:([0-9]+)-)?([^/]+)/?", path, re.I)
-    movie_id = match.group(1) if match else None
-    slug = match.group(2) if match else ""
-    raw = f"{slug} {title}".casefold()
-    tokens = {
-        token for token in re.split(r"[^a-z0-9]+", raw)
-        if len(token) >= 3 and token not in {"movie", "movies", "full", "watch", "online", "free"}
-    }
-    if movie_id:
-        tokens.add(movie_id)
-    return movie_id, tokens
-
-
-def identity_score(source_url: str, evidence_text: str, evidence_url: str = "", source_title: str = "") -> int:
-    """Score only positive public identity evidence; no evidence means reject."""
-    movie_id, tokens = _movie_identity(source_url, source_title)
-    raw_haystack = unquote(f"{evidence_text} {evidence_url}").casefold()
-    haystack = re.sub(r"\s+", " ", raw_haystack).strip()
-    score = 0
-    if movie_id and movie_id in haystack:
-        score += 100
-    meaningful = {token for token in tokens if token != movie_id}
-    overlap = sum(1 for token in meaningful if token in haystack)
-    if overlap >= 3:
-        score += 60
-    elif overlap == 2:
-        score += 40
-    elif overlap == 1:
-        score += 15
-    normalized_title = re.sub(r"\s+", " ", unquote(source_title or "")).strip().casefold()
-    if len(normalized_title) >= 8 and normalized_title not in {"krx18", "krx18.com"} and normalized_title in haystack:
-        score += 50
+def identity_score(source_url:str,evidence_text:str,evidence_url:str="",source_title:str="",*,explicit_server_provenance:bool=False)->int:
+    movie_id,tokens=_movie_tokens(source_url,source_title)
+    hay=re.sub(r"\s+"," ",unquote(f"{evidence_text} {evidence_url}")).casefold()
+    score=70 if explicit_server_provenance else 0
+    if movie_id and movie_id in hay: score+=100
+    meaningful={x for x in tokens if x!=movie_id}; overlap=sum(1 for x in meaningful if x in hay)
+    score += 60 if overlap>=3 else 40 if overlap==2 else 15 if overlap==1 else 0
+    title=re.sub(r"\s+"," ",unquote(source_title or "")).strip().casefold()
+    if len(title)>=8 and title not in {"krx18","krx18.com"} and title in hay: score+=50
     return score
 
+async def _safe_close(obj):
+    try: await obj.close()
+    except Exception: pass
 
-def _media_url(value: str) -> bool:
-    if not is_http_url(value):
-        return False
-    if _is_non_source_host(value):
-        return False
-    parsed = urlparse(value)
-    haystack = f"{parsed.path}?{parsed.query}".lower()
-    return any(marker in haystack for marker in MEDIA_MARKERS) or any(
-        marker in haystack for marker in ("stream", "playlist", "media", "source", "direct", "download")
-    )
+async def _extract_source_targets(page,base_url):
+    script="""() => [...document.querySelectorAll('a[href],iframe[src],embed[src],[onclick],[data-server],[data-player],[data-url],[data-href]')].map(el=>({href:el.href||el.src||'',text:(el.innerText||el.textContent||'').trim(),onclick:el.getAttribute('onclick')||'',data_server:el.getAttribute('data-server')||'',data_player:el.getAttribute('data-player')||'',data_url:el.getAttribute('data-url')||'',data_href:el.getAttribute('data-href')||'',cls:`${el.className||''} ${el.id||''}`}))"""
+    try: rows=await page.evaluate(script)
+    except Exception: return []
+    return rank_targets(rows or [],base_url,KRX18_MAX_SERVER_TARGETS)
 
-
-async def _safe_close(obj) -> None:
+async def _collect_media(page,source_url,source_title,target,candidates):
+    try: title=await page.title()
+    except Exception: title=""
+    try: body=await page.locator("body").inner_text(timeout=1200)
+    except Exception: body=""
+    score=identity_score(source_url,f"{title}\n{body[:12000]}",f"{page.url} {target}",source_title,explicit_server_provenance=True)
+    if score<70: return
+    media=[]
+    try: media.extend(await page.locator("video,audio,source").evaluate_all("""els=>els.map(el=>el.currentSrc||el.src||el.getAttribute('src')||el.getAttribute('data-src')||el.getAttribute('data-url')||'')"""))
+    except Exception: pass
     try:
-        await obj.close()
-    except Exception:
-        pass
-
-
-async def _extract_source_targets(page, base_url: str) -> list[str]:
-    """Extract only links inside the public page's Video Sources section."""
-    script = r"""
-    () => {
-      const headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,.title,.heading,strong,b,div')];
-      const heading = headings.find(el => /video\s*sources?/i.test((el.innerText || el.textContent || '').trim()));
-      if (!heading) return [];
-      let container = heading;
-      for (let i = 0; i < 4 && container; i++, container = container.parentElement) {
-        const text = (container.innerText || container.textContent || '').trim();
-        if (text.length > 20 && text.length < 12000 && /server\s*1/i.test(text)) break;
-      }
-      if (!container) return [];
-      const rows = [...container.querySelectorAll('a[href],iframe[src],embed[src],[onclick],[data-server],[data-player],[data-url],[data-href]')];
-      return rows.map(el => ({
-        href: el.href || el.src || '',
-        src: el.src || '',
-        text: (el.innerText || el.textContent || '').trim(),
-        attr: ((el.className || '') + ' ' + (el.id || '')).trim(),
-        onclick: el.getAttribute('onclick') || '',
-        data_server: el.getAttribute('data-server') || '',
-        data_player: el.getAttribute('data-player') || '',
-        data_url: el.getAttribute('data-url') || '',
-        data_href: el.getAttribute('data-href') || ''
-      }));
-    }
-    """
-    try:
-        rows = await page.evaluate(script)
-    except Exception:
-        return []
-    return rank_targets(rows or [], base_url, max_targets=KRX18_MAX_SERVER_TARGETS)
-
-
-async def _collect_public_media(page, validator, candidates: dict[str, tuple[int, int, str]], source_url: str, source_title: str, trusted_target: str) -> None:
-    """Collect media only after target-page identity is established."""
-    try:
-        title = await page.title()
-    except Exception:
-        title = ""
-    try:
-        body = await page.locator("body").inner_text(timeout=1200)
-    except Exception:
-        body = ""
-    evidence = f"{title}\n{body[:12000]}\n{trusted_target}"
-    score_identity = identity_score(source_url, evidence, f"{page.url} {trusted_target}", source_title)
-    if score_identity < 40:
-        return
-
-    async def add(value: str, content_type: str = "") -> None:
-        if not _media_url(value):
-            return
-        try:
-            validator(value)
-        except Exception:
-            return
-        score = 100 + score_identity
-        if "mpegurl" in content_type.lower() or value.lower().split("?", 1)[0].endswith(".m3u8"):
-            score += 20
-        if value not in candidates or score > candidates[value][0]:
-            candidates[value] = (score, score_identity, trusted_target)
-
-    try:
-        rows = await page.locator("video,audio,source").evaluate_all("""els => els.map(el => ({src: el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '', type: el.getAttribute('type') || ''}))""")
-    except Exception:
-        rows = []
-    for row in rows or []:
-        if isinstance(row, dict):
-            await add(str(row.get("src") or ""), str(row.get("type") or ""))
-
-    try:
-        scripts = await page.locator("script").all_text_contents()
-    except Exception:
-        scripts = []
-    pattern = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
-    for script_text in scripts or []:
-        decoded = html.unescape(script_text).replace("\\/", "/")
-        for value in pattern.findall(decoded):
-            value = value.rstrip("\\.,;)]}")
-            if _media_url(value):
-                await add(value)
-
+        for script in await page.locator("script").all_text_contents(): media.extend(re.findall(r"https?://[^\s\"'<>\\]+",html.unescape(script).replace("\\/","/"),re.I))
+    except Exception: pass
     for frame in list(page.frames):
-        if frame is page.main_frame:
-            continue
+        if frame is page.main_frame: continue
         try:
-            frame_title = await frame.title()
-        except Exception:
-            frame_title = ""
-        try:
-            frame_text = await frame.locator("body").inner_text(timeout=800)
-        except Exception:
-            frame_text = ""
-        frame_evidence = f"{frame_title}\n{frame_text[:8000]}\n{trusted_target}"
-        frame_score = identity_score(source_url, frame_evidence, f"{frame.url} {trusted_target}", source_title)
-        if frame_score < 40:
-            continue
-        try:
-            frame_rows = await frame.locator("video,audio,source").evaluate_all("""els => els.map(el => ({src: el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '', type: el.getAttribute('type') || ''}))""")
-        except Exception:
-            frame_rows = []
-        for row in frame_rows or []:
-            if isinstance(row, dict):
-                await add(str(row.get("src") or ""), str(row.get("type") or ""))
+            ft=await frame.title(); fb=await frame.locator("body").inner_text(timeout=800)
+            if identity_score(source_url,f"{ft}\n{fb[:8000]}",f"{frame.url} {target}",source_title,explicit_server_provenance=True)<70: continue
+            media.extend(await frame.locator("video,audio,source").evaluate_all("""els=>els.map(el=>el.currentSrc||el.src||el.getAttribute('src')||el.getAttribute('data-src')||el.getAttribute('data-url')||'')"""))
+        except Exception: continue
+    for value in media:
+        if isinstance(value,str) and _media_url(value): candidates.setdefault(value,(score,target))
 
-
-async def _resolve_media_async(url: str, *, validator, request_factory=None, open_function=None, read_function=None, max_candidates: int = KRX18_MAX_CANDIDATES) -> list[str]:
-    try:
-        from playwright.async_api import async_playwright
-    except Exception:
-        return []
-    try:
-        validator(url)
-    except Exception:
-        return []
-
+async def _resolve_media_async(url:str,*,validator,request_factory=None,open_function=None,read_function=None,max_candidates:int=KRX18_MAX_CANDIDATES)->list[str]:
+    try: validator(url)
+    except Exception: return []
+    try: from playwright.async_api import async_playwright
+    except Exception: return []
+    deadline=time.monotonic()+KRX18_RESOLVE_BUDGET_SECONDS
     async with async_playwright() as playwright:
-        browser = None
-        context = None
-        source_page = None
-        source_title = ""
-        targets: list[str] = []
+        browser=None; context=None
         try:
-            browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check"])
-            context = await browser.new_context(user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36", java_script_enabled=True)
-            source_page = await context.new_page()
+            browser=await playwright.chromium.launch(headless=True,args=["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--no-first-run","--no-default-browser-check"])
+            context=await browser.new_context(user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36",java_script_enabled=True)
+            source_page=await context.new_page(); source_title=""; targets=[]
             try:
-                await source_page.goto(url, wait_until="domcontentloaded", timeout=KRX18_SERVER_TIMEOUT_MS)
-                await source_page.wait_for_timeout(KRX18_SETTLE_MS)
-                source_title = await source_page.title()
-                targets = await _extract_source_targets(source_page, url)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                print(f"⚠️ KRX18 Dedicated Resolver: source page unavailable ({type(exc).__name__}); trying public WordPress source", flush=True)
-
+                remaining=max(.5,deadline-time.monotonic()); await source_page.goto(url,wait_until="domcontentloaded",timeout=min(KRX18_SERVER_TIMEOUT_MS,int(remaining*1000))); source_title=await source_page.title(); targets=await _extract_source_targets(source_page,url)
+            except asyncio.CancelledError: raise
+            except Exception: pass
+            finally: await _safe_close(source_page)
             if not targets and callable(request_factory) and callable(open_function) and callable(read_function):
                 try:
-                    wp_title, wp_targets = await asyncio.to_thread(
-                        fetch_public_post,
-                        url,
-                        request_factory=request_factory,
-                        open_function=open_function,
-                        read_function=read_function,
-                    )
-                    if wp_title:
-                        source_title = wp_title
-                    targets = wp_targets
-                    if targets:
-                        print(f"🌐 KRX18 Public WordPress: discovered {len(targets)} explicit server target(s)", flush=True)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    print(f"🛡️ KRX18 Public WordPress: unavailable ({type(exc).__name__})", flush=True)
-
-            if not targets:
-                print("🛡️ KRX18 Dedicated Resolver: no explicit public Video Sources targets", flush=True)
-                return []
-            print(f"🎯 KRX18 Dedicated Resolver: {len(targets)} public server target(s)", flush=True)
-            candidates: dict[str, tuple[int, int, str]] = {}
-            for target in targets:
-                page = None
+                    wp_title,wp_targets=await asyncio.to_thread(fetch_public_post,url,request_factory=request_factory,open_function=open_function,read_function=read_function); source_title=wp_title or source_title; targets=wp_targets
+                    if targets: print(f"🌐 KRX18 Public WordPress: discovered {len(targets)} explicit server target(s)",flush=True)
+                except asyncio.CancelledError: raise
+                except Exception as exc: print(f"🛡️ KRX18 Public WordPress: unavailable ({type(exc).__name__})",flush=True)
+            if not targets: print("🛡️ KRX18 Dedicated Resolver: no explicit public Video Sources targets",flush=True); return []
+            print(f"🎯 KRX18 Dedicated Resolver: {len(targets)} public server target(s)",flush=True)
+            candidates={}
+            for target in targets[:KRX18_MAX_SERVER_TARGETS]:
+                if time.monotonic()>=deadline: break
+                page=None
                 try:
-                    page = await context.new_page()
-                    await page.goto(target, wait_until="domcontentloaded", timeout=KRX18_SERVER_TIMEOUT_MS)
-                    await page.wait_for_timeout(KRX18_SETTLE_MS)
-                    await _collect_public_media(page, validator, candidates, url, source_title, target)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    print(f"⚠️ KRX18 Dedicated Resolver: server failed ({type(exc).__name__})", flush=True)
+                    remaining=max(.5,deadline-time.monotonic()); page=await context.new_page(); await page.goto(target,wait_until="domcontentloaded",timeout=min(KRX18_SERVER_TIMEOUT_MS,int(remaining*1000))); await _collect_media(page,url,source_title,target,candidates)
+                except asyncio.CancelledError: raise
+                except Exception as exc: print(f"⚠️ KRX18 Dedicated Resolver: server failed ({type(exc).__name__})",flush=True)
                 finally:
-                    if page is not None:
-                        await _safe_close(page)
-            ranked = sorted(candidates.items(), key=lambda item: (-item[1][0], -item[1][1], item[0]))
-            if ranked:
-                best_identity = ranked[0][1][1]
-                print(f"✅ KRX18 Dedicated Resolver: {len(ranked)} identity-verified media candidate(s), identity={best_identity}", flush=True)
-                return [item[0] for item in ranked[:max_candidates]]
-            print("🛡️ KRX18 Dedicated Resolver: no identity-verified public media", flush=True)
-            return []
+                    if page is not None: await _safe_close(page)
+            ranked=sorted(candidates.items(),key=lambda x:(-x[1][0],x[0])); result=[u for u,_ in ranked[:max_candidates]]
+            print(f"✅ KRX18 Dedicated Resolver: {len(result)} provenance-verified public media candidate(s)" if result else "🛡️ KRX18 Dedicated Resolver: no identity-verified public media",flush=True)
+            return result
         finally:
-            if source_page is not None:
-                await _safe_close(source_page)
-            if context is not None:
-                await _safe_close(context)
-            if browser is not None:
-                await _safe_close(browser)
+            if context is not None: await _safe_close(context)
+            if browser is not None: await _safe_close(browser)
 
-
-async def resolve_media(url: str, *, validator, request_factory=None, open_function=None, read_function=None, max_candidates: int = KRX18_MAX_CANDIDATES) -> list[str]:
-    """Resolve KRX18 only from public Video Sources/server/player pages."""
-    if not is_krx18_url(url):
-        return []
-    try:
-        return await asyncio.wait_for(
-            _resolve_media_async(
-                url,
-                validator=validator,
-                request_factory=request_factory,
-                open_function=open_function,
-                read_function=read_function,
-                max_candidates=max_candidates,
-            ),
-            timeout=KRX18_RESOLVE_BUDGET_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        print("⏱️ KRX18 Dedicated Resolver: hard budget exhausted", flush=True)
-        return []
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        print(f"⚠️ KRX18 Dedicated Resolver failed closed: {type(exc).__name__}", flush=True)
-        return []
+async def resolve_media(url:str,**kwargs)->list[str]:
+    return await _resolve_media_async(url,**kwargs) if is_krx18_url(url) else []
