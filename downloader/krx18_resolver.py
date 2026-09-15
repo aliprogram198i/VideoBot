@@ -66,7 +66,8 @@ def _blocked_host(value: str) -> bool:
 
 
 def _is_media_response_url(value: str, content_type: str = "") -> bool:
-    if not _http(value) or _blocked_host(value):
+    """Observe media responses even on known noisy CDNs; final candidates are filtered later."""
+    if not _http(value):
         return False
     parsed = urlparse(value)
     haystack = f"{parsed.path}?{parsed.query}".lower()
