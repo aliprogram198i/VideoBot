@@ -4,17 +4,21 @@ on:
   push:
     branches:
       - fix/krx18-vdohd-public-player-2026-09-16
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   patch:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/krx18-vdohd-public-player-2026-09-16
+          ref: ${{ github.head_ref || 'fix/krx18-vdohd-public-player-2026-09-16' }}
           fetch-depth: 0
 
       - name: Patch resolver
@@ -61,7 +65,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f .github/workflows/krx18-vdohd-patch.yml
-          git add downloader/krx18_resolver.py downloader/krx18_vdohd_player.py tests/test_krx18_vdohd_player.py .github/workflows/krx18-vdohd-patch.yml
+          rm -f .github/workflows/krx18-vdohd-patch.yml scripts/.krx18_vdohd_trigger
+          git add downloader/krx18_resolver.py downloader/krx18_vdohd_player.py tests/test_krx18_vdohd_player.py .github/workflows/krx18-vdohd-patch.yml scripts/.krx18_vdohd_trigger
           git commit -m "fix: integrate VDOHD public player evidence" || exit 0
           git push origin HEAD:fix/krx18-vdohd-public-player-2026-09-16
