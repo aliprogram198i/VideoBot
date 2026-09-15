@@ -29,6 +29,11 @@ KRX18_SETTLE_MS = 600
 KRX18_PLAYER_SETTLE_MS = 1800
 KRX18_MAX_SERVER_TARGETS = 3
 KRX18_MAX_CANDIDATES = 8
+KRX18_MAX_PLAYER_CLICKS = 3
+KRX18_PLAYER_CLICK_TIMEOUT_MS = 1200
+KRX18_PLAYER_CLICK_TERMS = (
+    "play", "watch", "stream", "player", "مشاهدة", "تشغيل", "مشغل", "ابدأ",
+)
 
 
 def is_krx18_url(value: str) -> bool:
@@ -239,6 +244,44 @@ async def _collect_media(page, source_url, source_title, target, candidates, net
             candidates.setdefault(value, (score, target))
 
 
+async def _probe_player_controls(page, deadline: float) -> int:
+    """Perform a few bounded public-player interactions; never bypass access controls."""
+    clicked = 0
+    seen = set()
+    try:
+        controls = page.locator("button,a,[role='button'],[onclick],video")
+        count = min(await controls.count(), 30)
+    except Exception:
+        return 0
+    for index in range(count):
+        if clicked >= KRX18_MAX_PLAYER_CLICKS or time.monotonic() >= deadline:
+            break
+        try:
+            control = controls.nth(index)
+            text = await control.inner_text(timeout=300)
+            aria = await control.get_attribute("aria-label") or ""
+            title = await control.get_attribute("title") or ""
+            cls = await control.get_attribute("class") or ""
+            label = " ".join((text, aria, title, cls)).casefold().strip()
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            if not any(term in label for term in KRX18_PLAYER_CLICK_TERMS):
+                continue
+            if "download" in label or "تحميل" in label or "ad" in label:
+                continue
+            await control.click(timeout=KRX18_PLAYER_CLICK_TIMEOUT_MS, force=True)
+            clicked += 1
+            print(f"🖱️ KRX18 Dedicated Resolver: activated public player control {clicked}/{KRX18_MAX_PLAYER_CLICKS}", flush=True)
+            remaining = max(0.2, deadline - time.monotonic())
+            await page.wait_for_timeout(min(500, int(remaining * 1000)))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            continue
+    return clicked
+
+
 async def _resolve_media_async(
     url: str,
     *,
@@ -362,6 +405,18 @@ async def _resolve_media_async(
                         candidates,
                         network_media=network_media,
                     )
+                    clicked = await _probe_player_controls(page, deadline)
+                    if clicked:
+                        remaining = max(0.2, deadline - time.monotonic())
+                        await page.wait_for_timeout(min(800, int(remaining * 1000)))
+                        await _collect_media(
+                            page,
+                            url,
+                            source_title,
+                            target,
+                            candidates,
+                            network_media=network_media,
+                        )
                     if network_media:
                         print(
                             f"🎥 KRX18 Dedicated Resolver: server exposed {len(network_media)} media response(s)",
