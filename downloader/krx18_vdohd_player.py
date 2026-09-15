@@ -37,7 +37,7 @@ def is_vdohd_url(value: str) -> bool:
 def _normalise(raw: str, base_url: str) -> str | None:
     value = html.unescape(str(raw or "")).strip()
     value = value.replace("\\/", "/").replace("\\u002F", "/").replace("\\u002f", "/")
-    value = value.rstrip(".,;)]}\")
+    value = value.rstrip(".,;)]}")
     if value.startswith("//"):
         value = "https:" + value
     value = urljoin(base_url, value)
@@ -77,18 +77,15 @@ def extract_vdohd_media_urls(text: str, base_url: str) -> list[str]:
     for match in _MEDIA_CONTEXT_RE.finditer(text):
         add(match.group("url"))
 
-    # Some JWPlayer configs use an array of objects with a `file` key but
-    # escape the slash characters or wrap the URL in JSON.
-    for match in _URL_RE.findall(text):
-        context = text[max(0, match.start() - 180):match.start()] if hasattr(match, "start") else ""
+    for match in _URL_RE.finditer(text):
+        context = text[max(0, match.start() - 180):match.start()]
         if re.search(r"(?:file|src|source|playlist|media|video|stream|hls|dash)", context, re.I):
-            add(match)
+            add(match.group(0))
 
-    for match in _PROTOCOL_URL_RE.findall(text):
-        context_start = max(0, text.find(match) - 180)
-        context = text[context_start:text.find(match)]
+    for match in _PROTOCOL_URL_RE.finditer(text):
+        context = text[max(0, match.start() - 180):match.start()]
         if re.search(r"(?:file|src|source|playlist|media|video|stream|hls|dash)", context, re.I):
-            add(match)
+            add(match.group(0))
 
     return found[:12]
 
@@ -114,7 +111,6 @@ async def collect_vdohd_public_player_media(page) -> list[str]:
         texts.extend([str(x) for x in rows or [] if x])
     except Exception:
         pass
-
     try:
         resource_names = await page.evaluate("""() => performance.getEntriesByType('resource').map(e => e.name || '')""")
         texts.extend([str(x) for x in resource_names or [] if x])
