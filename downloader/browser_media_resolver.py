@@ -9,6 +9,7 @@ defeat DRM, or circumvent access controls.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -29,9 +30,9 @@ DEFAULT_MAX_SERVER_CLICKS = 8
 _FAST_NAV_HOSTS = {"krx18.com"}
 FAST_NAV_TIMEOUT_MS = 12_000
 FAST_NAV_SETTLE_MS = 800
-FAST_NAV_MAX_PAGES = 2
-FAST_NAV_MAX_TARGETS = 4
-FAST_NAV_MAX_CLICKS = 4
+FAST_NAV_MAX_PAGES = 4
+FAST_NAV_MAX_TARGETS = 8
+FAST_NAV_MAX_CLICKS = 6
 
 _MEDIA_CONTENT_TYPES = (
     "video/", "audio/", "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml",
@@ -104,6 +105,41 @@ def _browser_budget(url: str, timeout_ms: int, settle_ms: int, max_pages: int) -
             FAST_NAV_MAX_CLICKS,
         )
     return timeout_ms, settle_ms, max_pages, DEFAULT_MAX_NAV_TARGETS, DEFAULT_MAX_SERVER_CLICKS
+
+
+def _extract_script_media_urls(script_text: str) -> list[str]:
+    if not isinstance(script_text, str) or not script_text:
+        return []
+    decoded = html.unescape(script_text).replace("\\/", "/")
+    pattern = re.compile(r"https?://[^\s\"'<>\\]+(?:\?[^\s\"'<>\\]*)?", re.I)
+    results = []
+    seen = set()
+    for match in pattern.findall(decoded):
+        candidate = match.rstrip("\\.,;)]}")
+        path = urlparse(candidate).path.lower()
+        if not any(marker in path for marker in _MEDIA_MARKERS):
+            continue
+        if candidate not in seen and _is_http_url(candidate):
+            seen.add(candidate)
+            results.append(candidate)
+    return results
+
+
+async def _collect_script_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:
+    try:
+        scripts = await page.locator("script").all_text_contents()
+    except Exception:
+        return
+    for script_text in scripts or []:
+        for media_url in _extract_script_media_urls(script_text):
+            try:
+                validator(media_url)
+            except Exception:
+                continue
+            current = candidates.get(media_url)
+            score = 132
+            if current is None or score > current[0]:
+                candidates[media_url] = (score, None)
 
 
 def _is_download_target(text: str, href: str) -> bool:
@@ -262,6 +298,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_ms)
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
+                    await _collect_script_media(page, validator, candidates)
 
                     targets = await _discover_navigation_targets(page, page_url, max_nav_targets)
                     for target in targets:
@@ -273,6 +310,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     await _click_server_controls(page, max_server_clicks)
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
+                    await _collect_script_media(page, validator, candidates)
 
                     frame_urls = []
                     for frame in page.frames:
