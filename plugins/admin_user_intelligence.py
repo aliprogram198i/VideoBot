@@ -38,15 +38,13 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
-def _segment(downloads: int, success_rate: float, active_days: int, last_seen: Any) -> str:
+def _segment(downloads: int, active_days: int, last_seen: Any) -> str:
     last = _parse_dt(last_seen)
     age_days = 9999
     if last:
         age_days = max(0, (datetime.now(timezone.utc) - last).days)
     if age_days > 30:
         return "💤 خامل"
-    if success_rate < 40 and downloads >= 5:
-        return "⚠️ كثير الفشل"
     if downloads >= 50 or active_days >= 20:
         return "🔥 شديد النشاط"
     if downloads >= 20 or active_days >= 10:
@@ -82,20 +80,6 @@ async def intelligence_callback(update, context, get_db, owner_id: int) -> None:
         return
 
     total = len(rows)
-    success = 0
-    for row in rows:
-        # The current downloads table represents persisted download attempts.
-        # A missing explicit status is treated as legacy/unknown, not as success.
-        if "status" in row.keys() and str(row["status"] or "").lower() in {"success", "succeeded", "completed", "ok"}:
-            success += 1
-    if total and success == 0:
-        # Legacy rows have no status column; don't manufacture a false rate.
-        success_rate_text = "غير متاح (سجل قديم)"
-        success_rate = 100.0
-    else:
-        success_rate = (success / total * 100.0) if total else 0.0
-        success_rate_text = f"{success_rate:.0f}%"
-
     active_days = len({str(r["created_at"])[:10] for r in rows if r["created_at"]})
     websites = Counter(str(r["website"] or "Other") for r in rows)
     media = Counter(str(r["media_type"] or "unknown") for r in rows)
@@ -103,7 +87,7 @@ async def intelligence_callback(update, context, get_db, owner_id: int) -> None:
     top_web = websites.most_common(3)
     top_media = media.most_common(3)
     top_quality = qualities.most_common(3)
-    segment = _segment(int(user["downloads"] or 0), success_rate, active_days, user["last_seen"])
+    segment = _segment(int(user["downloads"] or 0), active_days, user["last_seen"])
 
     location = _safe(user["country"], "غير محدد")
     if user["country_code"]:
@@ -118,7 +102,7 @@ async def intelligence_callback(update, context, get_db, owner_id: int) -> None:
         f"🆔 <code>{user_id}</code>",
         f"🏷️ التصنيف: <b>{segment}</b>",
         f"📥 الطلبات المسجلة: {total}",
-        f"📊 نجاح موثق: {success_rate_text}",
+        "📊 نجاح الطلبات: غير متاح حاليًا — السجل لا يحتوي حالة نجاح/فشل مستقلة",
         f"📅 أيام النشاط: {active_days}",
         f"🕒 آخر نشاط: {_safe(user['last_seen'])}",
         "",
