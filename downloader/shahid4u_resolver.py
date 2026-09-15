@@ -17,6 +17,7 @@ MAX_CANDIDATES = 16
 TIMEOUT_SECONDS = 25
 DOWNLOAD_TERMS = ("download", "تحميل", "تنزيل", "direct", "رابط التحميل")
 QUALITY_RE = re.compile(r"(?:2160|1440|1080|720|480|360|240)\s*p", re.I)
+QUALITY_VALUE_RE = re.compile(r"(?<!\d)(2160|1440|1080|720|480|360|240)\s*p?\b", re.I)
 MEDIA_EXTENSIONS = (".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".flv", ".m3u8", ".mpd")
 REJECT_HOSTS = ("microsoft.com", "google.com", "googleadservices.com", "doubleclick.net")
 QUALITY_VALUES = (2160, 1440, 1080, 720, 480, 360, 240)
@@ -32,12 +33,7 @@ class Shahid4uCandidate:
     label: str = ""
 
     def as_dict(self) -> dict[str, object]:
-        return {
-            "url": self.url,
-            "quality": self.quality,
-            "score": self.score,
-            "label": self.label,
-        }
+        return {"url": self.url, "quality": self.quality, "score": self.score, "label": self.label}
 
 
 def _is_http(url: str) -> bool:
@@ -68,11 +64,11 @@ def extract_quality(value: str) -> int | None:
     """Extract an explicit Shahid4u quality marker from text or URL."""
     if not isinstance(value, str):
         return None
-    match = QUALITY_RE.search(value)
+    match = QUALITY_VALUE_RE.search(value)
     if not match:
         return None
     try:
-        quality = int(match.group(0)[:-1])
+        quality = int(match.group(1))
     except (TypeError, ValueError):
         return None
     return quality if quality in QUALITY_VALUES else None
@@ -84,7 +80,7 @@ def _probable_media(url: str, label: str = "") -> bool:
     value = f"{label} {url}".casefold()
     if any(marker in value for marker in ("secure_stream", "direct_stream", "mycima")):
         return True
-    if QUALITY_RE.search(value):
+    if QUALITY_RE.search(value) or extract_quality(value):
         return True
     if any(urlparse(url).path.lower().endswith(ext) for ext in MEDIA_EXTENSIONS):
         return True
@@ -133,18 +129,10 @@ def _extract_metadata(page_url: str, body: bytes) -> list[Shahid4uCandidate]:
 
 
 def _extract(page_url: str, body: bytes) -> list[str]:
-    """Backward-compatible URL-only extraction."""
     return [item.url for item in _extract_metadata(page_url, body)]
 
 
-def resolve_candidates(
-    url: str,
-    *,
-    validator,
-    request_factory=Request,
-    open_function=None,
-    read_function=None,
-) -> list[dict[str, object]]:
+def resolve_candidates(url: str, *, validator, request_factory=Request, open_function=None, read_function=None) -> list[dict[str, object]]:
     """Return public Shahid4u candidates while preserving quality metadata."""
     if not _is_shahid4u(url) or open_function is None or read_function is None:
         return []
@@ -168,22 +156,12 @@ def resolve_candidates(
     return [item.as_dict() for item in candidates]
 
 
-def resolve(
-    url: str,
-    *,
-    validator,
-    request_factory=Request,
-    open_function=None,
-    read_function=None,
-) -> list[str]:
+def resolve(url: str, *, validator, request_factory=Request, open_function=None, read_function=None) -> list[str]:
     """Return public download/server candidates exposed by a Shahid4u page."""
-    return [
-        item["url"]
-        for item in resolve_candidates(
-            url,
-            validator=validator,
-            request_factory=request_factory,
-            open_function=open_function,
-            read_function=read_function,
-        )
-    ]
+    return [item["url"] for item in resolve_candidates(
+        url,
+        validator=validator,
+        request_factory=request_factory,
+        open_function=open_function,
+        read_function=read_function,
+    )]
