@@ -73,34 +73,22 @@ def main() -> None:
         install_download_guards = importlib.import_module("security.download_guard").install_download_guards
         run_evidence_monitor = importlib.import_module("downloader.evidence_monitor").run_periodic
         smart_telemetry_store = importlib.import_module("downloader.smart_learning").SmartTelemetryStore
+        install_multi_url_batch = importlib.import_module("plugins.multi_url_batch").install
 
         runtime_config.apply_to_bot_module(bot_module)
         install_yoinku_compat(bot_module)
         install_download_guards(bot_module)
-        # Keep all Shhaiid4u layers isolated. Install the older layers first;
-        # the player bridge becomes the outer wrapper and gets first opportunity.
         install_shhaiid4u_resolver(bot_module)
         install_shhaiid4u_network_discovery(bot_module)
         install_shhaiid4u_player_bridge(bot_module)
-        # Install the movie gate before Smart Media Bridge so rejected direct
-        # artifacts are treated as a failed attempt and the bridge can continue
-        # through its existing candidate/browser fallback chain.
         install_movie_source_guard(bot_module)
-        # Capture exactly the callable that Smart Media Bridge records as its
-        # legacy extractor. This is an explicit probe hook; no closure inspection.
         legacy_probe = getattr(bot_module, "extract_direct_media_urls", None)
         install_smart_media_bridge(bot_module)
         if callable(legacy_probe):
             bot_module._alibot_legacy_extractor_probe = legacy_probe
-        # The adaptive layer applies ordering BEFORE observation. It only
-        # reorders already-discovered candidates and cannot bypass validation.
         install_adaptive_orchestrator(bot_module)
-        # Shadow observation is deliberately the outermost wrapper around
-        # candidate extraction. It reads only persisted paired evidence, records
-        # shadow decisions, and schedules background evidence collection. By
-        # being outermost, its finally block guarantees _observe() runs after
-        # Adaptive has completed and returned its result.
         install_shadow_runtime_observer(bot_module)
+        install_multi_url_batch(bot_module)
         install_telegram_media_retry()
 
         original_run_polling = Application.run_polling
@@ -115,16 +103,10 @@ def main() -> None:
                 register_user_features(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 register_whatsapp_audio(self, bot_module)
-
-                # One canonical administrative runtime. It removes retired
-                # handlers before installing the isolated admin ownership graph.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
-
                 print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
 
-                # The evidence monitor is staging-only and starts after PTB
-                # initializes its event loop. It is read-only and fail-open.
                 async def start_evidence_monitor(application):
                     nonlocal evidence_monitor_started
                     if evidence_monitor_started:
