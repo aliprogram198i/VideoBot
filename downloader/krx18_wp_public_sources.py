@@ -16,6 +16,7 @@ URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
 TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div|li|span)[^>]*?(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
 ATTR_RE = re.compile(r"(?:href|src|data-server|data-player|data-download|data-url|data-href|onclick)\s*=\s*[\"']([^\"']+)[\"']", re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+DIRECT_MEDIA_RE = re.compile(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", re.I)
 
 
 def post_id_from_url(source_url: str) -> str | None:
@@ -37,6 +38,8 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
     parsed = urlparse(target)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return
+    if DIRECT_MEDIA_RE.search(parsed.path) or DIRECT_MEDIA_RE.search(parsed.query):
+        return
     ranked[target] = max(score, ranked.get(target, 0))
 
 
@@ -54,14 +57,12 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
         label = _clean_text(f"{attrs} {body}")
         if not SERVER_RE.search(label):
             continue
-        values = ATTR_RE.findall(attrs)
-        for raw in values:
-            value = str(raw)
+        for raw in ATTR_RE.findall(attrs):
             score = 115
-            lower = f"{label} {value}".casefold()
+            lower = f"{label} {raw}".casefold()
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
-            _add_target(ranked, value, base_url, score)
+            _add_target(ranked, raw, base_url, score)
         for raw in URL_RE.findall(body):
             _add_target(ranked, raw, base_url, 100)
 
@@ -71,18 +72,18 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
     for match in anchor_re.finditer(source_html):
         attrs = match.group("attrs") or ""
         body = match.group("body") or ""
-        label = _clean_text(body)
-        hrefs = re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I)
         if not SERVER_RE.search(_clean_text(f"{attrs} {body}")):
             continue
-        for href in hrefs:
+        for href in re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I):
             _add_target(ranked, href, base_url, 120)
 
     # Last bounded fallback: an absolute URL is accepted only when a Server N
-    # marker occurs in a tight surrounding window, preventing unrelated page
-    # assets/downloads from becoming source targets.
+    # marker occurs nearby, and never when that URL is already a direct media
+    # asset. This prevents unrelated ads/assets from becoming first-hop targets.
     for value in URL_RE.findall(source_html):
         target = value.rstrip(".,;)]}")
+        if DIRECT_MEDIA_RE.search(target):
+            continue
         pos = source_html.find(value)
         nearby = source_html[max(0, pos - 700):pos + len(value) + 250]
         if SERVER_RE.search(_clean_text(nearby)):
