@@ -3632,6 +3632,61 @@ async def split_video_for_telegram(
                 f"FFmpeg did not create: {output_file}"
             )
 
+        try:
+            output_size = os.path.getsize(output_file)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not inspect FFmpeg output: {output_file}"
+            ) from exc
+
+        if output_size <= 0:
+            try:
+                os.remove(output_file)
+            except OSError:
+                pass
+
+            retry_process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                source_file,
+                "-ss",
+                f"{start_time:.3f}",
+                "-t",
+                f"{part_duration:.3f}",
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-reset_timestamps",
+                "1",
+                output_file,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            _, retry_stderr = await retry_process.communicate()
+
+            if retry_process.returncode != 0:
+                raise RuntimeError(
+                    "FFmpeg split retry failed: "
+                    + retry_stderr.decode(
+                        "utf-8",
+                        errors="replace",
+                    ).strip()
+                )
+
+            if (
+                not os.path.isfile(output_file)
+                or os.path.getsize(output_file) <= 0
+            ):
+                raise RuntimeError(
+                    f"FFmpeg produced an empty split part: {output_file}"
+                )
+
     # Initial split.
     initial_duration = duration / initial_parts
     initial_files = []
@@ -3665,7 +3720,21 @@ async def split_video_for_telegram(
     final_files = []
 
     async def process_part(source_file, part_number):
-        source_size = os.path.getsize(source_file)
+        try:
+            source_size = os.path.getsize(source_file)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not inspect split part: {source_file}"
+            ) from exc
+
+        if source_size <= 0:
+            try:
+                os.remove(source_file)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"Empty split part rejected before delivery: {source_file}"
+            )
 
         if source_size <= max_part_bytes:
             final_files.append(source_file)
@@ -3766,7 +3835,38 @@ async def split_video_for_telegram(
 
     final_files.sort()
 
-    return final_files
+    # Final hard validation: Telegram must never receive an empty part.
+    validated_files = []
+    for part_file in final_files:
+        if not os.path.isfile(part_file):
+            raise RuntimeError(
+                f"Video part disappeared before delivery: {part_file}"
+            )
+
+        try:
+            part_size = os.path.getsize(part_file)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not inspect final video part: {part_file}"
+            ) from exc
+
+        if part_size <= 0:
+            try:
+                os.remove(part_file)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"Empty video part rejected before Telegram delivery: {part_file}"
+            )
+
+        if part_size > max_part_bytes:
+            raise RuntimeError(
+                f"Video part exceeds Telegram-safe limit: {part_size} bytes"
+            )
+
+        validated_files.append(part_file)
+
+    return validated_files
 
 
 async def split_audio_for_telegram(
