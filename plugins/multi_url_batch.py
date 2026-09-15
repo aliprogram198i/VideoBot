@@ -8,6 +8,18 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 _MAX_URLS = 5
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _TRAILING = ".,!?;:)]}"
+_TERMINAL_CHOICES = {
+    "video_best",
+    "video_1080",
+    "video_720",
+    "video_480",
+    "video_360",
+    "audio_best",
+    "audio_320",
+    "audio_256",
+    "audio_192",
+    "audio_128",
+}
 
 
 def extract_urls(text: str) -> list[str]:
@@ -47,14 +59,7 @@ class _UpdateProxy:
 
 
 class _QueryProxy:
-    """Route callback UI operations to a per-URL progress message.
-
-    The original callback query is answered only once by the first real
-    download call. Later calls still receive the same callback data/user,
-    while their edit/delete operations target their own Telegram message.
-    This prevents the original handler from trying to edit/delete the same
-    callback message multiple times.
-    """
+    """Route callback UI operations to a per-URL progress message."""
 
     def __init__(self, query, status_message=None):
         self._query = query
@@ -137,17 +142,14 @@ def install(bot_module) -> None:
             return await original_message(update, context)
 
         if len(valid) == 1:
-            # The original handler expects one URL in message.text. When the
-            # user sent several URLs but only one survived validation, pass
-            # that clean URL through unchanged to the existing single-URL path.
             single_message = _MessageProxy(message, valid[0])
             single_update = _UpdateProxy(update, message=single_message)
             return await original_message(single_update, context)
 
         context.user_data["video_urls"] = valid
-        # Keep the first URL active while the existing type/quality callback
-        # flow runs. Those callbacks validate video_url before download_media
-        # is reached; removing it here makes a fresh batch look expired.
+        # Keep the first URL alive while the existing type/quality callback
+        # flow is being displayed. The batch must not be consumed by the
+        # intermediate video_menu/audio_menu callback.
         context.user_data["video_url"] = valid[0]
         keyboard = InlineKeyboardMarkup([
             [
@@ -177,6 +179,13 @@ def install(bot_module) -> None:
     async def download_media(update, context):
         urls = context.user_data.get("video_urls")
         if not isinstance(urls, list) or len(urls) <= 1:
+            return await original_download(update, context)
+
+        # video_menu/audio_menu/main_menu are navigation states, not terminal
+        # download requests. Delegate them unchanged so the original handler
+        # can render the next keyboard without consuming the batch state.
+        choice = getattr(update.callback_query, "data", None)
+        if choice not in _TERMINAL_CHOICES:
             return await original_download(update, context)
 
         query = update.callback_query
