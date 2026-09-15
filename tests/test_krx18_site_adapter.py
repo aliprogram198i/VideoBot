@@ -1,5 +1,6 @@
 from downloader.krx18_resolver import (
     _is_media_response_url,
+    _obvious_identity_mismatch,
     identity_score,
     is_krx18_url,
 )
@@ -33,6 +34,19 @@ def test_unrelated_media_without_provenance_is_rejected_by_identity_score():
     assert score < 70
 
 
+def test_explicit_different_movie_id_is_rejected():
+    assert _obvious_identity_mismatch(
+        "https://krx18.com/movies/84170-femdom-deadly-thigh-squeeze-her-absolute-leg-scissors/",
+        "player movie id: 99999",
+        "https://playkrx18.site/watch/99999",
+    )
+    assert not _obvious_identity_mismatch(
+        "https://krx18.com/movies/84170-femdom-deadly-thigh-squeeze-her-absolute-leg-scissors/",
+        "player movie id: 84170",
+        "https://playkrx18.site/watch/84170",
+    )
+
+
 def test_player_hls_response_is_media():
     assert _is_media_response_url(
         "https://media.example.invalid/session/playlist",
@@ -42,7 +56,7 @@ def test_player_hls_response_is_media():
 
 def test_player_video_response_is_media():
     assert _is_media_response_url(
-        "https://media.example.invalid/session/file",
+        "https://z6v2p9a8.bkcdn.net/library/141372/example.mp4",
         "video/mp4",
     )
 
