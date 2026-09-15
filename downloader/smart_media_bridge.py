@@ -10,6 +10,9 @@ import time
 from urllib.parse import urlparse
 
 SHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
+GENERIC_MAX_VIDEO_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
+MOVIE_MIN_VIDEO_BYTES = 5 * 1024 * 1024
+MOVIE_MIN_VIDEO_DURATION = 60.0
 SHAHID4U_MIN_VIDEO_BYTES = 5 * 1024 * 1024
 SHAHID4U_MIN_VIDEO_DURATION = 60.0
 SHAHID4U_PREFLIGHT_READ_BYTES = 64 * 1024
@@ -143,6 +146,7 @@ def install(bot_module) -> None:
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
     telemetry_module = __import__("downloader.resolver_outcome_telemetry", fromlist=["ResolverOutcomeTelemetry"])
     telemetry = telemetry_module.ResolverOutcomeTelemetry()
+    movie_guard = __import__("downloader.movie_source_guard", fromlist=["should_guard", "is_ad_host", "assess_local_media"])
     browser_candidate_cache = {}
 
     async def _run_resolver(name, operation, *args, source_url=None, media_kind="unknown", **kwargs):
@@ -180,6 +184,53 @@ def install(bot_module) -> None:
         if isinstance(value, str) and value.startswith(("http://", "https://")):
             return value
         return None
+
+    def _post_handoff_gate(path, source_url, candidate_url, is_audio):
+        if not path or is_audio:
+            return True
+        try:
+            if movie_guard.is_ad_host(candidate_url):
+                print("🛡️ Browser candidate gate: rejected advertising host", flush=True)
+                os.remove(path)
+                return False
+        except Exception:
+            pass
+        try:
+            if movie_guard.should_guard(source_url, is_audio=False):
+                gate = movie_guard.assess_local_media(
+                    path,
+                    source_url,
+                    candidate_url=candidate_url,
+                    is_audio=False,
+                    min_bytes=MOVIE_MIN_VIDEO_BYTES,
+                    min_duration=MOVIE_MIN_VIDEO_DURATION,
+                )
+                if not gate.accepted:
+                    print(
+                        f"🛡️ Browser candidate gate: rejected media ({gate.reason})",
+                        flush=True,
+                    )
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    return False
+                print(
+                    f"🛡️ Browser candidate gate: accepted verified media "
+                    f"({gate.duration_seconds:.1f}s, {gate.size_bytes} bytes)",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(
+                f"⚠️ Browser candidate gate failed closed ({type(exc).__name__})",
+                flush=True,
+            )
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return False
+        return True
 
     def _queue_candidates(source_url, values):
         if not source_url:
@@ -313,6 +364,12 @@ def install(bot_module) -> None:
                 return result
             print(f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
+            if not is_audio:
+                # The local file is delivered through the existing Telegram splitter.
+                # Do not cap browser acquisition at Telegram's per-file limit, or a
+                # valid large source becomes unavailable and a smaller ad candidate
+                # can win instead. Keep the acquisition bound explicit at 2 GiB.
+                max_bytes = max(max_bytes, GENERIC_MAX_VIDEO_HANDOFF_BYTES)
             if is_shahid4u and not is_audio:
                 max_bytes = max(max_bytes, SHAHID4U_MAX_HANDOFF_BYTES)
             handoff_kwargs = {"validator": bot_module.validate_public_http_url, "is_audio": is_audio, "max_file_bytes": max_bytes, "referer_url": source_url if isinstance(source_url, str) else None}
@@ -341,6 +398,12 @@ def install(bot_module) -> None:
                         size = os.path.getsize(local_path)
                     except OSError:
                         size = 0
+                    if not _post_handoff_gate(local_path, source_url, candidate, is_audio):
+                        print(
+                            f"🛡️ Browser Download Handoff: candidate rejected after download ({size} bytes); trying next candidate",
+                            flush=True,
+                        )
+                        continue
                     print(f"🌐 Browser Download Handoff: succeeded ({size} bytes)", flush=True)
                     handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}
                     handoff_diagnostics.update({"status": "browser_download_handoff_success", "handoff_candidate": candidate, "bytes_downloaded": size})
