@@ -18,6 +18,7 @@ def _user_keyboard(user_id: int, banned: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🟢 فك الحظر" if banned else "🚫 حظر المستخدم", callback_data=f"unban_{user_id}" if banned else f"ban_{user_id}")],
         [InlineKeyboardButton("🧠 ذكاء المستخدم", callback_data=f"admin_user_intel_view_{user_id}")],
+        [InlineKeyboardButton("🗃️ أرشيف المستخدم", callback_data=f"admin_user_archive_{user_id}_0")],
         [InlineKeyboardButton("📢 إرسال رسالة", callback_data=f"message_user_{user_id}")],
         [InlineKeyboardButton("🗑️ حذف المستخدم", callback_data=f"delete_user_{user_id}")],
         [InlineKeyboardButton("🔗 روابط التحميل", callback_data=f"admin_user_links_{user_id}_0")],
