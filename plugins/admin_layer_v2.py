@@ -41,6 +41,7 @@ from .admin_global_history import register_admin_global_history
 from .admin_ai import register_admin_ai
 from .smart_operations import register_smart_operations
 from .admin_user_history import clear_prompt_callback, clear_confirm_callback
+from .admin_user_intelligence import register_admin_user_intelligence
 
 
 async def _admin_entry(update, context, admin_id: int) -> None:
@@ -102,7 +103,7 @@ def _remove_legacy_admin_handlers(app: Any) -> tuple[int, int]:
 
 
 def _register_core_callback(app, callback, pattern: str, get_db, owner_id: int, group: int = -100) -> None:
-    app.add_handler(CallbackQueryHandler(lambda u, c: callback(u, c, get_db, owner_id), pattern=pattern), group=group)
+    app.add_handler(CallbackQueryHandler(lambda u, c: callback(u, c, get_db, owner_id), pattern=pattern, group=group))
 
 
 async def _clear_cancel(update, context, get_db, owner_id: int) -> None:
@@ -143,6 +144,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_security_center(app, admin_id, get_db)
     register_admin_smart_analytics(app, get_db, admin_id)
     register_admin_observability(app, get_db, admin_id)
+    register_admin_user_intelligence(app, get_db, admin_id, bot_module)
 
     # Explicit owner-only phase-3 commands provide safe entry points without
     # altering the existing top-level keyboard layout.
