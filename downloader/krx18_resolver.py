@@ -25,7 +25,7 @@ MEDIA_CONTENT_TYPES = (
 )
 KRX18_RESOLVE_BUDGET_SECONDS = 30.0
 KRX18_SERVER_TIMEOUT_MS = 7000
-KRX18_PLAYER_SETTLE_MS = 1800
+KRX18_PLAYER_SETTLE_MS = 3500
 KRX18_MAX_SERVER_TARGETS = 3
 KRX18_MAX_CANDIDATES = 8
 KRX18_MAX_PLAYER_CLICKS = 3
@@ -176,6 +176,24 @@ async def _extract_source_targets(page, base_url):
     return rank_targets(rows or [], base_url, KRX18_MAX_SERVER_TARGETS)
 
 
+async def _performance_media_urls(page) -> list[str]:
+    """Return media-like resources already requested by the public player."""
+    script = """() => performance.getEntriesByType('resource').map(e => ({name:e.name || '', initiatorType:e.initiatorType || ''}))"""
+    try:
+        rows = await page.evaluate(script)
+    except Exception:
+        return []
+    result = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        value = row.get("name")
+        initiator = str(row.get("initiatorType") or "").casefold()
+        if isinstance(value, str) and (_media_url(value) or initiator in {"video", "audio", "media"}):
+            result.append(value)
+    return list(dict.fromkeys(result))
+
+
 async def _collect_media(page, source_url, source_title, target, candidates, network_media=None):
     """Collect media from an explicit server target and its player frames."""
     try:
@@ -196,6 +214,10 @@ async def _collect_media(page, source_url, source_title, target, candidates, net
         return
 
     media = list(network_media or [])
+    try:
+        media.extend(await _performance_media_urls(page))
+    except Exception:
+        pass
     try:
         media.extend(await page.locator("video,audio,source").evaluate_all(
             """els=>els.map(el=>el.currentSrc||el.src||el.getAttribute('src')||el.getAttribute('data-src')||el.getAttribute('data-url')||'')"""
@@ -219,6 +241,11 @@ async def _collect_media(page, source_url, source_title, target, candidates, net
             ))
             for script in await frame.locator("script").all_text_contents():
                 media.extend(re.findall(r"https?://[^\s\"'<>\\]+", html.unescape(script).replace("\\/", "/"), re.I))
+            try:
+                frame_rows = await frame.evaluate("""() => performance.getEntriesByType('resource').map(e => e.name || '')""")
+                media.extend(frame_rows or [])
+            except Exception:
+                pass
         except Exception:
             continue
 
@@ -235,7 +262,7 @@ async def _probe_player_controls(page, deadline: float) -> int:
     clicked = 0
     seen = set()
     try:
-        controls = page.locator("button,a,[role='button'],[onclick],video")
+        controls = page.locator("button,a,[role='button'],[onclick],video,iframe")
         count = min(await controls.count(), 30)
     except Exception:
         return 0
@@ -244,16 +271,19 @@ async def _probe_player_controls(page, deadline: float) -> int:
             break
         try:
             control = controls.nth(index)
+            tag = (await control.evaluate("el => (el.tagName || '').toLowerCase()")).strip()
             label = " ".join((
                 await control.inner_text(timeout=300),
                 await control.get_attribute("aria-label") or "",
                 await control.get_attribute("title") or "",
                 await control.get_attribute("class") or "",
             )).casefold().strip()
+            if tag in {"video", "iframe"}:
+                label = label or tag
             if not label or label in seen:
                 continue
             seen.add(label)
-            if not any(term in label for term in KRX18_PLAYER_CLICK_TERMS):
+            if tag not in {"video", "iframe"} and not any(term in label for term in KRX18_PLAYER_CLICK_TERMS):
                 continue
             if "download" in label or "تحميل" in label or "ad" in label:
                 continue
@@ -261,7 +291,7 @@ async def _probe_player_controls(page, deadline: float) -> int:
             clicked += 1
             print(f"🖱️ KRX18 Dedicated Resolver: activated public player control {clicked}/{KRX18_MAX_PLAYER_CLICKS}", flush=True)
             remaining = max(0.2, deadline - time.monotonic())
-            await page.wait_for_timeout(min(500, int(remaining * 1000)))
+            await page.wait_for_timeout(min(700, int(remaining * 1000)))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -344,12 +374,20 @@ async def _resolve_media_async(url: str, *, validator, request_factory=None, ope
                     except Exception:
                         pass
 
+                def on_request(request):
+                    try:
+                        if _media_url(request.url):
+                            network_media.append(request.url)
+                    except Exception:
+                        pass
+
                 try:
                     parsed = urlparse(target)
                     print(f"🎯 KRX18 Dedicated Resolver: opening server {index} ({parsed.hostname or 'unknown'})", flush=True)
                     remaining = max(0.5, deadline - time.monotonic())
                     page = await context.new_page()
                     page.on("response", on_response)
+                    page.on("request", on_request)
                     await page.goto(target, wait_until="domcontentloaded", timeout=min(KRX18_SERVER_TIMEOUT_MS, int(remaining * 1000)))
                     remaining = max(0.2, deadline - time.monotonic())
                     await page.wait_for_timeout(min(KRX18_PLAYER_SETTLE_MS, int(remaining * 1000)))
@@ -357,10 +395,10 @@ async def _resolve_media_async(url: str, *, validator, request_factory=None, ope
                     clicked = await _probe_player_controls(page, deadline)
                     if clicked:
                         remaining = max(0.2, deadline - time.monotonic())
-                        await page.wait_for_timeout(min(800, int(remaining * 1000)))
+                        await page.wait_for_timeout(min(1000, int(remaining * 1000)))
                         await _collect_media(page, url, source_title, target, candidates, network_media=network_media)
                     if network_media:
-                        print(f"🎥 KRX18 Dedicated Resolver: server {index} exposed {len(network_media)} media response(s)", flush=True)
+                        print(f"🎥 KRX18 Dedicated Resolver: server {index} exposed {len(set(network_media))} media response/request(s)", flush=True)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
