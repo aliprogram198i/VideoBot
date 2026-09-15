@@ -13,6 +13,7 @@ import time
 from urllib.parse import unquote, urlparse
 
 from .krx18_wp_public_sources import fetch_public_post
+from .krx18_vdohd_player import collect_vdohd_public_player_media, is_vdohd_url
 
 NON_SOURCE_HOSTS = {
     "onclckbn.net", "cdn.jsdelivr.net", "doubleclick.net",
@@ -214,6 +215,15 @@ async def _collect_media(page, source_url, source_title, target, candidates, net
         return
 
     media = list(network_media or [])
+    if is_vdohd_url(page_url):
+        try:
+            media.extend(await collect_vdohd_public_player_media(page))
+            if media:
+                print(f"🎥 KRX18 VDOHD Player: collected {len(set(media))} public player evidence URL(s)", flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"⚠️ KRX18 VDOHD Player: evidence extraction failed ({type(exc).__name__})", flush=True)
     try:
         media.extend(await _performance_media_urls(page))
     except Exception:
