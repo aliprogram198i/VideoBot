@@ -63,7 +63,7 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
 
 
 def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[str, int]) -> None:
-    """Collect targets that are structurally attached to a Server-N marker."""
+    """Collect targets from a bounded region immediately adjacent to a server marker."""
     for match in OPEN_TAG_RE.finditer(segment):
         attrs = match.group("attrs") or ""
         if not attrs:
@@ -74,6 +74,11 @@ def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[st
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
             _add_target(ranked, raw, base_url, score)
+        if ranked:
+            return
+    first_url = URL_RE.search(segment)
+    if first_url:
+        _add_target(ranked, first_url.group(0), base_url, 90)
 
 
 def _extract_marker_targets(source_html: str, marker: re.Match, next_marker_start: int | None, base_url: str) -> dict[str, int]:
@@ -86,12 +91,12 @@ def _extract_marker_targets(source_html: str, marker: re.Match, next_marker_star
         if attrs:
             for _, raw in ATTR_RE.findall(attrs):
                 _add_target(ranked, raw, base_url, 150)
+    if ranked:
+        return ranked
 
-    # Some pages render "Server 1" as a label followed by a sibling player link.
-    # Only inspect the bounded region up to the next explicit server marker.
-    if not ranked and next_marker_start is not None:
-        tail = source_html[marker.end():next_marker_start]
-        _extract_server_segment_targets(tail, base_url, ranked)
+    end = next_marker_start if next_marker_start is not None else min(len(source_html), marker.end() + 1800)
+    tail = source_html[marker.end():end]
+    _extract_server_segment_targets(tail, base_url, ranked)
     return ranked
 
 
