@@ -18,8 +18,6 @@ import time
 import urllib.request
 from pathlib import Path
 
-# When Python executes ``scripts/foo.py``, sys.path[0] is /app/scripts.
-# The production modules (including bot.py) live one directory above it.
 APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
@@ -73,20 +71,20 @@ def _print_statistical_summary(store, resolver_names: tuple[str, ...]) -> None:
             )
             """
         ).fetchone()[0]
-        platforms = [r[0] for r in conn.execute(
-            "SELECT DISTINCT platform FROM resolver_evidence ORDER BY platform"
+        contexts = [r for r in conn.execute(
+            "SELECT DISTINCT platform, media_kind FROM resolver_evidence ORDER BY platform, media_kind"
         )]
 
     print("=== STATISTICAL SUMMARY (ISOLATED HARNESS DB) ===", flush=True)
     print(f"rows={rows} distinct_samples={samples} complete4={int(complete4)}", flush=True)
     print("gates: min_samples=30 min_discordant=10 alpha=0.05 min_effect=0.10", flush=True)
 
-    def emit(scope: str, platform: str = "unknown") -> None:
+    def emit(scope: str, platform: str, media_kind: str) -> None:
         results = validation.validate_resolver_set(
             store,
             resolver_names,
             platform=platform,
-            media_kind="unknown",
+            media_kind=media_kind,
         )
         print(f"-- {scope} --", flush=True)
         if not results:
@@ -107,9 +105,48 @@ def _print_statistical_summary(store, resolver_names: tuple[str, ...]) -> None:
                 flush=True,
             )
 
-    emit("GLOBAL")
-    for platform in platforms:
-        emit(f"PLATFORM {platform}", platform)
+    class _AggregateStore:
+        """Read-only adapter that merges identical paired samples across contexts."""
+        def __init__(self, source_store, contexts):
+            self._source_store = source_store
+            self._contexts = tuple(contexts)
+
+        def paired_outcomes(self, resolver_a, resolver_b, *, platform="unknown", media_kind="unknown"):
+            outcomes = []
+            for context_platform, context_media in self._contexts:
+                outcomes.extend(self._source_store.paired_outcomes(
+                    resolver_a,
+                    resolver_b,
+                    platform=context_platform,
+                    media_kind=context_media,
+                ))
+            return outcomes
+
+    aggregate_store = _AggregateStore(store, contexts)
+    aggregate_results = validation.validate_resolver_set(
+        aggregate_store,
+        resolver_names,
+        platform="unknown",
+        media_kind="unknown",
+    )
+    print("-- GLOBAL (ALL PLATFORMS/CONTEXTS) --", flush=True)
+    for item in aggregate_results:
+        print(
+            f"{item['resolver_a']} vs {item['resolver_b']} "
+            f"n={item['paired_samples']} "
+            f"success={item['a_successes']}/{item['b_successes']} "
+            f"a_only={item['a_only']} b_only={item['b_only']} "
+            f"delta={item['success_rate_delta']:.4f} "
+            f"CI95=[{item['delta_lower_95']:.4f},{item['delta_upper_95']:.4f}] "
+            f"p={item['mcnemar_p_value']:.6g} "
+            f"significant={item['statistically_significant']} "
+            f"meaningful={item['practically_meaningful']} "
+            f"validated_advantage={item['validated_advantage']}",
+            flush=True,
+        )
+
+    for platform, media_kind in contexts:
+        emit(f"PLATFORM {platform}/{media_kind}", platform, media_kind)
 
 
 async def main() -> None:
