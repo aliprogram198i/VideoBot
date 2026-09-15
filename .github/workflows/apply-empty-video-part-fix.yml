@@ -1,0 +1,119 @@
+name: Apply Empty Video Part Fix
+
+on:
+  push:
+    branches:
+      - fix/video-empty-part-telegram-2026-09-15
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch video splitter
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("bot.py")
+          source = path.read_text()
+
+          old = '''        if not os.path.isfile(output_file):
+            raise RuntimeError(
+                f"FFmpeg did not create: {output_file}"
+            )
+'''
+          new = '''        if not os.path.isfile(output_file):
+            raise RuntimeError(
+                f"FFmpeg did not create: {output_file}"
+            )
+
+        try:
+            output_size = os.path.getsize(output_file)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Unable to inspect FFmpeg output: {output_file}"
+            ) from exc
+
+        if output_size <= 0:
+            try:
+                os.remove(output_file)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"FFmpeg created an empty video part: {output_file}"
+            )
+'''
+          if old not in source:
+              raise SystemExit("create_part target not found")
+          source = source.replace(old, new, 1)
+
+          old_final = '''    if not final_files:
+        raise RuntimeError("No final video parts were created")
+
+    final_files.sort()
+
+    return final_files
+'''
+          new_final = '''    if not final_files:
+        raise RuntimeError("No final video parts were created")
+
+    # Final hard validation: never expose an empty part to Telegram.
+    validated_files = []
+    for part_file in final_files:
+        if not os.path.isfile(part_file):
+            raise RuntimeError(
+                f"Video part disappeared before delivery: {part_file}"
+            )
+        try:
+            part_size = os.path.getsize(part_file)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Unable to inspect video part before delivery: {part_file}"
+            ) from exc
+        if part_size <= 0:
+            raise RuntimeError(
+                f"Empty video part detected before delivery: {part_file}"
+            )
+        validated_files.append(part_file)
+
+    final_files = validated_files
+    final_files.sort()
+
+    return final_files
+'''
+          if old_final not in source:
+              raise SystemExit("final validation target not found")
+          source = source.replace(old_final, new_final, 1)
+          path.write_text(source)
+
+          test = Path("tests/test_video_split_empty_part.py")
+          test.write_text('''from pathlib import Path
+
+
+def test_video_split_source_rejects_empty_ffmpeg_output():
+    source = Path("bot.py").read_text()
+    assert "FFmpeg created an empty video part" in source
+    assert "output_size <= 0" in source
+
+
+def test_video_split_source_has_final_non_empty_validation():
+    source = Path("bot.py").read_text()
+    assert "Empty video part detected before delivery" in source
+    assert "part_size <= 0" in source
+''')
+
+      - name: Commit patch and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-empty-video-part-fix.yml
+          git add bot.py tests/test_video_split_empty_part.py
+          git commit -m "fix: reject empty Telegram video parts"
+          git push
