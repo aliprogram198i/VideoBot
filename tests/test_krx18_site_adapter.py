@@ -1,4 +1,8 @@
-from downloader.krx18_resolver import identity_score, is_krx18_url
+from downloader.krx18_resolver import (
+    _is_media_response_url,
+    identity_score,
+    is_krx18_url,
+)
 
 
 def test_krx18_host_scope():
@@ -27,3 +31,24 @@ def test_unrelated_media_without_provenance_is_rejected_by_identity_score():
         explicit_server_provenance=False,
     )
     assert score < 70
+
+
+def test_player_hls_response_is_media():
+    assert _is_media_response_url(
+        "https://media.example.invalid/session/playlist",
+        "application/vnd.apple.mpegurl; charset=utf-8",
+    )
+
+
+def test_player_video_response_is_media():
+    assert _is_media_response_url(
+        "https://media.example.invalid/session/file",
+        "video/mp4",
+    )
+
+
+def test_non_media_response_is_not_media():
+    assert not _is_media_response_url(
+        "https://media.example.invalid/api/session",
+        "application/json",
+    )
