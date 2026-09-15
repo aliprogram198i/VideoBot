@@ -17,6 +17,7 @@ def _authorized(update: Update, owner_id: int) -> bool:
 def _user_keyboard(user_id: int, banned: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🟢 فك الحظر" if banned else "🚫 حظر المستخدم", callback_data=f"unban_{user_id}" if banned else f"ban_{user_id}")],
+        [InlineKeyboardButton("🧠 ذكاء المستخدم", callback_data=f"admin_user_intel_view_{user_id}")],
         [InlineKeyboardButton("📢 إرسال رسالة", callback_data=f"message_user_{user_id}")],
         [InlineKeyboardButton("🗑️ حذف المستخدم", callback_data=f"delete_user_{user_id}")],
         [InlineKeyboardButton("🔗 روابط التحميل", callback_data=f"admin_user_links_{user_id}_0")],
@@ -30,7 +31,7 @@ async def _render_user(update: Update, get_db, owner_id: int, user_id: int) -> N
     query = update.callback_query
     conn = get_db()
     try:
-        row = conn.execute("SELECT user_id, username, first_name, last_name, is_banned, downloads, language, country, last_seen FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        row = conn.execute("SELECT user_id, username, first_name, last_name, is_banned, downloads, language, country, country_code, country_source, last_seen FROM users WHERE user_id = ?", (user_id,)).fetchone()
     finally:
         conn.close()
     if not row:
@@ -38,30 +39,32 @@ async def _render_user(update: Update, get_db, owner_id: int, user_id: int) -> N
         return
     name = html.escape(" ".join(str(p).strip() for p in (row["first_name"], row["last_name"]) if p) or "غير محدد")
     username = html.escape(f"@{row['username']}" if row["username"] else "غير محدد")
+    country = html.escape(str(row["country"] or "غير محدد"))
+    if row["country_code"]:
+        country += f" ({html.escape(str(row['country_code']))})"
+    source = "دقيق — مشاركة الموقع" if row["country_source"] == "telegram_location" else "غير مؤكد"
     text = (
         "👤 <b>إدارة المستخدم</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 ID: <code>{row['user_id']}</code>\n"
         f"👤 الاسم: {name}\n🔗 المعرف: {username}\n"
         f"📥 التحميلات: {int(row['downloads'] or 0)}\n"
         f"🌍 اللغة: {html.escape(str(row['language'] or 'غير محددة'))}\n"
-        f"📍 البلد: {html.escape(str(row['country'] or 'غير محدد'))}\n"
+        f"📍 البلد: {country}\n"
+        f"📌 دقة البلد: {source}\n"
         f"🕒 آخر نشاط: {html.escape(str(row['last_seen'] or 'غير متوفر'))}\n"
         f"🚦 الحالة: {'🚫 محظور' if row['is_banned'] else '🟢 نشط'}"
     )
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=_user_keyboard(user_id, bool(row["is_banned"])))
 
 
-async def user_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int) -> None:
-    """Render the canonical user-management workspace.
-
-    This handler is registered before the history bridge, so the shared
-    ``admin_user_view_<id>`` route always lands on the management workspace.
-    """
+async def user_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, get_db, owner_id: int, callback_data: str | None = None) -> None:
+    """Render the canonical user-management workspace."""
     query = update.callback_query
     await query.answer()
     if not _authorized(update, owner_id):
         return
-    match = re.fullmatch(r"admin_user_view_(\d+)", query.data or "")
+    data = callback_data or query.data or ""
+    match = re.fullmatch(r"admin_user_view_(\d+)", data)
     if not match:
         return
     await _render_user(update, get_db, owner_id, int(match.group(1)))
