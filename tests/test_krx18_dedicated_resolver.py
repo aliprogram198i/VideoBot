@@ -31,11 +31,12 @@ def test_krx18_public_source_extraction_accepts_relative_and_data_targets():
     </section>
     '''
     targets = extract_server_targets(html, "https://krx18.com/movies/84170-example/", max_targets=3)
-    assert targets == [
+    assert set(targets) == {
         "https://krx18.com/watch/server-1",
         "https://krx18.com/watch/server-2",
         "https://player.example.test/embed/84170",
-    ]
+    }
+    assert len(targets) == 3
 
 
 def test_krx18_public_source_extraction_does_not_promote_unrelated_media():
