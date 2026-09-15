@@ -25,8 +25,6 @@ DEFAULT_MAX_PAGES = 6
 DEFAULT_MAX_NAV_TARGETS = 10
 DEFAULT_MAX_SERVER_CLICKS = 8
 
-# Hosts known to expose many server/player navigation targets. Keep the
-# browser fallback bounded for these hosts without changing the global budget.
 _FAST_NAV_HOSTS = {"krx18.com"}
 FAST_NAV_TIMEOUT_MS = 12_000
 FAST_NAV_SETTLE_MS = 800
@@ -361,9 +359,6 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     for target in targets:
                         if target not in visited_pages and target not in queue: queue.append(target)
 
-                    # Important: click download/server controls BEFORE leaving the page.
-                    # Many hosts only expose the media through a browser download or
-                    # a JS-generated player request after the explicit click.
                     interaction_active = True
                     try:
                         await _click_server_controls(page, max_server_clicks)
@@ -449,3 +444,46 @@ async def resolve(url: str, *, validator, timeout_ms: int = DEFAULT_TIMEOUT_MS, 
         LOG.warning("Browser resolver failed: %s", type(exc).__name__)
         print(f"⚠️ Browser resolver failed: {type(exc).__name__}", flush=True)
         return []
+
+
+# KRX18-specific discovery is layered onto the existing browser resolver rather
+# than replacing it. This keeps the global resolver order and all other hosts
+# unchanged while making KRX18 Video Sources/server links first-class targets.
+from downloader.krx18_resolver import is_krx18_url as _krx18_adapter_host
+from downloader.krx18_resolver import rank_targets as _krx18_rank_targets
+
+_legacy_discover_navigation_targets = _discover_navigation_targets
+
+
+async def _discover_navigation_targets(page, base_url: str, max_targets: int) -> list[str]:
+    base_targets = await _legacy_discover_navigation_targets(page, base_url, max_targets)
+    if not _krx18_adapter_host(base_url):
+        return base_targets
+    try:
+        rows = await page.locator(
+            "a[href], iframe[src], embed[src], [onclick], "
+            "[data-server], [data-player], [data-download], [data-url], [data-href]"
+        ).evaluate_all("""els => els.map(el => ({
+            href: el.href || el.src || '',
+            src: el.src || '',
+            text: (el.innerText || el.textContent || '').trim(),
+            attr: ((el.className || '') + ' ' + (el.id || '')).trim(),
+            onclick: el.getAttribute('onclick') || '',
+            data_server: el.getAttribute('data-server') || '',
+            data_player: el.getAttribute('data-player') || '',
+            data_download: el.getAttribute('data-download') || '',
+            data_url: el.getAttribute('data-url') || '',
+            data_href: el.getAttribute('data-href') || ''
+        }))""")
+    except Exception as exc:
+        LOG.debug("KRX18 adapter target discovery failed: %s", type(exc).__name__)
+        return base_targets
+    adapter_targets = _krx18_rank_targets(rows, base_url, max_targets=max_targets)
+    merged = []
+    for target in adapter_targets + base_targets:
+        if target not in merged:
+            merged.append(target)
+    if adapter_targets:
+        print(f"🎯 KRX18 Site Adapter: discovered {len(adapter_targets)} public server/player target(s)", flush=True)
+        LOG.info("KRX18 Site Adapter: discovered %d public server/player target(s)", len(adapter_targets))
+    return merged[:max_targets]
