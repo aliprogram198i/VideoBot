@@ -33,6 +33,7 @@ FAST_NAV_SETTLE_MS = 800
 FAST_NAV_MAX_PAGES = 4
 FAST_NAV_MAX_TARGETS = 8
 FAST_NAV_MAX_CLICKS = 6
+KRX18_HARD_BUDGET_SECONDS = 45.0
 
 _MEDIA_CONTENT_TYPES = (
     "video/", "audio/", "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml",
@@ -415,6 +416,25 @@ async def resolve(url: str, *, validator, timeout_ms: int = DEFAULT_TIMEOUT_MS, 
     if not _browser_enabled():
         return []
     try:
+        if _is_krx18_host(url):
+            started = asyncio.get_running_loop().time()
+            try:
+                return await asyncio.wait_for(
+                    _resolve_async(
+                        url,
+                        validator=validator,
+                        timeout_ms=timeout_ms,
+                        settle_ms=settle_ms,
+                        max_candidates=max_candidates,
+                        max_pages=max_pages,
+                    ),
+                    timeout=KRX18_HARD_BUDGET_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                elapsed = asyncio.get_running_loop().time() - started
+                LOG.warning("KRX18 browser resolver hard budget exhausted after %.1fs", elapsed)
+                print(f"⏱️ KRX18 Browser Resolver: hard budget exhausted after {elapsed:.1f}s", flush=True)
+                return []
         return await _resolve_async(
             url,
             validator=validator,
