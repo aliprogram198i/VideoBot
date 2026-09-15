@@ -1,0 +1,61 @@
+name: apply-krx18-identity-gate
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/apply-krx18-identity-gate.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create branch
+        run: |
+          git checkout -b fix/krx18-candidate-identity-2026-09-15
+      - name: Patch resolver
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('downloader/browser_media_resolver.py')
+          s=p.read_text()
+          s=s.replace('async def _collect_script_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:', 'async def _collect_script_media(page, validator, candidates: dict[str, tuple[int, str | None]], trusted_candidates: set[str] | None = None) -> None:')
+          s=s.replace('''            if current is None or score > current[0]:\n                candidates[media_url] = (score, None)\n\n\ndef _is_download_target''', '''            if current is None or score > current[0]:\n                candidates[media_url] = (score, None)\n            if trusted_candidates is not None:\n                trusted_candidates.add(media_url)\n\n\ndef _is_download_target''', 1)
+          s=s.replace('async def _collect_frame_media(page, validator, candidates: dict[str, tuple[int, str | None]], max_clicks: int) -> None:', 'async def _collect_frame_media(page, validator, candidates: dict[str, tuple[int, str | None]], max_clicks: int, trusted_candidates: set[str] | None = None) -> None:')
+          s=s.replace('await _collect_dom_media(frame, validator, candidates)\n            await _collect_script_media(frame, validator, candidates)', 'await _collect_dom_media(frame, validator, candidates, trusted_candidates)\n            await _collect_script_media(frame, validator, candidates, trusted_candidates)', 1)
+          s=s.replace('await _collect_dom_media(frame, validator, candidates)\n            await _collect_script_media(frame, validator, candidates)\n        except Exception:', 'await _collect_dom_media(frame, validator, candidates, trusted_candidates)\n            await _collect_script_media(frame, validator, candidates, trusted_candidates)\n        except Exception:', 1)
+          s=s.replace('async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:', 'async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, str | None]], trusted_candidates: set[str] | None = None) -> None:')
+          s=s.replace('''        if current is None or score > current[0]: candidates[media_url] = (score, content_type)\n\n\nasync def _resolve_async''', '''        if current is None or score > current[0]: candidates[media_url] = (score, content_type)\n        if trusted_candidates is not None:\n            trusted_candidates.add(media_url)\n\n\nasync def _resolve_async''', 1)
+          s=s.replace('''    candidates: dict[str, tuple[int, str | None]] = {}\n    visited_pages''', '''    candidates: dict[str, tuple[int, str | None]] = {}\n    trusted_candidates: set[str] = set()\n    visited_pages''', 1)
+          s=s.replace('''                responses_seen = 0\n\n                async def on_response''', '''                responses_seen = 0\n                interaction_active = False\n\n                async def on_response''', 1)
+          s=s.replace('''                    current = candidates.get(response_url)\n                    if current is None or score > current[0]: candidates[response_url] = (score, content_type)\n\n                async def on_download''', '''                    current = candidates.get(response_url)\n                    if current is None or score > current[0]: candidates[response_url] = (score, content_type)\n                    try:\n                        response_frame = response.frame\n                        if response_frame is not None and response_frame is not page.main_frame:\n                            trusted_candidates.add(response_url)\n                        elif interaction_active:\n                            trusted_candidates.add(response_url)\n                    except Exception:\n                        if interaction_active:\n                            trusted_candidates.add(response_url)\n\n                async def on_download''', 1)
+          s=s.replace('''                    candidates[download_url] = (145, "application/octet-stream")\n                    print''', '''                    candidates[download_url] = (145, "application/octet-stream")\n                    trusted_candidates.add(download_url)\n                    print''', 1)
+          s=s.replace('''                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n                    await _collect_frame_media(page, validator, candidates, max_server_clicks)''', '''                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n                    await _collect_frame_media(page, validator, candidates, max_server_clicks, trusted_candidates)''', 1)
+          s=s.replace('''                    await _click_server_controls(page, max_server_clicks)\n                    await page.wait_for_timeout(settle_ms)\n                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n                    await _collect_frame_media(page, validator, candidates, max_server_clicks)''', '''                    interaction_active = True\n                    try:\n                        await _click_server_controls(page, max_server_clicks)\n                        await page.wait_for_timeout(settle_ms)\n                    finally:\n                        interaction_active = False\n                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n                    await _collect_frame_media(page, validator, candidates, max_server_clicks, trusted_candidates)''', 1)
+          s=s.replace('''    ranked = sorted(candidates.items(), key=lambda item: (-item[1][0], item[0]))\n    if ranked:''', '''    ranked = sorted(candidates.items(), key=lambda item: (-item[1][0], item[0]))\n    if _is_krx18_host(url):\n        trusted_ranked = [item for item in ranked if item[0] in trusted_candidates]\n        rejected_untrusted = len(ranked) - len(trusted_ranked)\n        if rejected_untrusted:\n            print(f"🛡️ KRX18 Identity Gate: rejected {rejected_untrusted} untrusted media candidate(s)", flush=True)\n        ranked = trusted_ranked\n        if not ranked:\n            print("🛡️ KRX18 Identity Gate: no trusted player media candidate", flush=True)\n            return []\n    if ranked:''', 1)
+          p.write_text(s)
+          PY
+          python -m py_compile downloader/browser_media_resolver.py
+      - name: Add regression tests
+        run: |
+          cat > tests/test_krx18_identity_gate.py <<'PY'
+          from downloader.browser_media_resolver import _is_krx18_host
+
+          def test_krx18_identity_scope():
+              assert _is_krx18_host('https://krx18.com/movie/1')
+              assert _is_krx18_host('https://player.krx18.com/embed/1')
+              assert not _is_krx18_host('https://example.com/movie/1')
+          PY
+          python -m pytest -q tests/test_browser_resolver_budget.py tests/test_krx18_frame_discovery.py tests/test_krx18_identity_gate.py
+      - name: Commit changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add downloader/browser_media_resolver.py tests/test_krx18_identity_gate.py
+          git commit -m 'Add KRX18 player media identity gate'
+          git rm .github/workflows/apply-krx18-identity-gate.yml
+          git commit -m 'chore: remove temporary KRX18 identity workflow'
+          git push origin HEAD:fix/krx18-candidate-identity-2026-09-15
