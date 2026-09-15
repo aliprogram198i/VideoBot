@@ -63,8 +63,7 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
 
 
 def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[str, int]) -> None:
-    """Collect every target from one Server-N segment."""
-    found = False
+    """Collect targets that are structurally attached to a Server-N marker."""
     for match in OPEN_TAG_RE.finditer(segment):
         attrs = match.group("attrs") or ""
         if not attrs:
@@ -74,13 +73,26 @@ def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[st
             score = 120
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
-            before = len(ranked)
             _add_target(ranked, raw, base_url, score)
-            found = found or len(ranked) > before
-    if found:
-        return
-    for raw in URL_RE.findall(segment):
-        _add_target(ranked, raw, base_url, 90)
+
+
+def _extract_marker_targets(source_html: str, marker: re.Match, next_marker_start: int | None, base_url: str) -> dict[str, int]:
+    ranked: dict[str, int] = {}
+    before = source_html[:marker.start()]
+    openings = list(OPEN_TAG_RE.finditer(before))
+    if openings:
+        opening = openings[-1]
+        attrs = opening.group("attrs") or ""
+        if attrs:
+            for _, raw in ATTR_RE.findall(attrs):
+                _add_target(ranked, raw, base_url, 150)
+
+    # Some pages render "Server 1" as a label followed by a sibling player link.
+    # Only inspect the bounded region up to the next explicit server marker.
+    if not ranked and next_marker_start is not None:
+        tail = source_html[marker.end():next_marker_start]
+        _extract_server_segment_targets(tail, base_url, ranked)
+    return ranked
 
 
 def extract_server_targets(rendered_html: str, base_url: str, max_targets: int = 3) -> list[str]:
@@ -89,9 +101,8 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
     source_html = html.unescape(rendered_html or "")
     markers = list(SERVER_RE.finditer(source_html))
     for index, marker in enumerate(markers):
-        local_ranked: dict[str, int] = {}
-        end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), marker.start() + 1800)
-        _extract_server_segment_targets(source_html[marker.start():end], base_url, local_ranked)
+        next_marker_start = markers[index + 1].start() if index + 1 < len(markers) else None
+        local_ranked = _extract_marker_targets(source_html, marker, next_marker_start, base_url)
         for target, score in local_ranked.items():
             ranked[target] = max(score, ranked.get(target, 0))
 
