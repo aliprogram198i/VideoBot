@@ -1,9 +1,10 @@
 """Deterministic KRX18 public-page resolver.
 
 The resolver follows only the public movie page's explicit Video Sources
-(server/player) links and media exposed by those public player pages. It uses
-identity evidence before accepting a media URL and fails closed when the
-public page/player does not expose enough evidence.
+(server/player) links and media exposed by those public player pages. When the
+public WordPress REST representation is exposed, it may be used as a bounded
+source-of-truth fallback for the same movie post. Identity evidence remains
+mandatory before media is accepted.
 
 It never bypasses authentication, CAPTCHA, DRM, paywalls, or other access
 controls.
@@ -16,11 +17,11 @@ import html
 import re
 from urllib.parse import unquote, urlparse
 
+from .krx18_wp_public_sources import fetch_public_post
+
 NON_SOURCE_HOSTS = {
     "onclckbn.net",
     "cdn.jsdelivr.net",
-    "galleryn1.vcmdiawe.com",
-    "bkcdn.net",
 }
 
 MEDIA_MARKERS = (".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts")
@@ -286,7 +287,7 @@ async def _collect_public_media(page, validator, candidates: dict[str, tuple[int
                 await add(str(row.get("src") or ""), str(row.get("type") or ""))
 
 
-async def _resolve_media_async(url: str, *, validator, max_candidates: int = KRX18_MAX_CANDIDATES) -> list[str]:
+async def _resolve_media_async(url: str, *, validator, request_factory=None, open_function=None, read_function=None, max_candidates: int = KRX18_MAX_CANDIDATES) -> list[str]:
     try:
         from playwright.async_api import async_playwright
     except Exception:
@@ -300,16 +301,43 @@ async def _resolve_media_async(url: str, *, validator, max_candidates: int = KRX
         browser = None
         context = None
         source_page = None
+        source_title = ""
+        targets: list[str] = []
         try:
             browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check"])
             context = await browser.new_context(user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36", java_script_enabled=True)
             source_page = await context.new_page()
-            await source_page.goto(url, wait_until="domcontentloaded", timeout=KRX18_SERVER_TIMEOUT_MS)
-            await source_page.wait_for_timeout(KRX18_SETTLE_MS)
-            source_title = await source_page.title()
-            targets = await _extract_source_targets(source_page, url)
+            try:
+                await source_page.goto(url, wait_until="domcontentloaded", timeout=KRX18_SERVER_TIMEOUT_MS)
+                await source_page.wait_for_timeout(KRX18_SETTLE_MS)
+                source_title = await source_page.title()
+                targets = await _extract_source_targets(source_page, url)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"⚠️ KRX18 Dedicated Resolver: source page unavailable ({type(exc).__name__}); trying public WordPress source", flush=True)
+
+            if not targets and callable(request_factory) and callable(open_function) and callable(read_function):
+                try:
+                    wp_title, wp_targets = await asyncio.to_thread(
+                        fetch_public_post,
+                        url,
+                        request_factory=request_factory,
+                        open_function=open_function,
+                        read_function=read_function,
+                    )
+                    if wp_title:
+                        source_title = wp_title
+                    targets = wp_targets
+                    if targets:
+                        print(f"🌐 KRX18 Public WordPress: discovered {len(targets)} explicit server target(s)", flush=True)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    print(f"🛡️ KRX18 Public WordPress: unavailable ({type(exc).__name__})", flush=True)
+
             if not targets:
-                print("🛡️ KRX18 Dedicated Resolver: no explicit Video Sources targets", flush=True)
+                print("🛡️ KRX18 Dedicated Resolver: no explicit public Video Sources targets", flush=True)
                 return []
             print(f"🎯 KRX18 Dedicated Resolver: {len(targets)} public server target(s)", flush=True)
             candidates: dict[str, tuple[int, int, str]] = {}
@@ -343,13 +371,20 @@ async def _resolve_media_async(url: str, *, validator, max_candidates: int = KRX
                 await _safe_close(browser)
 
 
-async def resolve_media(url: str, *, validator, max_candidates: int = KRX18_MAX_CANDIDATES) -> list[str]:
+async def resolve_media(url: str, *, validator, request_factory=None, open_function=None, read_function=None, max_candidates: int = KRX18_MAX_CANDIDATES) -> list[str]:
     """Resolve KRX18 only from public Video Sources/server/player pages."""
     if not is_krx18_url(url):
         return []
     try:
         return await asyncio.wait_for(
-            _resolve_media_async(url, validator=validator, max_candidates=max_candidates),
+            _resolve_media_async(
+                url,
+                validator=validator,
+                request_factory=request_factory,
+                open_function=open_function,
+                read_function=read_function,
+                max_candidates=max_candidates,
+            ),
             timeout=KRX18_RESOLVE_BUDGET_SECONDS,
         )
     except asyncio.TimeoutError:
