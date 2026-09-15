@@ -53,6 +53,65 @@ def _platform(url: str) -> str:
     return "other"
 
 
+def _print_statistical_summary(store, resolver_names: tuple[str, ...]) -> None:
+    """Print the repository's conservative paired-validation results."""
+    import sqlite3
+
+    validation = importlib.import_module("downloader.resolver_statistical_validation")
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT sample_id) FROM resolver_evidence"
+        ).fetchone()
+        rows, samples = int(row[0] or 0), int(row[1] or 0)
+        complete4 = conn.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT sample_id
+                FROM resolver_evidence
+                GROUP BY sample_id
+                HAVING COUNT(DISTINCT resolver) = 4
+            )
+            """
+        ).fetchone()[0]
+        platforms = [r[0] for r in conn.execute(
+            "SELECT DISTINCT platform FROM resolver_evidence ORDER BY platform"
+        )]
+
+    print("=== STATISTICAL SUMMARY (ISOLATED HARNESS DB) ===", flush=True)
+    print(f"rows={rows} distinct_samples={samples} complete4={int(complete4)}", flush=True)
+    print("gates: min_samples=30 min_discordant=10 alpha=0.05 min_effect=0.10", flush=True)
+
+    def emit(scope: str, platform: str = "unknown") -> None:
+        results = validation.validate_resolver_set(
+            store,
+            resolver_names,
+            platform=platform,
+            media_kind="unknown",
+        )
+        print(f"-- {scope} --", flush=True)
+        if not results:
+            print("no pairwise results", flush=True)
+            return
+        for item in results:
+            print(
+                f"{item['resolver_a']} vs {item['resolver_b']} "
+                f"n={item['paired_samples']} "
+                f"success={item['a_successes']}/{item['b_successes']} "
+                f"a_only={item['a_only']} b_only={item['b_only']} "
+                f"delta={item['success_rate_delta']:.4f} "
+                f"CI95=[{item['delta_lower_95']:.4f},{item['delta_upper_95']:.4f}] "
+                f"p={item['mcnemar_p_value']:.6g} "
+                f"significant={item['statistically_significant']} "
+                f"meaningful={item['practically_meaningful']} "
+                f"validated_advantage={item['validated_advantage']}",
+                flush=True,
+            )
+
+    emit("GLOBAL")
+    for platform in platforms:
+        emit(f"PLATFORM {platform}", platform)
+
+
 async def main() -> None:
     if os.getenv("ALIBOT_RUNTIME_ENV", "").strip().lower() != "staging":
         raise RuntimeError("200-URL evidence harness is staging-only")
@@ -82,11 +141,11 @@ async def main() -> None:
     collector = importlib.import_module("downloader.paired_evidence_collector")
     store_cls = importlib.import_module("downloader.resolver_evidence").ResolverEvidenceStore
     store = store_cls(DB_PATH)
-    resolver_names = {name: probes[name] for name in observer._PAIRED_PROBE_ORDER if name in probes}
+    resolver_names = tuple(name for name in observer._PAIRED_PROBE_ORDER if name in probes)
     urls = _load_urls()
     from downloader.smart_media_bridge import _resolver_context
 
-    print(f"🧪 200-URL Evidence Harness: URLs={len(urls)} probes={tuple(resolver_names)}", flush=True)
+    print(f"🧪 200-URL Evidence Harness: URLs={len(urls)} probes={resolver_names}", flush=True)
     print(f"🗄️ Dedicated evidence DB: {DB_PATH}", flush=True)
 
     class _ForceSample(random.Random):
@@ -109,7 +168,7 @@ async def main() -> None:
                 platform=platform,
                 media_kind=media_kind,
                 source_url=source_url,
-                resolvers=resolver_names,
+                resolvers={name: probes[name] for name in resolver_names},
                 rng=rng,
             )
             key = f"{platform}/{media_kind}"
@@ -123,6 +182,7 @@ async def main() -> None:
     print("=== HARNESS COMPLETE ===", flush=True)
     print(totals, flush=True)
     print(f"DB={DB_PATH}", flush=True)
+    _print_statistical_summary(store, resolver_names)
 
 
 if __name__ == "__main__":
