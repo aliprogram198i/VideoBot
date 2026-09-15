@@ -11,16 +11,8 @@ def run(coro):
 def make_bot_module(download_impl=None, message_impl=None):
     class BotModule:
         TEXTS = {
-            "ar": {
-                "video_type": "video",
-                "audio_type": "audio",
-                "banned": "banned",
-            },
-            "en": {
-                "video_type": "video",
-                "audio_type": "audio",
-                "banned": "banned",
-            },
+            "ar": {"video_type": "video", "audio_type": "audio", "banned": "banned"},
+            "en": {"video_type": "video", "audio_type": "audio", "banned": "banned"},
         }
 
         def get_language(self, user_id):
@@ -87,9 +79,8 @@ class FakeQuery:
 
 class FakeContext:
     def __init__(self, urls=None):
-        self.user_data = {"video_urls": urls or []}
+        self.user_data = {"video_urls": list(urls)} if urls else {}
         self.sent_messages = []
-
         context = self
 
         class Bot:
@@ -102,9 +93,8 @@ class FakeContext:
 
 
 def make_update(text="", query=None):
-    message = FakeMessage(text)
     return SimpleNamespace(
-        message=message,
+        message=FakeMessage(text),
         callback_query=query or FakeQuery(),
         effective_user=SimpleNamespace(id=1, username="tester", first_name="Tester"),
         effective_chat=SimpleNamespace(id=99),
@@ -113,10 +103,7 @@ def make_update(text="", query=None):
 
 def test_extract_urls_deduplicates_and_strips_punctuation():
     text = "https://example.com/a, https://example.com/b. https://example.com/a"
-    assert extract_urls(text) == [
-        "https://example.com/a",
-        "https://example.com/b",
-    ]
+    assert extract_urls(text) == ["https://example.com/a", "https://example.com/b"]
 
 
 def test_extract_urls_preserves_more_than_five_for_handler_limit_check():
@@ -134,7 +121,6 @@ def test_single_url_delegates_unchanged():
     install(bot)
     context = FakeContext()
     update = make_update("https://example.com/one")
-
     run(bot.handle_message(update, context))
 
     assert calls == [update]
@@ -149,10 +135,8 @@ def test_more_than_five_urls_are_rejected_without_calling_original_handler():
 
     bot = make_bot_module(message_impl=original_message)
     install(bot)
-    context = FakeContext()
     update = make_update(" ".join(f"https://example.com/{i}" for i in range(6)))
-
-    run(bot.handle_message(update, context))
+    run(bot.handle_message(update, FakeContext()))
 
     assert calls == []
     assert update.message.replies
@@ -167,12 +151,8 @@ def test_one_valid_url_from_mixed_input_uses_original_single_url_path():
 
     bot = make_bot_module(message_impl=original_message)
     install(bot)
-    context = FakeContext()
-    update = make_update(
-        "https://example.com/valid https://invalid.example/invalid"
-    )
-
-    run(bot.handle_message(update, context))
+    update = make_update("https://example.com/valid https://invalid.example/invalid")
+    run(bot.handle_message(update, FakeContext()))
 
     assert seen == ["https://example.com/valid"]
 
@@ -191,7 +171,6 @@ def test_batch_download_runs_all_urls_in_order_and_routes_later_ui_to_status_mes
 
     bot = make_bot_module(download_impl=original_download)
     install(bot)
-
     query = FakeQuery("video_720")
     update = make_update(query=query)
     context = FakeContext([
@@ -225,7 +204,6 @@ def test_batch_cleanup_runs_when_original_download_raises():
 
     bot = make_bot_module(download_impl=original_download)
     install(bot)
-
     update = make_update(query=FakeQuery("video_720"))
     context = FakeContext([
         "https://example.com/1",
@@ -240,8 +218,5 @@ def test_batch_cleanup_runs_when_original_download_raises():
     else:
         raise AssertionError("expected RuntimeError")
 
-    assert calls == [
-        "https://example.com/1",
-        "https://example.com/2",
-    ]
+    assert calls == ["https://example.com/1", "https://example.com/2"]
     assert context.user_data == {}
