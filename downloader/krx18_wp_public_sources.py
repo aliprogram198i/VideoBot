@@ -17,6 +17,13 @@ TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div|li|span)[^>]*?(?P<attrs
 ATTR_RE = re.compile(r"(?:href|src|data-server|data-player|data-download|data-url|data-href|onclick)\s*=\s*[\"']([^\"']+)[\"']", re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 DIRECT_MEDIA_RE = re.compile(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", re.I)
+CHALLENGE_MARKERS = (
+    "just a moment",
+    "cf-chl-",
+    "cf-mitigated",
+    "challenges.cloudflare.com",
+    "verify you are human",
+)
 
 
 def post_id_from_url(source_url: str) -> str | None:
@@ -27,6 +34,11 @@ def post_id_from_url(source_url: str) -> str | None:
 def _clean_text(value: str) -> str:
     value = re.sub(r"<[^>]+>", " ", value or "")
     return re.sub(r"\s+", " ", html.unescape(value)).strip()
+
+
+def _looks_like_challenge(value: str) -> bool:
+    text = html.unescape(str(value or "")).casefold()
+    return any(marker in text for marker in CHALLENGE_MARKERS)
 
 
 def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: int) -> None:
@@ -73,9 +85,6 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
         for href in re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I):
             _add_target(ranked, href, base_url, 120)
 
-    # Bounded nested-markup fallback: an absolute URL is accepted only when a
-    # Server N marker occurs nearby. This preserves explicit source evidence
-    # without turning unrelated page assets into first-hop targets.
     for value in URL_RE.findall(source_html):
         target = value.rstrip(".,;)]}")
         if DIRECT_MEDIA_RE.search(target):
@@ -102,6 +111,9 @@ def _extract_public_html(request_factory, open_function, read_function, source_u
     with open_function(request, timeout=timeout, max_bytes=max_bytes) as response:
         raw = read_function(response, max_bytes)
     text = raw.decode("utf-8", "replace")
+    if _looks_like_challenge(text):
+        print("🛡️ KRX18 Public Source: Cloudflare/access challenge detected; no bypass attempted", flush=True)
+        return "", []
     title_match = TITLE_RE.search(text)
     title = _clean_text(title_match.group(1)) if title_match else ""
     return title, extract_server_targets(text, source_url)
@@ -119,7 +131,10 @@ def _rest_get(request_factory, open_function, read_function, endpoint: str, sour
     )
     with open_function(request, timeout=timeout, max_bytes=max_bytes) as response:
         raw = read_function(response, max_bytes)
-    return json.loads(raw.decode("utf-8", "replace"))
+    text = raw.decode("utf-8", "replace")
+    if _looks_like_challenge(text):
+        raise RuntimeError("public_rest_access_challenge")
+    return json.loads(text)
 
 
 def _rest_candidate_types(request_factory, open_function, read_function, source_url: str, timeout: float, max_bytes: int) -> list[str]:
@@ -156,25 +171,37 @@ def fetch_public_post(
 ) -> tuple[str, list[str]]:
     """Fetch bounded public KRX18 data and extract explicit server targets.
 
-    WordPress REST is preferred because it is structured. The resolver first
-    discovers public movie-like REST types, then falls back to the conventional
-    posts endpoint and finally the same requested public movie page. All paths
-    are bounded and fail closed; no challenge/authentication bypass is used.
+    The requested /movies/<id>-<slug>/ URL gives us a concrete WordPress movie
+    post id. We therefore try the matching public ``movies`` REST resource
+    directly before type discovery; this is deterministic from the URL and
+    avoids depending on the public ``types`` index being exposed. If the REST
+    resource is unavailable, bounded type discovery and the public HTML page
+    remain fallback paths. No challenge/authentication bypass is used.
     """
     post_id = post_id_from_url(source_url)
     if post_id:
-        endpoints = []
+        endpoints = [
+            f"https://krx18.com/wp-json/wp/v2/movies/{post_id}?_fields=id,title,content,link",
+        ]
         for rest_base in _rest_candidate_types(request_factory, open_function, read_function, source_url, timeout, max_bytes):
-            endpoints.append(f"https://krx18.com/wp-json/wp/v2/{rest_base}/{post_id}?_fields=id,title,content,link")
-        endpoints.append(f"https://krx18.com/wp-json/wp/v2/posts/{post_id}?_fields=id,title,content,link")
-        for endpoint in endpoints[:5]:
+            endpoint = f"https://krx18.com/wp-json/wp/v2/{rest_base}/{post_id}?_fields=id,title,content,link"
+            if endpoint not in endpoints:
+                endpoints.append(endpoint)
+        posts_endpoint = f"https://krx18.com/wp-json/wp/v2/posts/{post_id}?_fields=id,title,content,link"
+        if posts_endpoint not in endpoints:
+            endpoints.append(posts_endpoint)
+        for endpoint in endpoints[:6]:
             try:
                 data = _rest_get(request_factory, open_function, read_function, endpoint, source_url, timeout, max_bytes)
                 if isinstance(data, dict):
+                    returned_id = str(data.get("id") or "")
+                    if returned_id and returned_id != post_id:
+                        continue
                     title = _clean_text(str(data.get("title", {}).get("rendered", "")))
                     content = str(data.get("content", {}).get("rendered", ""))
                     targets = extract_server_targets(content, source_url)
                     if targets:
+                        print(f"🌐 KRX18 Public WordPress: explicit Video Sources from {endpoint}", flush=True)
                         return title, targets
             except Exception:
                 continue
