@@ -141,6 +141,7 @@ def install(bot_module) -> None:
         return
     resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
     shahid4u_resolver = __import__("downloader.shahid4u_resolver", fromlist=["resolve"])
+    krx18_resolver = __import__("downloader.krx18_resolver", fromlist=["resolve_media", "is_krx18_url"])
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
     browser_handoff = __import__("downloader.browser_download_handoff", fromlist=["resolve_to_file"])
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
@@ -206,25 +207,15 @@ def install(bot_module) -> None:
                     min_duration=MOVIE_MIN_VIDEO_DURATION,
                 )
                 if not gate.accepted:
-                    print(
-                        f"🛡️ Browser candidate gate: rejected media ({gate.reason})",
-                        flush=True,
-                    )
+                    print(f"🛡️ Browser candidate gate: rejected media ({gate.reason})", flush=True)
                     try:
                         os.remove(path)
                     except OSError:
                         pass
                     return False
-                print(
-                    f"🛡️ Browser candidate gate: accepted verified media "
-                    f"({gate.duration_seconds:.1f}s, {gate.size_bytes} bytes)",
-                    flush=True,
-                )
+                print(f"🛡️ Browser candidate gate: accepted verified media ({gate.duration_seconds:.1f}s, {gate.size_bytes} bytes)", flush=True)
         except Exception as exc:
-            print(
-                f"⚠️ Browser candidate gate failed closed ({type(exc).__name__})",
-                flush=True,
-            )
+            print(f"⚠️ Browser candidate gate failed closed ({type(exc).__name__})", flush=True)
             try:
                 os.remove(path)
             except OSError:
@@ -249,6 +240,32 @@ def install(bot_module) -> None:
     async def wrapped(url, *args, **kwargs):
         print("🔎 Smart Media Bridge: entered", flush=True)
         context = {"source_url": url, "media_kind": "unknown"}
+        if krx18_resolver.is_krx18_url(url):
+            print("🎯 KRX18 Dedicated Resolver: public-source path", flush=True)
+            try:
+                krx_candidates = await _run_resolver(
+                    "krx18_public",
+                    krx18_resolver.resolve_media,
+                    url,
+                    validator=bot_module.validate_public_http_url,
+                    request_factory=bot_module.Request,
+                    open_function=bot_module.safe_urlopen,
+                    read_function=bot_module.read_limited,
+                    source_url=url,
+                    media_kind="iframe",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"⚠️ KRX18 Dedicated Resolver failed: {type(exc).__name__}", flush=True)
+                krx_candidates = []
+            if krx_candidates:
+                _queue_candidates(url, krx_candidates)
+                print(f"✅ KRX18 Dedicated Resolver: {len(krx_candidates)} verified candidate(s)", flush=True)
+                return krx_candidates
+            print("🛡️ KRX18 Dedicated Resolver: no verified public media; fail-closed", flush=True)
+            return []
+
         try:
             resolve_candidates = getattr(shahid4u_resolver, "resolve_candidates", None)
             if callable(resolve_candidates):
@@ -365,10 +382,6 @@ def install(bot_module) -> None:
             print(f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
             if not is_audio:
-                # The local file is delivered through the existing Telegram splitter.
-                # Do not cap browser acquisition at Telegram's per-file limit, or a
-                # valid large source becomes unavailable and a smaller ad candidate
-                # can win instead. Keep the acquisition bound explicit at 2 GiB.
                 max_bytes = max(max_bytes, GENERIC_MAX_VIDEO_HANDOFF_BYTES)
             if is_shahid4u and not is_audio:
                 max_bytes = max(max_bytes, SHAHID4U_MAX_HANDOFF_BYTES)
@@ -399,10 +412,7 @@ def install(bot_module) -> None:
                     except OSError:
                         size = 0
                     if not _post_handoff_gate(local_path, source_url, candidate, is_audio):
-                        print(
-                            f"🛡️ Browser Download Handoff: candidate rejected after download ({size} bytes); trying next candidate",
-                            flush=True,
-                        )
+                        print(f"🛡️ Browser Download Handoff: candidate rejected after download ({size} bytes); trying next candidate", flush=True)
                         continue
                     print(f"🌐 Browser Download Handoff: succeeded ({size} bytes)", flush=True)
                     handoff_diagnostics = dict(diagnostics) if isinstance(diagnostics, dict) else {}
