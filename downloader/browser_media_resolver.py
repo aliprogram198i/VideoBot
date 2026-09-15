@@ -145,7 +145,7 @@ def _extract_script_media_urls(script_text: str) -> list[str]:
     return results
 
 
-async def _collect_script_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:
+async def _collect_script_media(page, validator, candidates: dict[str, tuple[int, str | None]], trusted_candidates: set[str] | None = None) -> None:
     try:
         scripts = await page.locator("script").all_text_contents()
     except Exception:
@@ -160,6 +160,8 @@ async def _collect_script_media(page, validator, candidates: dict[str, tuple[int
             score = 132
             if current is None or score > current[0]:
                 candidates[media_url] = (score, None)
+            if trusted_candidates is not None:
+                trusted_candidates.add(media_url)
 
 
 def _is_download_target(text: str, href: str) -> bool:
@@ -227,22 +229,22 @@ async def _click_server_controls(page, max_clicks: int, *, wait_after: bool = Tr
             continue
 
 
-async def _collect_frame_media(page, validator, candidates: dict[str, tuple[int, str | None]], max_clicks: int) -> None:
+async def _collect_frame_media(page, validator, candidates: dict[str, tuple[int, str | None]], max_clicks: int, trusted_candidates: set[str] | None = None) -> None:
     """Inspect player frames directly; many sites keep the real media only there."""
     for frame in list(page.frames):
         if frame is page.main_frame:
             continue
         try:
-            await _collect_dom_media(frame, validator, candidates)
-            await _collect_script_media(frame, validator, candidates)
+            await _collect_dom_media(frame, validator, candidates, trusted_candidates)
+            await _collect_script_media(frame, validator, candidates, trusted_candidates)
             await _click_server_controls(frame, max_clicks, wait_after=False)
-            await _collect_dom_media(frame, validator, candidates)
-            await _collect_script_media(frame, validator, candidates)
+            await _collect_dom_media(frame, validator, candidates, trusted_candidates)
+            await _collect_script_media(frame, validator, candidates, trusted_candidates)
         except Exception:
             continue
 
 
-async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:
+async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, str | None]], trusted_candidates: set[str] | None = None) -> None:
     try:
         rows = await page.locator("video, audio, source").evaluate_all("""els => els.map(el => ({src: el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '', type: el.getAttribute('type') || ''}))""")
     except Exception:
@@ -257,6 +259,8 @@ async def _collect_dom_media(page, validator, candidates: dict[str, tuple[int, s
         score = _score(media_url, content_type) + 12
         current = candidates.get(media_url)
         if current is None or score > current[0]: candidates[media_url] = (score, content_type)
+        if trusted_candidates is not None:
+            trusted_candidates.add(media_url)
 
 
 async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int, max_candidates: int, max_pages: int) -> list[str]:
@@ -273,6 +277,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
     except Exception: return []
 
     candidates: dict[str, tuple[int, str | None]] = {}
+    trusted_candidates: set[str] = set()
     visited_pages: set[str] = set()
     queue: list[str] = [url]
 
@@ -292,6 +297,8 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                 visited_pages.add(page_url)
                 page = await context.new_page()
                 responses_seen = 0
+                interaction_active = False
+                trusted_page = page_url != url
 
                 async def on_response(response) -> None:
                     nonlocal responses_seen
@@ -313,6 +320,15 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     score = _score(response_url, content_type) + (8 if not is_media else 0) + (25 if content_disposition and "attachment" in content_disposition.lower() else 0)
                     current = candidates.get(response_url)
                     if current is None or score > current[0]: candidates[response_url] = (score, content_type)
+                    try:
+                        response_frame = response.frame
+                        if response_frame is not None and response_frame is not page.main_frame:
+                            trusted_candidates.add(response_url)
+                        elif interaction_active or trusted_page:
+                            trusted_candidates.add(response_url)
+                    except Exception:
+                        if interaction_active or trusted_page:
+                            trusted_candidates.add(response_url)
 
                 async def on_download(download) -> None:
                     try:
@@ -328,6 +344,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     try: validator(download_url)
                     except Exception: return
                     candidates[download_url] = (145, "application/octet-stream")
+                    trusted_candidates.add(download_url)
                     print("🌐 Browser Resolver: captured direct media download", flush=True)
 
                 page.on("response", on_response)
@@ -337,7 +354,7 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     await page.wait_for_timeout(settle_ms)
                     await _collect_dom_media(page, validator, candidates)
                     await _collect_script_media(page, validator, candidates)
-                    await _collect_frame_media(page, validator, candidates, max_server_clicks)
+                    await _collect_frame_media(page, validator, candidates, max_server_clicks, trusted_candidates)
 
                     targets = await _discover_navigation_targets(page, page_url, max_nav_targets)
                     for target in targets:
@@ -346,11 +363,15 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
                     # Important: click download/server controls BEFORE leaving the page.
                     # Many hosts only expose the media through a browser download or
                     # a JS-generated player request after the explicit click.
-                    await _click_server_controls(page, max_server_clicks)
-                    await page.wait_for_timeout(settle_ms)
-                    await _collect_dom_media(page, validator, candidates)
-                    await _collect_script_media(page, validator, candidates)
-                    await _collect_frame_media(page, validator, candidates, max_server_clicks)
+                    interaction_active = True
+                    try:
+                        await _click_server_controls(page, max_server_clicks)
+                        await page.wait_for_timeout(settle_ms)
+                    finally:
+                        interaction_active = False
+                    await _collect_dom_media(page, validator, candidates, trusted_candidates)
+                    await _collect_script_media(page, validator, candidates, trusted_candidates)
+                    await _collect_frame_media(page, validator, candidates, max_server_clicks, trusted_candidates)
 
                     frame_urls = []
                     for frame in page.frames:
@@ -371,6 +392,15 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
             await browser.close()
 
     ranked = sorted(candidates.items(), key=lambda item: (-item[1][0], item[0]))
+    if _is_krx18_host(url):
+        trusted_ranked = [item for item in ranked if item[0] in trusted_candidates]
+        rejected_untrusted = len(ranked) - len(trusted_ranked)
+        if rejected_untrusted:
+            print(f"🛡️ KRX18 Identity Gate: rejected {rejected_untrusted} untrusted media candidate(s)", flush=True)
+        ranked = trusted_ranked
+        if not ranked:
+            print("🛡️ KRX18 Identity Gate: no trusted player media candidate", flush=True)
+            return []
     if ranked:
         LOG.info("🌐 Browser Resolver: discovered %d media candidate(s)", len(ranked))
         print(f"🌐 Browser Resolver: discovered {len(ranked)} media candidate(s)", flush=True)
