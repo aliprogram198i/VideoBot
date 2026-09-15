@@ -79,15 +79,6 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
         for href in re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", attrs, re.I):
             _add_target(ranked, href, base_url, 120)
 
-    for value in URL_RE.findall(source_html):
-        target = value.rstrip(".,;)]}")
-        if DIRECT_MEDIA_RE.search(target):
-            continue
-        pos = source_html.find(value)
-        nearby = source_html[max(0, pos - 700):pos + len(value) + 250]
-        if SERVER_RE.search(_clean_text(nearby)):
-            _add_target(ranked, target, base_url, 80)
-
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
     return [url for url, _ in ordered[:max_targets]]
 
@@ -130,12 +121,7 @@ def _rest_get(request_factory, open_function, read_function, endpoint: str, sour
 
 
 def _rest_search_post(request_factory, open_function, read_function, source_url: str, timeout: float, max_bytes: int) -> tuple[str, list[str]]:
-    """Use the public WP search API to discover the real movie post type/id.
-
-    This is deliberately used before the conventional /posts/{id} guess. KRX18
-    can expose movies through a custom post type, so assuming `posts` silently
-    misses the actual public content even when WordPress search can resolve it.
-    """
+    """Use the public WP search API to discover the real movie post type/id."""
     movie_id = post_id_from_url(source_url)
     slug = _movie_slug_from_url(source_url)
     queries = [value for value in (slug[:120], movie_id) if value]
@@ -233,8 +219,6 @@ def fetch_public_post(
     """Fetch bounded public KRX18 data and extract explicit server targets."""
     post_id = post_id_from_url(source_url)
 
-    # First try WP's own public search index. This avoids assuming that the
-    # movie is stored under /posts/{id}; custom post types are common here.
     try:
         title, targets = _rest_search_post(
             request_factory, open_function, read_function,
