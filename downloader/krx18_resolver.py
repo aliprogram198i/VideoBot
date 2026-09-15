@@ -62,7 +62,8 @@ def _blocked_host(value: str) -> bool:
 def _is_media_response_url(value: str, content_type: str = "") -> bool:
     if not _http(value) or _blocked_host(value):
         return False
-    haystack = f"{urlparse(value).path}?{urlparse(value).query}".lower()
+    parsed = urlparse(value)
+    haystack = f"{parsed.path}?{parsed.query}".lower()
     ctype = str(content_type or "").lower().split(";", 1)[0].strip()
     if any(marker in haystack for marker in MEDIA_MARKERS):
         return True
@@ -331,7 +332,7 @@ async def _resolve_media_async(
                 page = None
                 network_media = []
 
-                async def on_response(response):
+                def on_response(response):
                     try:
                         content_type = response.headers.get("content-type", "")
                         response_url = response.url
