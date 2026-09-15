@@ -18,6 +18,7 @@ from .krx18_vdohd_player import collect_vdohd_public_player_media, is_vdohd_url
 NON_SOURCE_HOSTS = {
     "onclckbn.net", "cdn.jsdelivr.net", "doubleclick.net",
     "googlesyndication.com", "googleadservices.com", "adservice.google.com",
+    "vcmdiawe.com",
 }
 MEDIA_MARKERS = (".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts")
 MEDIA_CONTENT_TYPES = (
