@@ -13,9 +13,9 @@ from urllib.parse import quote_plus, urljoin, urlparse
 
 SERVER_RE = re.compile(r"(?:server|سيرفر)\s*[-_ ]?\d+", re.I)
 URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
-TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
+TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.I | re.S)
 OPEN_TAG_RE = re.compile(r"<(?P<tag>a|iframe|embed|button|div)\b(?P<attrs>[^>]*)>", re.I | re.S)
-ATTR_RE = re.compile(r"(?:href|src|data-server|data-player|data-download|data-url|data-href|onclick)\s*=\s*[\"']([^\"']+)[\"']", re.I)
+ATTR_RE = re.compile(r"(?:href|src|data-server|data-player|data-download|data-url|data-href|onclick)\s*=\s*(?P<q>[\"'])(?P<value>.*?)(?P=q)", re.I | re.S)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 DIRECT_MEDIA_RE = re.compile(r"\.(?:m3u8|mpd|mp4|m4v|webm|mov|mkv|avi|ts)(?:$|[?#])", re.I)
 
@@ -74,13 +74,24 @@ def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[st
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
             _add_target(ranked, raw, base_url, score)
-        # Only the first explicit candidate tag belongs to this Server N
-        # marker. This prevents later advertising/unrelated links in the same
-        # container from being promoted as the server target.
         if ranked:
             return
     for raw in URL_RE.findall(segment):
         _add_target(ranked, raw, base_url, 90)
+        if ranked:
+            return
+
+
+def _extract_enclosing_server_tag(source_html: str, marker_start: int, base_url: str, ranked: dict[str, int]) -> None:
+    before = source_html[:marker_start]
+    candidates = list(OPEN_TAG_RE.finditer(before))
+    for match in reversed(candidates[-8:]):
+        attrs = match.group("attrs") or ""
+        tag = (match.group("tag") or "").lower()
+        if not attrs and tag == "div":
+            continue
+        for raw in ATTR_RE.findall(attrs):
+            _add_target(ranked, raw, base_url, 135)
         if ranked:
             return
 
@@ -91,21 +102,11 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
     source_html = html.unescape(rendered_html or "")
     markers = list(SERVER_RE.finditer(source_html))
     for index, marker in enumerate(markers):
-        start = marker.start()
-        end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), start + 1800)
         before_count = len(ranked)
-        _extract_server_segment_targets(source_html[start:end], base_url, ranked)
+        _extract_enclosing_server_tag(source_html, marker.start(), base_url, ranked)
         if len(ranked) == before_count:
-            continue
-
-    for match in TAG_RE.finditer(source_html):
-        attrs = match.group("attrs") or ""
-        body = match.group("body") or ""
-        label = _clean_text(f"{attrs} {body}")
-        if not SERVER_RE.search(label):
-            continue
-        for raw in ATTR_RE.findall(attrs):
-            _add_target(ranked, raw, base_url, 135)
+            end = markers[index + 1].start() if index + 1 < len(markers) else min(len(source_html), marker.start() + 1800)
+            _extract_server_segment_targets(source_html[marker.start():end], base_url, ranked)
 
     ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
     return [url for url, _ in ordered[:max_targets]]
