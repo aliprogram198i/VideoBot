@@ -1,0 +1,15 @@
+name: KRX18 Server Target Probe
+
+on:
+  push:
+    branches:
+      - diagnostic/krx18-server-target
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe public WordPress Server Target and player
+        run: python3 scripts/krx18_server_target_probe.py
