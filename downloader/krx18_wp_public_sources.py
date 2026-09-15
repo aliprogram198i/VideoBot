@@ -63,7 +63,8 @@ def _add_target(ranked: dict[str, int], raw_target: str, base_url: str, score: i
 
 
 def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[str, int]) -> None:
-    """Collect targets from one Server-N segment without affecting other servers."""
+    """Collect every target from one Server-N segment."""
+    found = False
     for match in OPEN_TAG_RE.finditer(segment):
         attrs = match.group("attrs") or ""
         if not attrs:
@@ -73,8 +74,10 @@ def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[st
             score = 120
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
+            before = len(ranked)
             _add_target(ranked, raw, base_url, score)
-    if ranked:
+            found = found or len(ranked) > before
+    if found:
         return
     for raw in URL_RE.findall(segment):
         _add_target(ranked, raw, base_url, 90)
