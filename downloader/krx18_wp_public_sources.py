@@ -60,6 +60,9 @@ def extract_server_targets(rendered_html: str, base_url: str, max_targets: int =
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
                 score += 20
             _add_target(ranked, raw, base_url, score)
+        if "<" not in body and ">" not in body:
+            for raw in URL_RE.findall(body):
+                _add_target(ranked, raw, base_url, 100)
 
     anchor_re = re.compile(r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>", re.I | re.S)
     for match in anchor_re.finditer(source_html):
