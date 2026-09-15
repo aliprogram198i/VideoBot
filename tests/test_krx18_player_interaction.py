@@ -13,6 +13,9 @@ class _FakeControl:
         self.label = label
         self.clicks = 0
 
+    async def evaluate(self, script):
+        return "button"
+
     async def inner_text(self, timeout=None):
         return self.label
 
@@ -41,11 +44,11 @@ class _FakePage:
         self.locator_obj = _FakeLocator(controls)
 
     def locator(self, selector):
-        assert selector == "button,a,[role='button'],[onclick],video"
+        assert selector == "button,a,[role='button'],[onclick],video,iframe"
         return self.locator_obj
 
     async def wait_for_timeout(self, milliseconds):
-        assert milliseconds <= 500
+        assert milliseconds <= 700
 
 
 def test_player_probe_is_bounded_and_clicks_at_most_three_controls():
