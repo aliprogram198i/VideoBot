@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Iterable
 
+from .candidate_relevance import obvious_secondary_penalty, size_relevance_bonus
 from .candidate_validator import ValidationResult
-from .smart_extractor import MediaCandidate
 
 
 _KIND_BONUS = {
@@ -40,9 +39,6 @@ class CandidateRanker:
         score = candidate.score
         score += _KIND_BONUS.get(candidate.kind, 0)
         score += _DISCOVERY_BONUS.get(candidate.discovered_by, 0)
-
-        # Recursive discovery is useful, but deeper branches are less
-        # preferable when equivalent candidates exist.
         score -= candidate.depth * 8
 
         if result.status == 200:
@@ -58,6 +54,11 @@ class CandidateRanker:
 
         if candidate.kind == "progressive" and content_type.startswith("video/"):
             score += 8
+
+        # Conservative relevance layer. It does not impose a global minimum
+        # duration/size, so legitimate short social videos remain eligible.
+        score -= obvious_secondary_penalty(candidate.url)
+        score += size_relevance_bonus(result.content_length)
 
         return score
 
@@ -77,7 +78,6 @@ class CandidateRanker:
                 raise TypeError("results must contain ValidationResult objects")
 
             key = (result.candidate.url, result.candidate.kind)
-
             existing = unique.get(key)
 
             if existing is None or self.score(result) > self.score(existing):
