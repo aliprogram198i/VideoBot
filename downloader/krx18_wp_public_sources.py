@@ -67,7 +67,7 @@ def _extract_server_segment_targets(segment: str, base_url: str, ranked: dict[st
         attrs = match.group("attrs") or ""
         if not attrs:
             continue
-        for raw in ATTR_RE.findall(attrs):
+        for _, raw in ATTR_RE.findall(attrs):
             lower = raw.casefold()
             score = 120
             if any(token in lower for token in ("player", "watch", "stream", "source", "embed", "iframe")):
@@ -95,7 +95,7 @@ def _extract_enclosing_server_tag(source_html: str, marker_start: int, base_url:
         close_start = marker_start + close_match.start()
         if not (match.start() < marker_start < close_start):
             continue
-        for raw in ATTR_RE.findall(attrs):
+        for _, raw in ATTR_RE.findall(attrs):
             _add_target(ranked, raw, base_url, 135)
         if ranked:
             return
