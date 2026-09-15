@@ -1,0 +1,79 @@
+name: apply-krx18-real-media-fix
+
+on:
+  push:
+    branches:
+      - fix/krx18-real-media-resolution-2026-09-15
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact guarded patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          browser = Path('downloader/browser_media_resolver.py')
+          text = browser.read_text()
+          replacements = [
+              ('import asyncio\nimport logging\nimport os\nimport re\n', 'import asyncio\nimport html\nimport logging\nimport os\nimport re\n'),
+              ('FAST_NAV_MAX_PAGES = 2\nFAST_NAV_MAX_TARGETS = 4\nFAST_NAV_MAX_CLICKS = 4\n', 'FAST_NAV_MAX_PAGES = 4\nFAST_NAV_MAX_TARGETS = 8\nFAST_NAV_MAX_CLICKS = 6\n'),
+              ('def _is_download_target(text: str, href: str) -> bool:\n', '''def _extract_script_media_urls(script_text: str) -> list[str]:\n    if not isinstance(script_text, str) or not script_text:\n        return []\n    decoded = html.unescape(script_text).replace('\\\\/', '/')\n    pattern = re.compile(r"https?://[^\\s\\\"\\\'<>\\\\]+(?:\\\\?[^\\s\\\"\\\'<>\\\\]*)?", re.I)\n    results = []\n    seen = set()\n    for match in pattern.findall(decoded):\n        candidate = match.rstrip('\\\\.,;)]}')\n        path = urlparse(candidate).path.lower()\n        if not any(marker in path for marker in _MEDIA_MARKERS):\n            continue\n        if candidate not in seen and _is_http_url(candidate):\n            seen.add(candidate)\n            results.append(candidate)\n    return results\n\n\nasync def _collect_script_media(page, validator, candidates: dict[str, tuple[int, str | None]]) -> None:\n    try:\n        scripts = await page.locator('script').all_text_contents()\n    except Exception:\n        return\n    for script_text in scripts or []:\n        for media_url in _extract_script_media_urls(script_text):\n            try:\n                validator(media_url)\n            except Exception:\n                continue\n            current = candidates.get(media_url)\n            score = 132\n            if current is None or score > current[0]:\n                candidates[media_url] = (score, None)\n\n\ndef _is_download_target(text: str, href: str) -> bool:\n'''),
+              ('                    await _collect_dom_media(page, validator, candidates)\n\n                    targets = await _discover_navigation_targets(page, page_url, max_nav_targets)\n', '                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n\n                    targets = await _discover_navigation_targets(page, page_url, max_nav_targets)\n'),
+              ('                    await _click_server_controls(page, max_server_clicks)\n                    await page.wait_for_timeout(settle_ms)\n                    await _collect_dom_media(page, validator, candidates)\n', '                    await _click_server_controls(page, max_server_clicks)\n                    await page.wait_for_timeout(settle_ms)\n                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n'),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'PATCH_MISMATCH browser: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+          browser.write_text(text)
+
+          bridge = Path('downloader/smart_media_bridge.py')
+          text = bridge.read_text()
+          replacements = [
+              ('SHAHID4U_MIN_VIDEO_DURATION = 60.0\n', 'SHAHID4U_MIN_VIDEO_DURATION = 60.0\nKRX18_MIN_VIDEO_BYTES = 5 * 1024 * 1024\nKRX18_MIN_VIDEO_DURATION = 20.0\n'),
+              ('    def _post_handoff_gate(path, source_url, candidate_url, is_audio):\n', '''    def _movie_gate_limits(source_url):\n        try:\n            host = (urlparse(str(source_url)).hostname or '').lower().rstrip('.')\n        except Exception:\n            host = ''\n        if host == 'krx18.com' or host.endswith('.krx18.com'):\n            return KRX18_MIN_VIDEO_BYTES, KRX18_MIN_VIDEO_DURATION\n        return MOVIE_MIN_VIDEO_BYTES, MOVIE_MIN_VIDEO_DURATION\n\n    def _post_handoff_gate(path, source_url, candidate_url, is_audio):\n'''),
+              ('                gate = movie_guard.assess_local_media(\n                    path,\n                    source_url,\n                    candidate_url=candidate_url,\n                    is_audio=False,\n                    min_bytes=MOVIE_MIN_VIDEO_BYTES,\n                    min_duration=MOVIE_MIN_VIDEO_DURATION,\n                )\n', '''                min_bytes, min_duration = _movie_gate_limits(source_url)\n                gate = movie_guard.assess_local_media(\n                    path,\n                    source_url,\n                    candidate_url=candidate_url,\n                    is_audio=False,\n                    min_bytes=min_bytes,\n                    min_duration=min_duration,\n                )\n'''),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'PATCH_MISMATCH bridge: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+          bridge.write_text(text)
+
+          tests = Path('tests/test_browser_resolver_budget.py')
+          text = tests.read_text()
+          text = text.replace('    _browser_budget,\n)', '    _browser_budget,\n    _extract_script_media_urls,\n)')
+          text = text.replace('    assert pages == 2\n    assert targets == 4\n    assert clicks == 4\n', '    assert pages == 4\n    assert targets == 8\n    assert clicks == 6\n')
+          text += '''\n\ndef test_script_media_extraction_is_limited_to_media_urls():\n    source = """var ad = 'https://ads.example/banner.jpg'; var file = 'https:\\/\\/cdn.example/video360.mp4?token=abc';"""\n    assert _extract_script_media_urls(source) == ['https://cdn.example/video360.mp4?token=abc']\n'''
+          tests.write_text(text)
+
+          Path('tests/test_krx18_gate_limits.py').write_text('''from downloader.smart_media_bridge import KRX18_MIN_VIDEO_BYTES, KRX18_MIN_VIDEO_DURATION\n\n\ndef test_krx18_gate_is_strict_but_allows_short_legitimate_media():\n    assert KRX18_MIN_VIDEO_BYTES == 5 * 1024 * 1024\n    assert KRX18_MIN_VIDEO_DURATION == 20.0\n''')
+          PY
+      - name: Validate patched files
+        run: |
+          python -m py_compile downloader/browser_media_resolver.py downloader/smart_media_bridge.py tests/test_browser_resolver_budget.py tests/test_krx18_gate_limits.py
+          python -m pytest -q tests/test_browser_resolver_budget.py tests/test_krx18_gate_limits.py
+      - name: Commit exact patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add downloader/browser_media_resolver.py downloader/smart_media_bridge.py tests/test_browser_resolver_budget.py tests/test_krx18_gate_limits.py
+          git commit -m 'fix: improve krx18 real media discovery and validation'
+          git push
+      - name: Remove patch workflow
+        run: |
+          git rm .github/workflows/apply-krx18-real-media-fix.yml
+          git commit -m 'chore: remove temporary krx18 patch workflow'
+          git push
