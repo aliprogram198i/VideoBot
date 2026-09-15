@@ -1,16 +1,15 @@
 """Fail-open runtime observer for resolver shadow decisions and staging evidence.
 
 The observer never changes the live resolver order and never uses shadow output to
-serve a request. Paired evidence is collected at a real download-request boundary
-when available, after the user's download operation completes, so successful
-primary paths can be included as well as fallback paths.
+serve a request. Paired evidence is collected at the real download-request
+boundary, after the user's download operation completes, so successful primary
+paths are included as well as fallback paths.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
-import time
 from typing import Any
 
 from .resolver_evidence import ResolverEvidenceStore
@@ -29,28 +28,35 @@ def _source_url(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
 
 
 def _request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str | None, str]:
-    """Extract a URL from the actual download call without assuming its signature."""
+    """Extract the real source URL from download_media(Update, Context) or helper signatures."""
     source_url = None
     media_kind = "unknown"
-
     for key in ("url", "source_url", "video_url", "media_url"):
         value = kwargs.get(key)
         if isinstance(value, str) and value.startswith(("http://", "https://")):
             source_url = value
             break
-
+    if source_url is None and len(args) >= 2:
+        context = args[1]
+        user_data = getattr(context, "user_data", None)
+        if isinstance(user_data, dict):
+            for key in ("video_url", "url", "source_url", "media_url"):
+                value = user_data.get(key)
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    source_url = value
+                    break
+            if user_data.get("is_audio") is True:
+                media_kind = "audio"
     if source_url is None:
         for value in args:
             if isinstance(value, str) and value.startswith(("http://", "https://")):
                 source_url = value
                 break
-
     for key in ("media_kind", "media_type", "kind"):
         value = kwargs.get(key)
         if isinstance(value, str) and value in {"video", "audio", "hls", "dash", "progressive", "iframe", "unknown"}:
             media_kind = value
             break
-
     return source_url, media_kind
 
 
@@ -63,7 +69,6 @@ def _build_paired_probes(bot_module):
         cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
     except Exception:
         return {}
-
     probes = {}
     if callable(legacy_resolver):
         async def legacy_extractor(source_url: str):
@@ -72,47 +77,22 @@ def _build_paired_probes(bot_module):
                 result = await result
             return result
         probes["legacy_extractor"] = legacy_extractor
-
     async def smart_media(source_url: str):
-        result = resolver.resolve(
-            source_url,
-            validator=bot_module.validate_public_http_url,
-            request_factory=bot_module.Request,
-            open_function=bot_module.safe_urlopen,
-            read_function=bot_module.read_limited,
-            source_url=source_url,
-            media_kind="unknown",
-        )
+        result = resolver.resolve(source_url, validator=bot_module.validate_public_http_url, request_factory=bot_module.Request, open_function=bot_module.safe_urlopen, read_function=bot_module.read_limited, source_url=source_url, media_kind="unknown")
         if inspect.isawaitable(result):
             result = await result
         return result
-
     async def browser_media(source_url: str):
-        result = browser_resolver.resolve(
-            source_url,
-            validator=bot_module.validate_public_http_url,
-            source_url=source_url,
-            media_kind="iframe",
-        )
+        result = browser_resolver.resolve(source_url, validator=bot_module.validate_public_http_url, source_url=source_url, media_kind="iframe")
         if inspect.isawaitable(result):
             result = await result
         return result
-
     async def cobalt(source_url: str):
-        result = cobalt_resolver.resolve(
-            source_url,
-            source_url=source_url,
-            media_kind="unknown",
-        )
+        result = cobalt_resolver.resolve(source_url, source_url=source_url, media_kind="unknown")
         if inspect.isawaitable(result):
             result = await result
         return result
-
-    probes.update({
-        "smart_media": smart_media,
-        "browser_media": browser_media,
-        "cobalt": cobalt,
-    })
+    probes.update({"smart_media": smart_media, "browser_media": browser_media, "cobalt": cobalt})
     return probes
 
 
@@ -121,12 +101,10 @@ def install(bot_module) -> None:
     original_extractor = getattr(bot_module, "extract_direct_media_urls", None)
     if not callable(original_extractor) or getattr(original_extractor, "_shadow_runtime_observer", False):
         return
-
     evidence = ResolverEvidenceStore()
     decisions = ResolverShadowDecisionStore(evidence.db_path)
 
     def _schedule_paired_collection(url: str, platform: str, media_kind: str) -> None:
-        """Schedule staging-only paired probes without adding request latency."""
         try:
             from .paired_evidence_collector import collect, enabled, sample_rate
             if not enabled():
@@ -135,22 +113,8 @@ def install(bot_module) -> None:
             if len(probes) < 2:
                 print("⚠️ Paired Evidence Collector: fewer than 2 resolver probes available.", flush=True)
                 return
-            print(
-                f"🧪 Paired Evidence Collector: scheduling real request "
-                f"platform={platform} media_kind={media_kind} rate={sample_rate():.3f}",
-                flush=True,
-            )
-            task = asyncio.create_task(
-                collect(
-                    evidence,
-                    sample_id=None,
-                    platform=platform,
-                    media_kind=media_kind,
-                    source_url=url,
-                    resolvers={name: probes[name] for name in _PAIRED_PROBE_ORDER if name in probes},
-                )
-            )
-
+            print(f"🧪 Paired Evidence Collector: scheduling real request platform={platform} media_kind={media_kind} rate={sample_rate():.3f}", flush=True)
+            task = asyncio.create_task(collect(evidence, sample_id=None, platform=platform, media_kind=media_kind, source_url=url, resolvers={name: probes[name] for name in _PAIRED_PROBE_ORDER if name in probes}))
             def _report_collection(completed):
                 if completed.cancelled():
                     print("⚠️ Paired Evidence Collector: task cancelled.", flush=True)
@@ -159,13 +123,11 @@ def install(bot_module) -> None:
                     print(f"🧪 Paired Evidence Collector: task finished stored={completed.result()}", flush=True)
                 except Exception as exc:
                     print(f"⚠️ Paired Evidence Collector: task failed {type(exc).__name__}.", flush=True)
-
             task.add_done_callback(_report_collection)
         except Exception as exc:
             print(f"⚠️ Paired Evidence Collector: scheduling skipped {type(exc).__name__}.", flush=True)
 
     def _observe(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
-        """Persist bounded shadow data at the extraction boundary; never schedule probes here."""
         try:
             url = _source_url(args, kwargs)
             if not url:
@@ -197,19 +159,18 @@ def install(bot_module) -> None:
     bot_module.extract_direct_media_urls = observed
     print("🧪 Resolver Shadow Runtime Observer: ENABLED (fail-open, no resolver changes)", flush=True)
 
-    # The actual bot download path uses download_with_fallback(), not
-    # download_media(). The previous hook therefore never attached to the real
-    # request boundary, which explains why successful real traffic did not create
-    # new paired-evidence scheduling events. Keep compatibility with a future
-    # download_media() API, but prefer the concrete function that exists today.
+    # The real user download boundary is download_media(Update, Context).
+    # Primary yt-dlp downloads do not call download_with_fallback(), so observing
+    # only the fallback helper misses most real traffic. Observe download_media
+    # first and use the fallback only when that boundary is unavailable.
     download_hook_name = None
-    original_download = getattr(bot_module, "download_with_fallback", None)
+    original_download = getattr(bot_module, "download_media", None)
     if callable(original_download):
-        download_hook_name = "download_with_fallback"
+        download_hook_name = "download_media"
     else:
-        original_download = getattr(bot_module, "download_media", None)
+        original_download = getattr(bot_module, "download_with_fallback", None)
         if callable(original_download):
-            download_hook_name = "download_media"
+            download_hook_name = "download_with_fallback"
 
     if callable(original_download) and not getattr(original_download, "_paired_evidence_request_observer", False):
         async def observed_download(*args, **kwargs):
@@ -229,14 +190,9 @@ def install(bot_module) -> None:
                         print("⚠️ Paired Evidence Collector: download request had no URL argument.", flush=True)
                 except Exception as exc:
                     print(f"⚠️ Paired Evidence Collector: request observation skipped {type(exc).__name__}.", flush=True)
-
         observed_download._paired_evidence_request_observer = True
         setattr(bot_module, download_hook_name, observed_download)
-        print(
-            f"🧪 Paired Evidence Collector: observing {download_hook_name} "
-            "(post-request, fail-open)",
-            flush=True,
-        )
+        print(f"🧪 Paired Evidence Collector: observing {download_hook_name} (post-request, fail-open)", flush=True)
     else:
         print("⚠️ Paired Evidence Collector: no concrete download boundary found during install.", flush=True)
 
