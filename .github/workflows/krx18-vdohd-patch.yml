@@ -1,0 +1,67 @@
+name: Apply KRX18 VDOHD player integration
+
+on:
+  push:
+    branches:
+      - fix/krx18-vdohd-public-player-2026-09-16
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/krx18-vdohd-public-player-2026-09-16
+          fetch-depth: 0
+
+      - name: Patch resolver
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('downloader/krx18_resolver.py')
+          text = path.read_text(encoding='utf-8')
+
+          old_import = 'from .krx18_wp_public_sources import fetch_public_post\n'
+          new_import = old_import + 'from .krx18_vdohd_player import collect_vdohd_public_player_media, is_vdohd_url\n'
+          if new_import not in text:
+              if old_import not in text:
+                  raise SystemExit('expected KRX18 public-source import not found')
+              text = text.replace(old_import, new_import, 1)
+
+          old_media = '    media = list(network_media or [])\n'
+          new_media = '''    media = list(network_media or [])
+    if is_vdohd_url(page_url):
+        try:
+            media.extend(await collect_vdohd_public_player_media(page))
+            if media:
+                print(f"🎥 KRX18 VDOHD Player: collected {len(set(media))} public player evidence URL(s)", flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"⚠️ KRX18 VDOHD Player: evidence extraction failed ({type(exc).__name__})", flush=True)
+'''
+          if new_media not in text:
+              if old_media not in text:
+                  raise SystemExit('expected media collection anchor not found')
+              text = text.replace(old_media, new_media, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate focused tests
+        run: |
+          python -m py_compile downloader/krx18_vdohd_player.py downloader/krx18_resolver.py
+          pytest -q tests/test_krx18_vdohd_player.py tests/test_krx18_identity_gate.py tests/test_krx18_gate_limits.py
+
+      - name: Commit integration and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/krx18-vdohd-patch.yml
+          git add downloader/krx18_resolver.py downloader/krx18_vdohd_player.py tests/test_krx18_vdohd_player.py .github/workflows/krx18-vdohd-patch.yml
+          git commit -m "fix: integrate VDOHD public player evidence" || exit 0
+          git push origin HEAD:fix/krx18-vdohd-public-player-2026-09-16
