@@ -121,6 +121,7 @@ async def intelligence_callback(update, context, get_db, owner_id: int) -> None:
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📍 طلب تحديد البلد بدقة", callback_data=f"{_PREFIX}request_location_{user_id}")],
+        [InlineKeyboardButton("🗃️ أرشيف المستخدم", callback_data=f"admin_user_archive_{user_id}_0")],
         [InlineKeyboardButton("🕘 النشاط", callback_data=f"admin_users_plus_activity_{user_id}"), InlineKeyboardButton("👤 التفاصيل", callback_data=f"admin_user_view_{user_id}")],
         [InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0")],
     ])
