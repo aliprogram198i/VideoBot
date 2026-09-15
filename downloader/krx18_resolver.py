@@ -22,6 +22,8 @@ from .krx18_wp_public_sources import fetch_public_post
 NON_SOURCE_HOSTS = {
     "onclckbn.net",
     "cdn.jsdelivr.net",
+    "vcmdiawe.com",
+    "bkcdn.net",
 }
 
 MEDIA_MARKERS = (".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts")
