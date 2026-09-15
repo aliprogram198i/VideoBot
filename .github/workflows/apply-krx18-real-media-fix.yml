@@ -1,3 +1,4 @@
+# Temporary, exact-match patch workflow; removes itself after successful validation.
 name: apply-krx18-real-media-fix
 
 on:
@@ -23,7 +24,6 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
           browser = Path('downloader/browser_media_resolver.py')
           text = browser.read_text()
           replacements = [
@@ -34,8 +34,7 @@ jobs:
               ('                    await _click_server_controls(page, max_server_clicks)\n                    await page.wait_for_timeout(settle_ms)\n                    await _collect_dom_media(page, validator, candidates)\n', '                    await _click_server_controls(page, max_server_clicks)\n                    await page.wait_for_timeout(settle_ms)\n                    await _collect_dom_media(page, validator, candidates)\n                    await _collect_script_media(page, validator, candidates)\n'),
           ]
           for old, new in replacements:
-              if old not in text:
-                  raise SystemExit(f'PATCH_MISMATCH browser: {old[:80]!r}')
+              if old not in text: raise SystemExit(f'PATCH_MISMATCH browser: {old[:80]!r}')
               text = text.replace(old, new, 1)
           browser.write_text(text)
 
@@ -47,8 +46,7 @@ jobs:
               ('                gate = movie_guard.assess_local_media(\n                    path,\n                    source_url,\n                    candidate_url=candidate_url,\n                    is_audio=False,\n                    min_bytes=MOVIE_MIN_VIDEO_BYTES,\n                    min_duration=MOVIE_MIN_VIDEO_DURATION,\n                )\n', '''                min_bytes, min_duration = _movie_gate_limits(source_url)\n                gate = movie_guard.assess_local_media(\n                    path,\n                    source_url,\n                    candidate_url=candidate_url,\n                    is_audio=False,\n                    min_bytes=min_bytes,\n                    min_duration=min_duration,\n                )\n'''),
           ]
           for old, new in replacements:
-              if old not in text:
-                  raise SystemExit(f'PATCH_MISMATCH bridge: {old[:80]!r}')
+              if old not in text: raise SystemExit(f'PATCH_MISMATCH bridge: {old[:80]!r}')
               text = text.replace(old, new, 1)
           bridge.write_text(text)
 
@@ -58,7 +56,6 @@ jobs:
           text = text.replace('    assert pages == 2\n    assert targets == 4\n    assert clicks == 4\n', '    assert pages == 4\n    assert targets == 8\n    assert clicks == 6\n')
           text += '''\n\ndef test_script_media_extraction_is_limited_to_media_urls():\n    source = """var ad = 'https://ads.example/banner.jpg'; var file = 'https:\\/\\/cdn.example/video360.mp4?token=abc';"""\n    assert _extract_script_media_urls(source) == ['https://cdn.example/video360.mp4?token=abc']\n'''
           tests.write_text(text)
-
           Path('tests/test_krx18_gate_limits.py').write_text('''from downloader.smart_media_bridge import KRX18_MIN_VIDEO_BYTES, KRX18_MIN_VIDEO_DURATION\n\n\ndef test_krx18_gate_is_strict_but_allows_short_legitimate_media():\n    assert KRX18_MIN_VIDEO_BYTES == 5 * 1024 * 1024\n    assert KRX18_MIN_VIDEO_DURATION == 20.0\n''')
           PY
       - name: Validate patched files
