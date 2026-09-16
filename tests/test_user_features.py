@@ -79,7 +79,7 @@ def test_link_info_extracts_only_safe_display_metadata(module):
 
 
 def test_link_info_command_disables_playlist_and_download(module):
-    command = module._info_command("https://example.com/video")
+    command = module._build_info_command("https://example.com/video")
     assert command[:3] == ["python", "-m", "yt_dlp"]
     assert "--no-playlist" in command
     assert "--skip-download" in command
