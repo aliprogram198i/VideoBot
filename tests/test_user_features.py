@@ -56,3 +56,37 @@ def test_per_user_lock_is_stable(module):
     second = module._lock_for(123)
     assert first is second
     assert isinstance(first, asyncio.Lock)
+
+
+def test_link_info_extracts_only_safe_display_metadata(module):
+    payload = {
+        "title": "  Example <Video>  ",
+        "uploader": "Channel",
+        "duration": 125,
+        "view_count": 1234567,
+        "upload_date": "20260915",
+        "webpage_url": "https://example.com/video?token=secret",
+        "url": "https://cdn.example.com/file.mp4?token=secret",
+    }
+    info = module._extract_info_payload(payload)
+    assert info["title"] == "Example <Video>"
+    assert info["uploader"] == "Channel"
+    assert info["duration"] == "2:05"
+    assert info["views"] == "1.2M"
+    assert info["upload_date"] == "20260915"
+    assert info["webpage_url"] == "https://example.com/video?token=secret"
+    assert "url" not in info
+
+
+def test_link_info_command_disables_playlist_and_download(module):
+    command = module._info_command("https://example.com/video")
+    assert command[:3] == ["python", "-m", "yt_dlp"]
+    assert "--no-playlist" in command
+    assert "--skip-download" in command
+    assert "--dump-single-json" in command
+    assert command[-1] == "https://example.com/video"
+
+
+def test_link_info_limits_are_explicit(module):
+    assert module.INFO_TIMEOUT_SECONDS == 25
+    assert module.INFO_MAX_OUTPUT_BYTES == 2 * 1024 * 1024
