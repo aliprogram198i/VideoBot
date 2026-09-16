@@ -1,9 +1,4 @@
-"""Smart Download Control user UX.
-
-This plugin sits above the existing downloader. It performs a bounded metadata
-probe before download, stores only the current URL/options in user_data, and
-reuses the existing video/audio callback pipeline for actual media delivery.
-"""
+"""Smart Download Control user UX."""
 
 from __future__ import annotations
 
@@ -87,18 +82,8 @@ def _keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 فيديو", callback_data="video_menu")],
         [InlineKeyboardButton("🎵 MP3", callback_data="audio_menu")],
-        [InlineKeyboardButton("⚡ تلقائي", callback_data="sdc_auto")],
-        [InlineKeyboardButton("🎚 الجودة", callback_data="sdc_quality")],
         [InlineKeyboardButton("🖼 الصورة المصغرة", callback_data="sdc_thumbnail")],
         [InlineKeyboardButton("❌ إلغاء", callback_data="sdc_cancel")],
-    ])
-
-
-def _quality_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎥 جودة الفيديو", callback_data="video_menu")],
-        [InlineKeyboardButton("🎵 جودة الصوت", callback_data="audio_menu")],
-        [InlineKeyboardButton("↩️ رجوع", callback_data="sdc_back")],
     ])
 
 
@@ -181,13 +166,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop("sdc_info", None)
         await query.edit_message_text("✅ تم إلغاء العملية.")
         return
-    if data == "sdc_quality":
-        await query.edit_message_text("🎚 <b>اختر نوع الجودة</b>", parse_mode="HTML", reply_markup=_quality_keyboard())
-        return
-    if data == "sdc_back":
-        info = context.user_data.get("sdc_info") or {"source": _source(context.user_data.get("video_url", ""))}
-        await query.edit_message_text(_text(info), parse_mode="HTML", reply_markup=_keyboard())
-        return
     if data == "sdc_thumbnail":
         info = context.user_data.get("sdc_info") or {}
         thumbnail = info.get("thumbnail")
@@ -200,27 +178,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             await query.answer("تعذر إرسال الصورة المصغرة.", show_alert=True)
         return
-    if data == "sdc_auto":
-        url = context.user_data.get("video_url")
-        if not url:
-            await query.edit_message_text("❌ انتهت صلاحية الرابط. أرسل الرابط من جديد.")
-            return
-        bot_module = __import__("bot")
-        context.user_data["sdc_auto"] = True
-        await query.edit_message_text(
-            "⚡ <b>الوضع التلقائي</b>\n\nجاري اختيار أفضل جودة متاحة وتجهيز التحميل...",
-            parse_mode="HTML",
-        )
-        # The existing downloader callback expects a concrete choice such as
-        # video_best/audio_best. Route Auto through its existing best-video path
-        # instead of inventing a second download implementation.
-        original_data = query.data
-        query.data = "video_best"
-        try:
-            await bot_module.download_media(update, context)
-        finally:
-            query.data = original_data
-        return
 
 
 def register_smart_download_control(app) -> None:
@@ -232,5 +189,5 @@ def register_smart_download_control(app) -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"^https?://"), url_message),
         group=-1,
     )
-    app.add_handler(CallbackQueryHandler(callback, pattern=r"^sdc_(auto|quality|thumbnail|cancel|back)$"))
+    app.add_handler(CallbackQueryHandler(callback, pattern=r"^sdc_(thumbnail|cancel)$"))
     print("🎛️ Smart Download Control: ENABLED", flush=True)
