@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import subprocess
 from types import SimpleNamespace
 from typing import Any
 
@@ -213,7 +212,7 @@ def _extract_info_payload(payload: Any) -> dict[str, Any]:
     }
 
 
-def _info_command(url: str) -> list[str]:
+def _build_info_command(url: str) -> list[str]:
     return [
         "python",
         "-m",
@@ -230,7 +229,7 @@ def _info_command(url: str) -> list[str]:
 
 async def _fetch_link_info(url: str) -> dict[str, Any]:
     process = await asyncio.create_subprocess_exec(
-        *_info_command(url),
+        *_build_info_command(url),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -310,11 +309,12 @@ async def _info_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_m
     if bot_module.is_banned(user.id):
         return
     language = _language(bot_module, user.id)
+    back_labels = {"ar": "🔙 رجوع", "en": "🔙 Back", "tr": "🔙 Geri", "de": "🔙 Zurück"}
     await query.edit_message_text(
         _messages(language)["info_prompt"],
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 رجوع" if language == "ar" else "🔙 Back", callback_data="start_button")]
+            [InlineKeyboardButton(back_labels[language], callback_data="start_button")]
         ]),
     )
 
