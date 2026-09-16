@@ -14,7 +14,7 @@ import json
 import socket
 from urllib.parse import urlparse
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 PROBE_TIMEOUT = 25
@@ -154,7 +154,7 @@ async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
         return
     context.user_data["video_url"] = url
     data = {"source": _source(url), "title": None, "duration": None, "uploader": None, "thumbnail": None}
-    await message.reply_text("🔎 جاري تحليل الرابط...", parse_mode="HTML")
+    await message.reply_text("🔎 جاري تحليل الرابط...", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     try:
         data.update(await _probe(url))
     except Exception as exc:
@@ -206,11 +206,19 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.edit_message_text("❌ انتهت صلاحية الرابط. أرسل الرابط من جديد.")
             return
         bot_module = __import__("bot")
+        context.user_data["sdc_auto"] = True
+        await query.edit_message_text(
+            "⚡ <b>الوضع التلقائي</b>\n\nجاري اختيار أفضل جودة متاحة وتجهيز التحميل...",
+            parse_mode="HTML",
+        )
         await bot_module.download_media(update, context)
 
 
 def register_smart_download_control(app) -> None:
     """Register the UX layer before the existing generic text handler."""
+    if getattr(app, "_sdc_registered", False):
+        return
+    app._sdc_registered = True
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"^https?://"), url_message),
         group=-1,
