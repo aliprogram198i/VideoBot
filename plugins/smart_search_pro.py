@@ -22,6 +22,7 @@ from downloader.smart_search import SearchResult, search as base_search
 
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 PICK_RE = re.compile(r"^smart_pro_pick_(\d+)$")
+NAV_RE = re.compile(r"^smart_pro_(new|cancel)$")
 MAX_QUERY_LENGTH = 160
 CACHE_TTL_SECONDS = 120
 MAX_CACHE_ITEMS = 128
@@ -163,7 +164,7 @@ def _result_card(index: int, result: SearchResult) -> str:
 def _results_message(query: str, results: list[SearchResult]) -> str:
     """Render the Smart Search result screen; callbacks remain unchanged."""
     safe_query = html.escape(query[:80])
-    cards = [f"{_result_card(index, result)}" for index, result in enumerate(results)]
+    cards = [_result_card(index, result) for index, result in enumerate(results)]
     return (
         "🔎 <b>البحث الذكي</b>\n"
         f"<code>{safe_query}</code>\n"
@@ -176,15 +177,12 @@ def _results_message(query: str, results: list[SearchResult]) -> str:
 
 
 def _results_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
-    """Render compact selection controls plus the existing navigation actions."""
+    """Render compact selection controls plus safe search navigation."""
     keyboard = [
         [InlineKeyboardButton(f"{index + 1}️⃣ اختيار النتيجة", callback_data=f"smart_pro_pick_{index}")]
         for index, _ in enumerate(results)
     ]
-    keyboard.append([
-        InlineKeyboardButton("🔄 بحث أوسع", callback_data="smart_pro_broaden"),
-        InlineKeyboardButton("✏️ تعديل البحث", callback_data="smart_pro_edit"),
-    ])
+    keyboard.append([InlineKeyboardButton("✏️ بحث جديد", callback_data="smart_pro_new")])
     keyboard.append([InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -288,6 +286,22 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     await query.edit_message_text(f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\nاختر نوع التحميل:", parse_mode="HTML", reply_markup=keyboard)
 
 
+async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not query.data or not NAV_RE.match(query.data):
+        return
+
+    context.user_data.pop("smart_search_results", None)
+    context.user_data.pop("smart_search_query", None)
+
+    if query.data == "smart_pro_cancel":
+        await query.edit_message_text("❌ تم إلغاء البحث الذكي.")
+        return
+
+    await query.edit_message_text("✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.", parse_mode="HTML")
+
+
 def register_smart_search_pro(app: Any, bot_module: Any) -> None:
     """Register Pro search ahead of legacy catch-all text handlers."""
     app.add_handler(
@@ -296,6 +310,10 @@ def register_smart_search_pro(app: Any, bot_module: Any) -> None:
     )
     app.add_handler(
         CallbackQueryHandler(lambda u, c: _pick_handler(u, c, bot_module), pattern=r"^smart_pro_pick_\d+$"),
+        group=-2,
+    )
+    app.add_handler(
+        CallbackQueryHandler(_navigation_handler, pattern=NAV_RE.pattern),
         group=-2,
     )
     print("🔎 Smart Search Pro: ENABLED", flush=True)
