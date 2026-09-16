@@ -68,10 +68,17 @@ def test_marquee_button_changes_visible_title_but_keeps_metadata():
         assert len(label) <= 64
 
 
-def test_results_message_keeps_result_data_outside_buttons():
-    results = [_result(title="One"), _result(title="Two", index=1)]
-    message = _results_message("my <query>", results)
-    assert "my &lt;query&gt;" in message
-    assert "2 نتائج" in message
-    assert "One" not in message
-    assert "Two" not in message
+def test_results_message_lists_full_titles_in_result_order_only():
+    results = [
+        _result(title="First full result title"),
+        _result(title="Second full result title", index=1, channel="Other Channel", duration=12, views=42),
+        _result(title="Third <full> result title", index=2),
+    ]
+    message = _results_message("ignored query", results)
+    assert message.index("1. First full result title") < message.index("2. Second full result title")
+    assert message.index("2. Second full result title") < message.index("3. Third &lt;full&gt; result title")
+    assert "Other Channel" not in message
+    assert "0:12" not in message
+    assert "42" not in message
+    assert "1.2M" not in message
+    assert "ignored query" not in message

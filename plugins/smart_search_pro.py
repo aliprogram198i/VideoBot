@@ -190,21 +190,16 @@ def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> st
 
 
 def _results_message(query: str, results: list[SearchResult]) -> str:
-    """Render only the search header/instructions; result data lives inside buttons."""
-    safe_query = html.escape(query[:80])
-    has_long_title = any(len(_clean_title(result.title)) > 28 for result in results)
-    marquee_hint = "\n↔️ الأسماء الطويلة تتحرك تلقائيًا داخل الزر." if has_long_title else ""
-    return (
-        "🔎 <b>البحث الذكي</b>\n"
-        f"🔍 <code>{safe_query}</code>\n\n"
-        f"📋 <b>{len(results)} نتائج</b> — اختر النتيجة المطلوبة:\n"
-        "👇 المعلومات الأساسية لكل نتيجة موجودة داخل الزر."
-        f"{marquee_hint}"
-    )
+    """Render the complete ordered title list; no result metadata is duplicated here."""
+    lines = ["🔎 <b>البحث الذكي</b>"]
+    for index, result in enumerate(results, start=1):
+        title = html.escape(_clean_title(result.title))
+        lines.append(f"{index}. {title}")
+    return "\n".join(lines)
 
 
 def _results_keyboard(results: list[SearchResult], title_offset: int = 0) -> InlineKeyboardMarkup:
-    """Render distinctive result buttons plus stable navigation controls."""
+    """Render distinctive multi-line result buttons plus navigation controls."""
     keyboard = [
         [InlineKeyboardButton(_button_label(index, result, title_offset), callback_data=f"smart_pro_pick_{index}")]
         for index, result in enumerate(results)
