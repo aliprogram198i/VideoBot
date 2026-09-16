@@ -1,5 +1,5 @@
 from downloader.smart_search import SearchResult
-from plugins.smart_search_pro import _button_label, _format_duration, _format_views, _results_message
+from plugins.smart_search_pro import _button_label, _format_duration, _format_views, _results_message, _title_window
 
 
 def _result(**overrides):
@@ -46,6 +46,26 @@ def test_button_label_preserves_metadata_when_title_is_long():
     assert "📺" in label
     assert "⏱ 1:02:03" in label
     assert "👁 1.2M" in label
+
+
+def test_title_window_reveals_full_title_across_offsets():
+    title = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    windows = {_title_window(title, 8, offset) for offset in range(len(title) + 7)}
+    assert title[:8] in windows
+    assert title[-8:] in windows
+    assert any("IJKL" in window for window in windows)
+
+
+def test_marquee_button_changes_visible_title_but_keeps_metadata():
+    result = _result(title="عنوان طويل جدًا لاختبار الحركة داخل زر البحث")
+    first = _button_label(0, result, 0)
+    later = _button_label(0, result, 6)
+    assert first != later
+    for label in (first, later):
+        assert "📺 Test Channel" in label
+        assert "⏱ 1:02:03" in label
+        assert "👁 1.2M" in label
+        assert len(label) <= 64
 
 
 def test_results_message_keeps_result_data_outside_buttons():
