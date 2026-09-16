@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import html
 import re
 import time
 from typing import Any
@@ -119,6 +120,75 @@ async def _cache_put(key: str, results: list[SearchResult]) -> None:
             _CACHE.pop(oldest, None)
 
 
+def _format_duration(seconds: int | None) -> str:
+    if seconds is None or seconds < 0:
+        return ""
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_views(views: int | None) -> str:
+    if views is None or views < 0:
+        return ""
+    if views >= 1_000_000:
+        return f"{views / 1_000_000:.1f}M"
+    if views >= 1_000:
+        return f"{views / 1_000:.1f}K"
+    return str(views)
+
+
+def _result_card(index: int, result: SearchResult) -> str:
+    """Build a compact, Telegram-safe result card without changing search data."""
+    title = html.escape(result.title[:120])
+    lines = [f"<b>{index + 1}. {title}</b>"]
+
+    meta: list[str] = []
+    if result.channel:
+        meta.append(f"📺 {html.escape(result.channel[:36])}")
+    duration = _format_duration(result.duration)
+    if duration:
+        meta.append(f"⏱ {duration}")
+    views = _format_views(result.views)
+    if views:
+        meta.append(f"👁 {views}")
+    if meta:
+        lines.append("  " + "  •  ".join(meta))
+
+    return "\n".join(lines)
+
+
+def _results_message(query: str, results: list[SearchResult]) -> str:
+    """Render the Smart Search result screen; callbacks remain unchanged."""
+    safe_query = html.escape(query[:80])
+    cards = [f"{_result_card(index, result)}" for index, result in enumerate(results)]
+    return (
+        "🔎 <b>البحث الذكي</b>\n"
+        f"<code>{safe_query}</code>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"📋 <b>{len(results)} نتائج مطابقة</b>\n\n"
+        + "\n\n".join(cards)
+        + "\n\n━━━━━━━━━━━━━━━━━━\n"
+        "👇 <b>اختر النتيجة المطلوبة للمتابعة</b>"
+    )
+
+
+def _results_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
+    """Render compact selection controls plus the existing navigation actions."""
+    keyboard = [
+        [InlineKeyboardButton(f"{index + 1}️⃣ اختيار النتيجة", callback_data=f"smart_pro_pick_{index}")]
+        for index, _ in enumerate(results)
+    ]
+    keyboard.append([
+        InlineKeyboardButton("🔄 بحث أوسع", callback_data="smart_pro_broaden"),
+        InlineKeyboardButton("✏️ تعديل البحث", callback_data="smart_pro_edit"),
+    ])
+    keyboard.append([InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel")])
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def search_pro(query: str) -> list[SearchResult]:
     query = query.strip()[:MAX_QUERY_LENGTH]
     if not query:
@@ -178,23 +248,13 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
         raise ApplicationHandlerStop
 
+    context.user_data["smart_search_query"] = text
     context.user_data["smart_search_results"] = [{"url": r.url, "title": r.title} for r in results]
-    lines = ["🔎 <b>نتائج البحث الذكي الاحترافي</b>", "━━━━━━━━━━━━━━━━━━", ""]
-    keyboard = []
-    for index, result in enumerate(results):
-        meta = []
-        if result.channel:
-            meta.append(result.channel[:36])
-        if result.duration is not None:
-            minutes, seconds = divmod(max(result.duration, 0), 60)
-            meta.append(f"{minutes}:{seconds:02d}")
-        if result.views is not None and result.views >= 1000:
-            meta.append(f"{result.views / 1_000_000:.1f}M" if result.views >= 1_000_000 else f"{result.views / 1_000:.1f}K")
-        suffix = f" — {' • '.join(meta)}" if meta else ""
-        lines.append(f"{index + 1}. {result.title[:80]}{suffix}")
-        keyboard.append([InlineKeyboardButton(f"{index + 1}️⃣ {result.title[:45]}", callback_data=f"smart_pro_pick_{index}")])
-    lines.append("\n👇 اختر النتيجة التي تريد تحميلها.")
-    await status.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    await status.edit_text(
+        _results_message(text, results),
+        parse_mode="HTML",
+        reply_markup=_results_keyboard(results),
+    )
     raise ApplicationHandlerStop
 
 
@@ -225,7 +285,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         [InlineKeyboardButton(bot_module.TEXTS[language]["audio_type"], callback_data="audio_menu")],
         [InlineKeyboardButton(bot_module.TEXTS[language]["back"], callback_data="main_menu")],
     ])
-    await query.edit_message_text(f"🎯 <b>تم اختيار:</b>\n{selected['title'][:200]}\n\nاختر نوع التحميل:", parse_mode="HTML", reply_markup=keyboard)
+    await query.edit_message_text(f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\nاختر نوع التحميل:", parse_mode="HTML", reply_markup=keyboard)
 
 
 def register_smart_search_pro(app: Any, bot_module: Any) -> None:
