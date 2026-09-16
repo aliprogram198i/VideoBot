@@ -37,6 +37,15 @@ def test_button_label_contains_title_and_all_metadata():
     assert "⏱ 1:02:03" in label
     assert "👁 1.2M" in label
     assert "\n" in label
+    assert len(label) <= 64
+
+
+def test_button_label_preserves_metadata_when_title_is_long():
+    label = _button_label(4, _result(title="عنوان طويل جداً " * 20, channel="قناة طويلة جداً"))
+    assert len(label) <= 64
+    assert "📺" in label
+    assert "⏱ 1:02:03" in label
+    assert "👁 1.2M" in label
 
 
 def test_results_message_keeps_result_data_outside_buttons():
