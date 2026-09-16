@@ -6,13 +6,17 @@ import asyncio
 import html
 import ipaddress
 import json
+from io import BytesIO
 import socket
 from urllib.parse import urlparse
+from urllib.request import Request
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 PROBE_TIMEOUT = 25
+THUMBNAIL_TIMEOUT = 20
+THUMBNAIL_MAX_BYTES = 10 * 1024 * 1024
 
 
 def _public_url(value: str) -> bool:
@@ -149,6 +153,69 @@ async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
     return True
 
 
+async def _send_thumbnail(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    info = context.user_data.get("sdc_info") or {}
+    thumbnail = info.get("thumbnail")
+    if not thumbnail or not _public_url(thumbnail):
+        await query.answer("الصورة المصغرة غير متاحة لهذا الرابط.", show_alert=True)
+        return
+
+    bot_module = __import__("bot")
+    try:
+        request = Request(
+            thumbnail,
+            headers={
+                "User-Agent": "AliBot/1.0",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            },
+        )
+        with bot_module.safe_urlopen(
+            request,
+            timeout=THUMBNAIL_TIMEOUT,
+            max_bytes=THUMBNAIL_MAX_BYTES,
+            expected_content_types={
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/gif",
+                "image/avif",
+            },
+        ) as response:
+            image_bytes = bot_module.read_limited(response, THUMBNAIL_MAX_BYTES)
+
+        if not image_bytes:
+            raise ValueError("empty thumbnail response")
+
+        image = BytesIO(image_bytes)
+        image.name = "thumbnail.jpg"
+        caption = str(info.get("title") or "الصورة المصغرة")[:900]
+        try:
+            await query.message.reply_photo(photo=image, caption=caption)
+        except Exception:
+            image.seek(0)
+            await query.message.reply_document(document=image, caption=caption)
+    except Exception:
+        await query.answer("تعذر تحميل الصورة المصغرة من المصدر.", show_alert=True)
+        return
+
+    await query.answer("تم إرسال الصورة المصغرة.")
+
+
+async def _restore_control_from_quality_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not context.user_data.get("video_url") or not context.user_data.get("sdc_info"):
+        return False
+    query = update.callback_query
+    if not query:
+        return False
+    await query.answer()
+    await query.edit_message_text(
+        _text(context.user_data["sdc_info"]),
+        parse_mode="HTML",
+        reply_markup=_keyboard(),
+    )
+    return True
+
+
 async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
@@ -162,29 +229,28 @@ async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     data = query.data or ""
+
+    if data == "main_menu":
+        if await _restore_control_from_quality_menu(update, context):
+            raise ApplicationHandlerStop
+        return
+
+    await query.answer()
+
     if data == "sdc_cancel":
         context.user_data.pop("video_url", None)
         context.user_data.pop("sdc_info", None)
         await query.edit_message_text("✅ تم إلغاء العملية.")
-        return
+        raise ApplicationHandlerStop
+
     if data == "sdc_thumbnail":
-        info = context.user_data.get("sdc_info") or {}
-        thumbnail = info.get("thumbnail")
-        if not thumbnail or not _public_url(thumbnail):
-            await query.answer("الصورة المصغرة غير متاحة لهذا الرابط.", show_alert=True)
-            return
-        caption = str(info.get("title") or "الصورة المصغرة")[:900]
-        try:
-            await query.message.reply_photo(photo=thumbnail, caption=caption)
-        except Exception:
-            await query.answer("تعذر إرسال الصورة المصغرة.", show_alert=True)
-        return
+        await _send_thumbnail(query, context)
+        raise ApplicationHandlerStop
 
 
 def register_smart_download_control(app) -> None:
-    """Register the UX layer before the existing generic text handler."""
+    """Register the UX layer before the existing generic text/callback handlers."""
     if getattr(app, "_sdc_registered", False):
         return
     app._sdc_registered = True
@@ -192,5 +258,8 @@ def register_smart_download_control(app) -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"^https?://"), url_message),
         group=-1,
     )
-    app.add_handler(CallbackQueryHandler(callback, pattern=r"^sdc_(thumbnail|cancel)$"))
+    app.add_handler(
+        CallbackQueryHandler(callback, pattern=r"^(sdc_thumbnail|sdc_cancel|main_menu)$"),
+        group=-2,
+    )
     print("🎛️ Smart Download Control: ENABLED", flush=True)
