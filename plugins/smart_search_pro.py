@@ -28,6 +28,8 @@ CACHE_TTL_SECONDS = 120
 MAX_CACHE_ITEMS = 128
 LOW_SCORE_THRESHOLD = 42.0
 TELEGRAM_BUTTON_MAX_CHARS = 64
+MARQUEE_INTERVAL_SECONDS = 2.2
+MARQUEE_PADDING = "   •   "
 
 _CACHE: dict[str, tuple[float, list[SearchResult]]] = {}
 _CACHE_LOCK = asyncio.Lock()
@@ -142,8 +144,7 @@ def _format_views(views: int | None) -> str:
     return str(views)
 
 
-def _button_label(index: int, result: SearchResult) -> str:
-    """Build a distinctive multi-line button while respecting Telegram's 64-char limit."""
+def _button_meta(result: SearchResult) -> str:
     meta: list[str] = []
     if result.channel:
         channel = re.sub(r"\s+", " ", result.channel).strip()[:12]
@@ -155,34 +156,57 @@ def _button_label(index: int, result: SearchResult) -> str:
     views = _format_views(result.views)
     if views:
         meta.append(f"👁 {views}")
+    return "  •  ".join(meta)
 
-    meta_text = "  •  ".join(meta)
+
+def _clean_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def _title_window(title: str, width: int, offset: int = 0) -> str:
+    """Return a moving window that eventually exposes every title character."""
+    if width <= 0:
+        return ""
+    title = _clean_title(title)
+    if len(title) <= width:
+        return title
+    stream = title + MARQUEE_PADDING + title
+    max_offset = len(title) + len(MARQUEE_PADDING)
+    start = offset % max_offset
+    return stream[start:start + width].rstrip()
+
+
+def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> str:
+    """Build a distinctive multi-line button while respecting Telegram's 64-char limit."""
+    meta_text = _button_meta(result)
     prefix = f"{index + 1}️⃣  "
     suffix = f"\n{meta_text}" if meta_text else ""
     available = TELEGRAM_BUTTON_MAX_CHARS - len(prefix) - len(suffix)
-    title = re.sub(r"\s+", " ", result.title).strip()
+    title = _clean_title(result.title)
     if available < 1:
-        # Metadata itself is intentionally preserved if it is all that fits.
         return (prefix + suffix)[:TELEGRAM_BUTTON_MAX_CHARS]
-    title = title[:available].rstrip()
-    return f"{prefix}{title}{suffix}"
+    visible_title = _title_window(title, available, title_offset)
+    return f"{prefix}{visible_title}{suffix}"
 
 
 def _results_message(query: str, results: list[SearchResult]) -> str:
     """Render only the search header/instructions; result data lives inside buttons."""
     safe_query = html.escape(query[:80])
+    has_long_title = any(len(_clean_title(result.title)) > 28 for result in results)
+    marquee_hint = "\n↔️ الأسماء الطويلة تتحرك تلقائيًا داخل الزر." if has_long_title else ""
     return (
         "🔎 <b>البحث الذكي</b>\n"
         f"🔍 <code>{safe_query}</code>\n\n"
         f"📋 <b>{len(results)} نتائج</b> — اختر النتيجة المطلوبة:\n"
         "👇 المعلومات الأساسية لكل نتيجة موجودة داخل الزر."
+        f"{marquee_hint}"
     )
 
 
-def _results_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
-    """Render distinctive multi-line result buttons plus navigation controls."""
+def _results_keyboard(results: list[SearchResult], title_offset: int = 0) -> InlineKeyboardMarkup:
+    """Render distinctive result buttons plus stable navigation controls."""
     keyboard = [
-        [InlineKeyboardButton(_button_label(index, result), callback_data=f"smart_pro_pick_{index}")]
+        [InlineKeyboardButton(_button_label(index, result, title_offset), callback_data=f"smart_pro_pick_{index}")]
         for index, result in enumerate(results)
     ]
     keyboard.append([
@@ -190,6 +214,37 @@ def _results_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
         InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel"),
     ])
     return InlineKeyboardMarkup(keyboard)
+
+
+async def _stop_marquee(context: ContextTypes.DEFAULT_TYPE) -> None:
+    task = context.user_data.pop("smart_search_marquee_task", None)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _animate_result_buttons(
+    message: Any,
+    results: list[SearchResult],
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Animate only the keyboard; selection callbacks remain unchanged."""
+    if not any(len(_clean_title(result.title)) > 28 for result in results):
+        return
+    offset = 0
+    try:
+        while True:
+            await asyncio.sleep(MARQUEE_INTERVAL_SECONDS)
+            offset += 3
+            await message.edit_reply_markup(reply_markup=_results_keyboard(results, offset))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # A stale/deleted Telegram message must never affect the download pipeline.
+        return
 
 
 async def search_pro(query: str) -> list[SearchResult]:
@@ -245,6 +300,7 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         await update.message.reply_text("❌ اكتب عبارة بحث بين حرفين و160 حرفًا.")
         raise ApplicationHandlerStop
 
+    await _stop_marquee(context)
     status = await update.message.reply_text("🔎 جاري البحث الذكي الاحترافي...\n\n⚙️ يتم تحليل وترتيب النتائج خوارزميًا.")
     results = await search_pro(text)
     if not results:
@@ -258,6 +314,8 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         parse_mode="HTML",
         reply_markup=_results_keyboard(results),
     )
+    task = asyncio.create_task(_animate_result_buttons(status, results, context))
+    context.user_data["smart_search_marquee_task"] = task
     raise ApplicationHandlerStop
 
 
@@ -270,6 +328,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     match = PICK_RE.match(query.data or "")
     if not match:
         return
+    await _stop_marquee(context)
     results = context.user_data.get("smart_search_results") or []
     index = int(match.group(1))
     if index < 0 or index >= len(results):
@@ -297,6 +356,7 @@ async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not query.data or not NAV_RE.match(query.data):
         return
 
+    await _stop_marquee(context)
     context.user_data.pop("smart_search_results", None)
     context.user_data.pop("smart_search_query", None)
 
