@@ -14,9 +14,24 @@ _LOG = logging.getLogger(__name__)
 
 def _install_admin_runtime_guard():
     try:
+        from telegram import CallbackQuery
+        from telegram.error import BadRequest
         from telegram.ext import Application
     except Exception:
         return
+
+    original_edit_message_text = CallbackQuery.edit_message_text
+    if not getattr(original_edit_message_text, "_alibot_noop_guard", False):
+        async def guarded_edit_message_text(self, *args, **kwargs):
+            try:
+                return await original_edit_message_text(self, *args, **kwargs)
+            except BadRequest as exc:
+                if str(exc).startswith("Message is not modified"):
+                    return None
+                raise
+
+        guarded_edit_message_text._alibot_noop_guard = True
+        CallbackQuery.edit_message_text = guarded_edit_message_text
 
     original = Application.run_polling
     if getattr(original, "_alibot_admin_guard", False):
