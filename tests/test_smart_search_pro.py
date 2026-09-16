@@ -1,5 +1,5 @@
 from downloader.smart_search import SearchResult
-from plugins.smart_search_pro import _format_duration, _format_views, _result_card, _results_message
+from plugins.smart_search_pro import _button_label, _format_duration, _format_views, _results_message
 
 
 def _result(**overrides):
@@ -29,18 +29,20 @@ def test_format_views_is_compact():
     assert _format_views(None) == ""
 
 
-def test_result_card_escapes_html_and_contains_metadata():
-    card = _result_card(0, _result())
-    assert "&lt;safe&gt;" in card
-    assert "📺 Test Channel" in card
-    assert "⏱ 1:02:03" in card
-    assert "👁 1.2M" in card
+def test_button_label_contains_title_and_all_metadata():
+    label = _button_label(0, _result())
+    assert "1️⃣" in label
+    assert "Test Video <safe>" in label
+    assert "📺 Test Channel" in label
+    assert "⏱ 1:02:03" in label
+    assert "👁 1.2M" in label
+    assert "\n" in label
 
 
-def test_results_message_contains_query_and_all_result_cards():
+def test_results_message_keeps_result_data_outside_buttons():
     results = [_result(title="One"), _result(title="Two", index=1)]
     message = _results_message("my <query>", results)
     assert "my &lt;query&gt;" in message
-    assert "1. <b>One</b>" in message
-    assert "2. <b>Two</b>" in message
-    assert "2 نتائج مطابقة" in message
+    assert "2 نتائج" in message
+    assert "One" not in message
+    assert "Two" not in message
