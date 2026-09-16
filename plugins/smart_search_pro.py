@@ -141,49 +141,49 @@ def _format_views(views: int | None) -> str:
     return str(views)
 
 
-def _result_card(index: int, result: SearchResult) -> str:
-    """Build a compact, Telegram-safe result card without changing search data."""
-    title = html.escape(result.title[:120])
-    lines = [f"<b>{index + 1}. {title}</b>"]
-
+def _button_label(index: int, result: SearchResult) -> str:
+    """Build a compact multi-line Telegram button containing all result metadata."""
+    title = re.sub(r"\s+", " ", result.title).strip()
+    # Keep the button readable on narrow Telegram clients while retaining metadata.
+    title = title[:46].rstrip()
     meta: list[str] = []
     if result.channel:
-        meta.append(f"📺 {html.escape(result.channel[:36])}")
+        channel = re.sub(r"\s+", " ", result.channel).strip()[:22]
+        if channel:
+            meta.append(f"📺 {channel}")
     duration = _format_duration(result.duration)
     if duration:
         meta.append(f"⏱ {duration}")
     views = _format_views(result.views)
     if views:
         meta.append(f"👁 {views}")
-    if meta:
-        lines.append("  " + "  •  ".join(meta))
-
-    return "\n".join(lines)
+    meta_text = "  •  ".join(meta)
+    if meta_text:
+        return f"{index + 1}️⃣  {title}\n{meta_text}"
+    return f"{index + 1}️⃣  {title}"
 
 
 def _results_message(query: str, results: list[SearchResult]) -> str:
-    """Render the Smart Search result screen; callbacks remain unchanged."""
+    """Render only the search header/instructions; result data lives inside buttons."""
     safe_query = html.escape(query[:80])
-    cards = [_result_card(index, result) for index, result in enumerate(results)]
     return (
         "🔎 <b>البحث الذكي</b>\n"
-        f"<code>{safe_query}</code>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"📋 <b>{len(results)} نتائج مطابقة</b>\n\n"
-        + "\n\n".join(cards)
-        + "\n\n━━━━━━━━━━━━━━━━━━\n"
-        "👇 <b>اختر النتيجة المطلوبة للمتابعة</b>"
+        f"🔍 <code>{safe_query}</code>\n\n"
+        f"📋 <b>{len(results)} نتائج</b> — اختر النتيجة المطلوبة:\n"
+        "👇 المعلومات الأساسية لكل نتيجة موجودة داخل الزر."
     )
 
 
 def _results_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
-    """Render compact selection controls plus safe search navigation."""
+    """Render distinctive multi-line result buttons plus navigation controls."""
     keyboard = [
-        [InlineKeyboardButton(f"{index + 1}️⃣ اختيار النتيجة", callback_data=f"smart_pro_pick_{index}")]
-        for index, _ in enumerate(results)
+        [InlineKeyboardButton(_button_label(index, result), callback_data=f"smart_pro_pick_{index}")]
+        for index, result in enumerate(results)
     ]
-    keyboard.append([InlineKeyboardButton("✏️ بحث جديد", callback_data="smart_pro_new")])
-    keyboard.append([InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel")])
+    keyboard.append([
+        InlineKeyboardButton("🔎 بحث جديد", callback_data="smart_pro_new"),
+        InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel"),
+    ])
     return InlineKeyboardMarkup(keyboard)
 
 
