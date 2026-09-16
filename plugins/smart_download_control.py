@@ -10,7 +10,7 @@ import socket
 from urllib.parse import urlparse
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 PROBE_TIMEOUT = 25
 
@@ -113,30 +113,30 @@ async def _probe(url: str) -> dict:
     }
 
 
-async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> None:
+async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
     message = update.message
     if not message:
-        return
+        return False
     bot_module = __import__("bot")
     user = update.effective_user
     if not user:
-        return
+        return False
     if user.id == getattr(bot_module, "ADMIN_ID", None) and any(
         context.user_data.get(key)
         for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
     ):
-        return
+        return False
     bot_module.register_user(user)
     if bot_module.is_banned(user.id):
         await message.reply_text(bot_module.TEXTS["ar"]["banned"])
-        return
+        return True
     language = bot_module.get_language(user.id)
     if not language:
         await message.reply_text(
             bot_module.TEXTS["ar"]["choose_language"],
             reply_markup=bot_module.language_keyboard(),
         )
-        return
+        return True
     context.user_data["video_url"] = url
     data = {"source": _source(url), "title": None, "duration": None, "uploader": None, "thumbnail": None}
     await message.reply_text("🔎 جاري تحليل الرابط...", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
@@ -146,6 +146,7 @@ async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
         data["probe_error"] = type(exc).__name__
     context.user_data["sdc_info"] = data
     await message.reply_text(_text(data), parse_mode="HTML", reply_markup=_keyboard())
+    return True
 
 
 async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -154,7 +155,9 @@ async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     url = update.message.text.strip()
     if not _public_url(url):
         return
-    await _show_control(update, context, url)
+    handled = await _show_control(update, context, url)
+    if handled:
+        raise ApplicationHandlerStop
 
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
