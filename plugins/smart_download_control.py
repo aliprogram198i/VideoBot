@@ -211,7 +211,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "⚡ <b>الوضع التلقائي</b>\n\nجاري اختيار أفضل جودة متاحة وتجهيز التحميل...",
             parse_mode="HTML",
         )
-        await bot_module.download_media(update, context)
+        # The existing downloader callback expects a concrete choice such as
+        # video_best/audio_best. Route Auto through its existing best-video path
+        # instead of inventing a second download implementation.
+        original_data = query.data
+        query.data = "video_best"
+        try:
+            await bot_module.download_media(update, context)
+        finally:
+            query.data = original_data
+        return
 
 
 def register_smart_download_control(app) -> None:
