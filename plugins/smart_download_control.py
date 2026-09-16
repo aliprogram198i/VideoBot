@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import ipaddress
 import json
 import socket
 from urllib.parse import urlparse
@@ -16,15 +17,28 @@ from urllib.parse import urlparse
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-CALLBACK_PREFIX = "sdc_"
 PROBE_TIMEOUT = 25
 
 
 def _public_url(value: str) -> bool:
     try:
         parsed = urlparse(value)
-        return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
-    except Exception:
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        hostname = parsed.hostname.rstrip(".").lower()
+        if hostname == "localhost" or hostname.endswith(".localhost"):
+            return False
+        addresses = socket.getaddrinfo(
+            hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+        if not addresses:
+            return False
+        return all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+    except (OSError, ValueError):
         return False
 
 
@@ -118,8 +132,27 @@ async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
     message = update.message
     if not message:
         return
+    bot_module = __import__("bot")
+    user = update.effective_user
+    if not user:
+        return
+    if user.id == getattr(bot_module, "ADMIN_ID", None) and any(
+        context.user_data.get(key)
+        for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
+    ):
+        return
+    bot_module.register_user(user)
+    if bot_module.is_banned(user.id):
+        await message.reply_text(bot_module.TEXTS["ar"]["banned"])
+        return
+    language = bot_module.get_language(user.id)
+    if not language:
+        await message.reply_text(
+            bot_module.TEXTS["ar"]["choose_language"],
+            reply_markup=bot_module.language_keyboard(),
+        )
+        return
     context.user_data["video_url"] = url
-    context.user_data.pop("sdc_thumbnail", None)
     data = {"source": _source(url), "title": None, "duration": None, "uploader": None, "thumbnail": None}
     await message.reply_text("🔎 جاري تحليل الرابط...", parse_mode="HTML")
     try:
@@ -172,7 +205,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not url:
             await query.edit_message_text("❌ انتهت صلاحية الرابط. أرسل الرابط من جديد.")
             return
-        context.user_data["sdc_auto"] = True
         bot_module = __import__("bot")
         await bot_module.download_media(update, context)
 
