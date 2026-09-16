@@ -199,7 +199,7 @@ def _results_message(query: str, results: list[SearchResult]) -> str:
 
 
 def _results_keyboard(results: list[SearchResult], title_offset: int = 0) -> InlineKeyboardMarkup:
-    """Render distinctive result buttons plus stable navigation controls."""
+    """Render distinctive multi-line result buttons plus navigation controls."""
     keyboard = [
         [InlineKeyboardButton(_button_label(index, result, title_offset), callback_data=f"smart_pro_pick_{index}")]
         for index, result in enumerate(results)
@@ -238,6 +238,7 @@ async def _animate_result_buttons(
     except asyncio.CancelledError:
         raise
     except Exception:
+        # A stale/deleted Telegram message must never affect the download pipeline.
         return
 
 
@@ -255,6 +256,7 @@ async def search_pro(query: str) -> list[SearchResult]:
     first = await base_search(variants[0])
     candidates.extend(first)
 
+    # A second bounded search is used only when the first pass is weak.
     first_ranked = _dedupe_and_rank(query, first)
     if len(first_ranked) < 5 or (first_ranked and first_ranked[0].score < LOW_SCORE_THRESHOLD):
         if len(variants) > 1 and variants[1] != variants[0]:
@@ -357,19 +359,17 @@ async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ تم إلغاء البحث الذكي.")
         return
 
-    await query.edit_message_text(
-        "✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.",
-        parse_mode="HTML",
-    )
+    await query.edit_message_text("✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.", parse_mode="HTML")
 
 
 def register_smart_search_pro(app: Any, bot_module: Any) -> None:
+    """Register Pro search ahead of legacy catch-all text handlers."""
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: _search_handler(u, c, bot_module)),
-        group=-3,
+        group=-2,
     )
     app.add_handler(
-        CallbackQueryHandler(lambda u, c: _pick_handler(u, c, bot_module), pattern=PICK_RE.pattern),
+        CallbackQueryHandler(lambda u, c: _pick_handler(u, c, bot_module), pattern=r"^smart_pro_pick_\d+$"),
         group=-2,
     )
     app.add_handler(
