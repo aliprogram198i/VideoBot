@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import html
 import re
 import time
 from typing import Any
@@ -21,10 +22,12 @@ from downloader.smart_search import SearchResult, search as base_search
 
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 PICK_RE = re.compile(r"^smart_pro_pick_(\d+)$")
+NAV_RE = re.compile(r"^smart_pro_(new|cancel)$")
 MAX_QUERY_LENGTH = 160
 CACHE_TTL_SECONDS = 120
 MAX_CACHE_ITEMS = 128
 LOW_SCORE_THRESHOLD = 42.0
+TELEGRAM_BUTTON_MAX_CHARS = 64
 
 _CACHE: dict[str, tuple[float, list[SearchResult]]] = {}
 _CACHE_LOCK = asyncio.Lock()
@@ -119,6 +122,76 @@ async def _cache_put(key: str, results: list[SearchResult]) -> None:
             _CACHE.pop(oldest, None)
 
 
+def _format_duration(seconds: int | None) -> str:
+    if seconds is None or seconds < 0:
+        return ""
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_views(views: int | None) -> str:
+    if views is None or views < 0:
+        return ""
+    if views >= 1_000_000:
+        return f"{views / 1_000_000:.1f}M"
+    if views >= 1_000:
+        return f"{views / 1_000:.1f}K"
+    return str(views)
+
+
+def _button_label(index: int, result: SearchResult) -> str:
+    """Build a distinctive multi-line button while respecting Telegram's 64-char limit."""
+    meta: list[str] = []
+    if result.channel:
+        channel = re.sub(r"\s+", " ", result.channel).strip()[:12]
+        if channel:
+            meta.append(f"📺 {channel}")
+    duration = _format_duration(result.duration)
+    if duration:
+        meta.append(f"⏱ {duration}")
+    views = _format_views(result.views)
+    if views:
+        meta.append(f"👁 {views}")
+
+    meta_text = "  •  ".join(meta)
+    prefix = f"{index + 1}️⃣  "
+    suffix = f"\n{meta_text}" if meta_text else ""
+    available = TELEGRAM_BUTTON_MAX_CHARS - len(prefix) - len(suffix)
+    title = re.sub(r"\s+", " ", result.title).strip()
+    if available < 1:
+        # Metadata itself is intentionally preserved if it is all that fits.
+        return (prefix + suffix)[:TELEGRAM_BUTTON_MAX_CHARS]
+    title = title[:available].rstrip()
+    return f"{prefix}{title}{suffix}"
+
+
+def _results_message(query: str, results: list[SearchResult]) -> str:
+    """Render only the search header/instructions; result data lives inside buttons."""
+    safe_query = html.escape(query[:80])
+    return (
+        "🔎 <b>البحث الذكي</b>\n"
+        f"🔍 <code>{safe_query}</code>\n\n"
+        f"📋 <b>{len(results)} نتائج</b> — اختر النتيجة المطلوبة:\n"
+        "👇 المعلومات الأساسية لكل نتيجة موجودة داخل الزر."
+    )
+
+
+def _results_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
+    """Render distinctive multi-line result buttons plus navigation controls."""
+    keyboard = [
+        [InlineKeyboardButton(_button_label(index, result), callback_data=f"smart_pro_pick_{index}")]
+        for index, result in enumerate(results)
+    ]
+    keyboard.append([
+        InlineKeyboardButton("🔎 بحث جديد", callback_data="smart_pro_new"),
+        InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel"),
+    ])
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def search_pro(query: str) -> list[SearchResult]:
     query = query.strip()[:MAX_QUERY_LENGTH]
     if not query:
@@ -178,23 +251,13 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
         raise ApplicationHandlerStop
 
+    context.user_data["smart_search_query"] = text
     context.user_data["smart_search_results"] = [{"url": r.url, "title": r.title} for r in results]
-    lines = ["🔎 <b>نتائج البحث الذكي الاحترافي</b>", "━━━━━━━━━━━━━━━━━━", ""]
-    keyboard = []
-    for index, result in enumerate(results):
-        meta = []
-        if result.channel:
-            meta.append(result.channel[:36])
-        if result.duration is not None:
-            minutes, seconds = divmod(max(result.duration, 0), 60)
-            meta.append(f"{minutes}:{seconds:02d}")
-        if result.views is not None and result.views >= 1000:
-            meta.append(f"{result.views / 1_000_000:.1f}M" if result.views >= 1_000_000 else f"{result.views / 1_000:.1f}K")
-        suffix = f" — {' • '.join(meta)}" if meta else ""
-        lines.append(f"{index + 1}. {result.title[:80]}{suffix}")
-        keyboard.append([InlineKeyboardButton(f"{index + 1}️⃣ {result.title[:45]}", callback_data=f"smart_pro_pick_{index}")])
-    lines.append("\n👇 اختر النتيجة التي تريد تحميلها.")
-    await status.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    await status.edit_text(
+        _results_message(text, results),
+        parse_mode="HTML",
+        reply_markup=_results_keyboard(results),
+    )
     raise ApplicationHandlerStop
 
 
@@ -225,7 +288,23 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         [InlineKeyboardButton(bot_module.TEXTS[language]["audio_type"], callback_data="audio_menu")],
         [InlineKeyboardButton(bot_module.TEXTS[language]["back"], callback_data="main_menu")],
     ])
-    await query.edit_message_text(f"🎯 <b>تم اختيار:</b>\n{selected['title'][:200]}\n\nاختر نوع التحميل:", parse_mode="HTML", reply_markup=keyboard)
+    await query.edit_message_text(f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\nاختر نوع التحميل:", parse_mode="HTML", reply_markup=keyboard)
+
+
+async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not query.data or not NAV_RE.match(query.data):
+        return
+
+    context.user_data.pop("smart_search_results", None)
+    context.user_data.pop("smart_search_query", None)
+
+    if query.data == "smart_pro_cancel":
+        await query.edit_message_text("❌ تم إلغاء البحث الذكي.")
+        return
+
+    await query.edit_message_text("✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.", parse_mode="HTML")
 
 
 def register_smart_search_pro(app: Any, bot_module: Any) -> None:
@@ -236,6 +315,10 @@ def register_smart_search_pro(app: Any, bot_module: Any) -> None:
     )
     app.add_handler(
         CallbackQueryHandler(lambda u, c: _pick_handler(u, c, bot_module), pattern=r"^smart_pro_pick_\d+$"),
+        group=-2,
+    )
+    app.add_handler(
+        CallbackQueryHandler(_navigation_handler, pattern=NAV_RE.pattern),
         group=-2,
     )
     print("🔎 Smart Search Pro: ENABLED", flush=True)
