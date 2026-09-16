@@ -27,6 +27,7 @@ MAX_QUERY_LENGTH = 160
 CACHE_TTL_SECONDS = 120
 MAX_CACHE_ITEMS = 128
 LOW_SCORE_THRESHOLD = 42.0
+TELEGRAM_BUTTON_MAX_CHARS = 64
 
 _CACHE: dict[str, tuple[float, list[SearchResult]]] = {}
 _CACHE_LOCK = asyncio.Lock()
@@ -142,13 +143,10 @@ def _format_views(views: int | None) -> str:
 
 
 def _button_label(index: int, result: SearchResult) -> str:
-    """Build a compact multi-line Telegram button containing all result metadata."""
-    title = re.sub(r"\s+", " ", result.title).strip()
-    # Keep the button readable on narrow Telegram clients while retaining metadata.
-    title = title[:46].rstrip()
+    """Build a distinctive multi-line button while respecting Telegram's 64-char limit."""
     meta: list[str] = []
     if result.channel:
-        channel = re.sub(r"\s+", " ", result.channel).strip()[:22]
+        channel = re.sub(r"\s+", " ", result.channel).strip()[:12]
         if channel:
             meta.append(f"📺 {channel}")
     duration = _format_duration(result.duration)
@@ -157,10 +155,17 @@ def _button_label(index: int, result: SearchResult) -> str:
     views = _format_views(result.views)
     if views:
         meta.append(f"👁 {views}")
+
     meta_text = "  •  ".join(meta)
-    if meta_text:
-        return f"{index + 1}️⃣  {title}\n{meta_text}"
-    return f"{index + 1}️⃣  {title}"
+    prefix = f"{index + 1}️⃣  "
+    suffix = f"\n{meta_text}" if meta_text else ""
+    available = TELEGRAM_BUTTON_MAX_CHARS - len(prefix) - len(suffix)
+    title = re.sub(r"\s+", " ", result.title).strip()
+    if available < 1:
+        # Metadata itself is intentionally preserved if it is all that fits.
+        return (prefix + suffix)[:TELEGRAM_BUTTON_MAX_CHARS]
+    title = title[:available].rstrip()
+    return f"{prefix}{title}{suffix}"
 
 
 def _results_message(query: str, results: list[SearchResult]) -> str:
