@@ -10,7 +10,7 @@ import importlib
 import os
 import time
 
-from telegram.ext import Application
+from telegram.ext import Application, CallbackQueryHandler
 
 LOCK_PATH = str(Path(__file__).resolve().parent / ".alibot-single-instance.lock")
 STARTUP_GRACE_SECONDS = 15
@@ -60,6 +60,7 @@ def main() -> None:
         register_user_features = importlib.import_module("plugins.user_features").register_user_features
         register_user_location = importlib.import_module("plugins.user_location").register_user_location
         register_enhancements = importlib.import_module("plugins.alibot_enhancements").register
+        register_rich_broadcast_confirm = importlib.import_module("plugins.alibot_enhancements")._broadcast_confirm
         install_shhaiid4u_resolver = importlib.import_module("downloader.shhaiid4u_resolver").install
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
@@ -114,6 +115,17 @@ def main() -> None:
                 # cleanup cannot remove the rich broadcast entrypoint below.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
                 register_enhancements(self, bot_module)
+
+                # The rich confirmation must run before any generic admin
+                # callback handler. This preserves the preview -> send flow even
+                # when another admin module owns a broader callback pattern.
+                self.add_handler(
+                    CallbackQueryHandler(
+                        register_rich_broadcast_confirm,
+                        pattern=r"^admin_rich_broadcast_confirm$",
+                    ),
+                    group=-1000,
+                )
 
                 print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
