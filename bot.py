@@ -35,6 +35,10 @@ from downloader.telegram_identity import (
     candidate_matches_telegram_source,
     parse_telegram_post_url,
 )
+from downloader.instagram_identity import (
+    candidate_matches_instagram_source,
+    parse_instagram_post_url,
+)
 
 try:
     from google import genai
@@ -2561,25 +2565,24 @@ async def download_with_smart_extraction(
             )
             return None, diagnostics
 
-        # Telegram requires source identity, not merely a technically valid
-        # media URL. Generic browser/embed resolution can discover a valid
-        # file from a neighboring or unrelated page; never accept that for a
-        # Telegram post. The identity check is intentionally fail-closed.
+        # A technically valid media URL is not enough for a social post.
+        # Generic browser/embed resolution can discover a valid file from a
+        # neighboring or unrelated page. For Telegram and Instagram public
+        # posts, require the candidate's source page to carry the exact post
+        # identity before accepting it. Both gates are intentionally fail-closed.
         telegram_source = parse_telegram_post_url(url)
+        instagram_source = parse_instagram_post_url(url)
+
         if telegram_source is not None:
             matching_results = [
                 item
                 for item in result.ranked_candidates
                 if item.valid
+                and item.candidate.kind != "iframe"
                 and candidate_matches_telegram_source(
                     item.candidate,
                     telegram_source,
                 )
-            ]
-            matching_results = [
-                item
-                for item in matching_results
-                if item.candidate.kind != "iframe"
             ]
             if not matching_results:
                 diagnostics["error_message"] = (
@@ -2599,6 +2602,37 @@ async def download_with_smart_extraction(
                 "required": True,
                 "matched_candidates": len(matching_results),
                 "source": telegram_source.key,
+                "accepted_source_page": candidate.source_page,
+            }
+        elif instagram_source is not None:
+            matching_results = [
+                item
+                for item in result.ranked_candidates
+                if item.valid
+                and item.candidate.kind != "iframe"
+                and candidate_matches_instagram_source(
+                    item.candidate,
+                    instagram_source,
+                )
+            ]
+            if not matching_results:
+                diagnostics["error_message"] = (
+                    "Instagram source identity could not be verified; "
+                    "generic fallback candidate rejected."
+                )
+                diagnostics["instagram_identity_gate"] = {
+                    "required": True,
+                    "matched_candidates": 0,
+                    "source": instagram_source.key,
+                }
+                return None, diagnostics
+
+            result_best = matching_results[0]
+            candidate = result_best.candidate
+            diagnostics["instagram_identity_gate"] = {
+                "required": True,
+                "matched_candidates": len(matching_results),
+                "source": instagram_source.key,
                 "accepted_source_page": candidate.source_page,
             }
         else:
@@ -4608,6 +4642,7 @@ async def download_media(
             # independent recovery path for YouTube.
             hostname = (urlparse(url).hostname or "").lower()
             telegram_source = parse_telegram_post_url(url)
+            instagram_source = parse_instagram_post_url(url)
             is_youtube = hostname in {
                 "youtube.com",
                 "www.youtube.com",
@@ -4727,7 +4762,7 @@ async def download_media(
                     print(
                         "ℹ️ Skipping Yoinku fallback for Instagram access restriction"
                     )
-                elif telegram_source is not None:
+                elif telegram_source is not None or instagram_source is not None:
                     yoinku_attempted = False
                     yoinku_file = None
                     yoinku_diagnostics = {
@@ -4735,16 +4770,24 @@ async def download_media(
                         "attempt_id": attempt_id,
                         "attempt_number": attempt_number,
                         "internal_attempts": 0,
-                        "exception_type": "TelegramSourceIdentityUnverified",
+                        "exception_type": (
+                            "TelegramSourceIdentityUnverified"
+                            if telegram_source is not None
+                            else "InstagramSourceIdentityUnverified"
+                        ),
                         "error_message": (
-                            "Yoinku skipped because the Telegram post identity "
+                            "Yoinku skipped because the social-media post identity "
                             "was not verified by the source identity gate."
                         ),
-                        "skipped": "telegram_source_identity_unverified",
+                        "skipped": (
+                            "telegram_source_identity_unverified"
+                            if telegram_source is not None
+                            else "instagram_source_identity_unverified"
+                        ),
                         "duration_ms": 0,
                     }
                     print(
-                        "ℹ️ Skipping Yoinku fallback for Telegram source identity safety"
+                        "ℹ️ Skipping Yoinku fallback for social-media source identity safety"
                     )
                 else:
                     yoinku_attempted = True
@@ -4773,21 +4816,37 @@ async def download_media(
                     print(
                         "ℹ️ Skipping generic direct-media fallback for YouTube"
                     )
-                elif telegram_source is not None:
+                elif telegram_source is not None or instagram_source is not None:
                     fallback_file = None
+                    identity_name = (
+                        "Telegram"
+                        if telegram_source is not None
+                        else "Instagram"
+                    )
+                    identity_key = (
+                        "telegram_source_identity_unverified"
+                        if telegram_source is not None
+                        else "instagram_source_identity_unverified"
+                    )
+                    exception_type = (
+                        "TelegramSourceIdentityUnverified"
+                        if telegram_source is not None
+                        else "InstagramSourceIdentityUnverified"
+                    )
                     fallback_diagnostics = {
                         "candidate_count": 0,
-                        "skipped": "telegram_source_identity_unverified",
+                        "skipped": identity_key,
                         "extraction_error": {
-                            "exception_type": "TelegramSourceIdentityUnverified",
+                            "exception_type": exception_type,
                             "error_message": (
                                 "Generic direct-media fallback was skipped because "
-                                "the requested Telegram post identity was not verified."
+                                f"the requested {identity_name} post identity was not verified."
                             ),
                         },
                     }
                     print(
-                        "ℹ️ Skipping generic direct-media fallback for Telegram source identity safety"
+                        "ℹ️ Skipping generic direct-media fallback for "
+                        f"{identity_name} source identity safety"
                     )
                 else:
                     # Instagram may explicitly reject the post before any
