@@ -108,6 +108,7 @@ def main() -> None:
                 # One canonical administrative runtime. It removes retired
                 # handlers before installing the isolated admin ownership graph.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
+                self._alibot_admin_layer_installed = True
 
                 print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
@@ -118,10 +119,9 @@ def main() -> None:
         bot_module.main()
     finally:
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        finally:
             lock_file.close()
-            print("🛡️ Single-instance guard released.", flush=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
