@@ -115,6 +115,9 @@ async def _render(update: Update, get_db, owner_id: int, offset: int) -> None:
 
 async def callback(update: Update, context, get_db, owner_id: int) -> None:
     query = update.callback_query
+    if not _authorized(update, owner_id):
+        await query.answer()
+        return
     await query.answer()
     try:
         offset = int((query.data or "").rsplit("_", 1)[1])
