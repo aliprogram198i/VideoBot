@@ -10,7 +10,7 @@ import importlib
 import os
 import time
 
-from telegram.ext import Application, CallbackQueryHandler
+from telegram.ext import Application, CallbackQueryHandler, MessageHandler, filters
 
 LOCK_PATH = str(Path(__file__).resolve().parent / ".alibot-single-instance.lock")
 STARTUP_GRACE_SECONDS = 15
@@ -61,6 +61,9 @@ def main() -> None:
         register_user_location = importlib.import_module("plugins.user_location").register_user_location
         register_enhancements = importlib.import_module("plugins.alibot_enhancements").register
         register_rich_broadcast_confirm = importlib.import_module("plugins.alibot_enhancements")._broadcast_confirm
+        register_rich_broadcast_capture = importlib.import_module("plugins.alibot_enhancements")._broadcast_capture
+        register_library_search_message = importlib.import_module("plugins.alibot_enhancements")._library_search_message
+        register_smart_search_handler = importlib.import_module("plugins.smart_search_pro")._search_handler
         install_shhaiid4u_resolver = importlib.import_module("downloader.shhaiid4u_resolver").install
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
@@ -100,6 +103,27 @@ def main() -> None:
         original_run_polling = Application.run_polling
         registered = False
 
+        async def admin_text_router(update, context):
+            """Route admin text by active workflow before generic text search.
+
+            The rich broadcast and library handlers share group -4. Their
+            broad text filters mean the first matching handler can consume the
+            update without stopping propagation. This router makes the active
+            admin workflow explicit while preserving the existing smart-search
+            behavior for ordinary admin text.
+            """
+            if not update.message or not update.effective_user:
+                return
+            if update.effective_user.id != bot_module.ADMIN_ID:
+                return
+            if context.user_data.get("rich_broadcast_waiting"):
+                await register_rich_broadcast_capture(update, context)
+                return
+            if context.user_data.get("library_searching"):
+                await register_library_search_message(update, context)
+                return
+            await register_smart_search_handler(update, context, bot_module)
+
         def run_polling_with_layers(self, *args, **kwargs):
             nonlocal registered
             if not registered:
@@ -115,6 +139,16 @@ def main() -> None:
                 # cleanup cannot remove the rich broadcast entrypoint below.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
                 register_enhancements(self, bot_module)
+
+                # Admin text must be routed before the broad library/search text
+                # handlers when a stateful admin workflow is active.
+                self.add_handler(
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND & filters.User(user_id=bot_module.ADMIN_ID),
+                        admin_text_router,
+                    ),
+                    group=-5,
+                )
 
                 # The rich confirmation must run before any generic admin
                 # callback handler. This preserves the preview -> send flow even
