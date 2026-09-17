@@ -109,11 +109,11 @@ def main() -> None:
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 register_whatsapp_audio(self, bot_module)
                 register_download_retry(self, bot_module)
-                register_enhancements(self, bot_module)
 
-                # One canonical administrative runtime. It removes retired
-                # handlers before installing the isolated admin ownership graph.
+                # Install the canonical admin layer first so its legacy-handler
+                # cleanup cannot remove the rich broadcast entrypoint below.
                 register_admin_layer(self, bot_module, bot_module.ADMIN_ID)
+                register_enhancements(self, bot_module)
 
                 print("🛡️ Canonical isolated admin layer active", flush=True)
                 print("👤 User activity middleware registered", flush=True)
