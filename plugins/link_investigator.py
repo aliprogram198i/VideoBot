@@ -148,6 +148,15 @@ def install() -> None:
         from . import smart_download_control as sdc
         original_probe, original_text = sdc._probe, sdc._text
 
+        async def run_background_investigation(url: str, data: dict) -> None:
+            try:
+                data["ai_investigation"] = await investigate(url, data)
+            except Exception as exc:
+                logger.info(
+                    "Background AI link investigation unavailable: %s",
+                    type(exc).__name__,
+                )
+
         async def probe_with_ai(url: str) -> dict:
             probe_error = None
             try:
@@ -166,7 +175,17 @@ def install() -> None:
                     "formats": [],
                     "probe_error": probe_error,
                 }
-            data["ai_investigation"] = await investigate(url, data)
+
+            # AI is auxiliary analysis only. Never block link intake or
+            # the download-control handoff on Gemini availability/latency.
+            data["ai_investigation"] = _fallback(
+                data.get("source"),
+                "background_pending",
+                data.get("title"),
+            )
+            asyncio.create_task(
+                run_background_investigation(url, data)
+            )
             return data
 
         def text_with_ai(data: dict, language: str = "ar") -> str:
