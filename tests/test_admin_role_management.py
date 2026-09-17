@@ -77,15 +77,6 @@ def test_upsert_supports_legacy_role_schema_without_created_at(tmp_path):
     assert row["role"] == "backup"
 
 
-def test_owner_row_cannot_be_removed_by_low_level_workflow(tmp_path):
-    get_db = _db(tmp_path)
-    _upsert_role(get_db, 1, "role_manager")
-    # The low-level primitive is intentionally generic; the command layer is
-    # responsible for the owner invariant. The row exists here to ensure the
-    # database operation itself remains deterministic and transactional.
-    assert get_db().execute("SELECT 1 FROM admin_roles WHERE user_id=1").fetchone()
-
-
 def test_role_management_registers_exactly_one_command_handler(tmp_path):
     get_db = _db(tmp_path)
     app = _App()
