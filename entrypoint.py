@@ -67,6 +67,7 @@ def main() -> None:
         install_movie_source_guard = importlib.import_module("downloader.movie_source_guard").install
         install_telegram_media_retry = importlib.import_module("telegram_layer.media_retry").install_telegram_media_retry
         install_download_retry = importlib.import_module("plugins.download_retry").install_download_retry
+        register_download_retry = importlib.import_module("plugins.download_retry").register_download_retry
         register_admin_layer = importlib.import_module("plugins.admin_layer_v2").register_admin_layer
         register_whatsapp_audio = importlib.import_module("plugins.whatsapp_audio").register_whatsapp_audio
         install_yoinku_compat = importlib.import_module("plugins.yoinku_compat").install
@@ -106,6 +107,7 @@ def main() -> None:
                 register_user_location(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 register_whatsapp_audio(self, bot_module)
+                register_download_retry(self, bot_module)
 
                 # One canonical administrative runtime. It removes retired
                 # handlers before installing the isolated admin ownership graph.
