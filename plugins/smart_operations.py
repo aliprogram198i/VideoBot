@@ -12,6 +12,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from .smart_download_control import register_smart_download_control
 from .user_experience_v2 import register_user_experience_v2
+from .telegram_message_guard import install as install_telegram_message_guard
 
 CALLBACK = "admin_smart_operations"
 
@@ -199,6 +200,7 @@ def _has_smart_operations_handler(app):
 
 def register_smart_operations(app, get_db, admin_id):
     """Register Smart Operations once, even when legacy bootstrap calls it too."""
+    install_telegram_message_guard()
     register_smart_download_control(app)
     register_user_experience_v2(app)
     if _has_smart_operations_handler(app):
