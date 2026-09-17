@@ -14,6 +14,18 @@ _ALLOWED = {
     "video": ("video_best", "video_1080", "video_720", "video_480", "video_360"),
     "audio": ("audio_best", "audio_320", "audio_256", "audio_192", "audio_128"),
 }
+_LABELS = {
+    "video_best": "أفضل جودة",
+    "video_1080": "1080p",
+    "video_720": "720p",
+    "video_480": "480p",
+    "video_360": "360p",
+    "audio_best": "أفضل جودة",
+    "audio_320": "320 kbps",
+    "audio_256": "256 kbps",
+    "audio_192": "192 kbps",
+    "audio_128": "128 kbps",
+}
 _FAV_RE = re.compile(r"^ux_fav_(\d+)$")
 _LOAD_RE = re.compile(r"^ux_load_(\d+)$")
 
@@ -77,22 +89,24 @@ def _settings_keyboard(media_type: str, quality: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 فيديو" + (" ✅" if media_type == "video" else ""), callback_data="ux_set_video")],
         [InlineKeyboardButton("🎵 صوت" + (" ✅" if media_type == "audio" else ""), callback_data="ux_set_audio")],
-        [InlineKeyboardButton(f"⚙️ الجودة الحالية: {quality}", callback_data="ux_quality_menu")],
+        [InlineKeyboardButton(f"⚙️ الجودة الحالية: {_LABELS.get(quality, 'غير محددة')}", callback_data="ux_quality_menu")],
         [InlineKeyboardButton("📚 مكتبتي", callback_data="ux_library")],
     ])
 
 
 def _quality_keyboard(media_type: str) -> InlineKeyboardMarkup:
-    labels = {
-        "video": [("video_best", "أفضل جودة"), ("video_1080", "1080p"), ("video_720", "720p"), ("video_480", "480p"), ("video_360", "360p")],
-        "audio": [("audio_best", "أفضل جودة"), ("audio_320", "320 kbps"), ("audio_256", "256 kbps"), ("audio_192", "192 kbps"), ("audio_128", "128 kbps")],
-    }[media_type]
+    labels = [(value, _LABELS[value]) for value in _ALLOWED[media_type]]
     return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"ux_quality_{value}")] for value, label in labels] + [[InlineKeyboardButton("🔙 الإعدادات", callback_data="ux_settings")]])
 
 
 async def _settings_screen(target, bot_module: Any, user_id: int) -> None:
     media_type, quality = _get_preferences(bot_module, user_id)
-    text = ("⚙️ <b>إعدادات التحميل</b>\n━━━━━━━━━━━━━━━━━━\n\n" f"🎛️ النوع: <b>{'فيديو' if media_type == 'video' else 'صوت'}</b>\n" f"📐 الجودة: <b>{html.escape(quality)}</b>\n\n" "سيحتفظ AliBot بهذه الإعدادات لهذا المستخدم.")
+    text = (
+        "⚙️ <b>إعدادات التحميل</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎛️ النوع: <b>{'فيديو' if media_type == 'video' else 'صوت'}</b>\n"
+        f"📐 الجودة: <b>{html.escape(_LABELS.get(quality, 'غير محددة'))}</b>\n\n"
+        "سيحتفظ AliBot بهذه الإعدادات لهذا المستخدم."
+    )
     keyboard = _settings_keyboard(media_type, quality)
     if hasattr(target, "edit_message_text"):
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
@@ -113,7 +127,11 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def _library_screen(target, bot_module: Any, user_id: int) -> None:
     conn = _db(bot_module)
     try:
-        rows = conn.execute("SELECT id, website, title FROM user_favorites WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,)).fetchall()
+        rows = conn.execute(
+            "SELECT id, website, title, media_type, quality FROM user_favorites "
+            "WHERE user_id = ? ORDER BY id DESC LIMIT 10",
+            (user_id,),
+        ).fetchall()
     finally:
         conn.close()
     if not rows:
@@ -123,8 +141,14 @@ async def _library_screen(target, bot_module: Any, user_id: int) -> None:
     keyboard = []
     for index, row in enumerate(rows):
         title = re.sub(r"\s+", " ", str(row["title"] or row["website"] or "رابط محفوظ")).strip()[:45]
-        lines.append(f"{index + 1}. {html.escape(title)}")
-        keyboard.append([InlineKeyboardButton(f"▶️ {index + 1} {title}"[:60], callback_data=f"ux_load_{row['id']}"), InlineKeyboardButton("🗑️", callback_data=f"ux_fav_{row['id']}")])
+        kind = "🎥" if row["media_type"] != "audio" else "🎵"
+        quality = _LABELS.get(str(row["quality"]), "") if row["quality"] else ""
+        suffix = f" · {quality}" if quality else ""
+        lines.append(f"{index + 1}. {html.escape(title)} {kind}{html.escape(suffix)}")
+        keyboard.append([
+            InlineKeyboardButton(f"▶️ {index + 1} {title}"[:60], callback_data=f"ux_load_{row['id']}"),
+            InlineKeyboardButton("🗑️", callback_data=f"ux_fav_{row['id']}"),
+        ])
     await target.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -187,7 +211,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         conn = _db(bot_module)
         try:
-            conn.execute("""INSERT OR IGNORE INTO user_favorites(user_id,url,website,media_type,quality,title,created_at) VALUES (?,?,?,?,?,?,?)""", (user.id, url, info.get("source"), "video", "", info.get("title"), _now()))
+            conn.execute(
+                """INSERT OR IGNORE INTO user_favorites(user_id,url,website,media_type,quality,title,created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (user.id, url, info.get("source"), None, None, info.get("title"), _now()),
+            )
             conn.commit()
         finally:
             conn.close()
@@ -209,7 +237,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         favorite_id = int(match.group(1))
         conn = _db(bot_module)
         try:
-            row = conn.execute("SELECT url FROM user_favorites WHERE id = ? AND user_id = ?", (favorite_id, user.id)).fetchone()
+            row = conn.execute(
+                "SELECT url, media_type, quality FROM user_favorites WHERE id = ? AND user_id = ?",
+                (favorite_id, user.id),
+            ).fetchone()
         finally:
             conn.close()
         if not row:
@@ -222,28 +253,50 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.edit_message_text("❌ تعذر التحقق من الرابط المحفوظ.")
             return
         context.user_data["video_url"] = url
-        await query.edit_message_text("🔁 <b>إعادة تحميل من المكتبة</b>\n\nاختر النوع:", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎥 فيديو", callback_data="video_menu")], [InlineKeyboardButton("🎵 صوت", callback_data="audio_menu")], [InlineKeyboardButton("⚙️ استخدام الإعدادات", callback_data="ux_use_preferences")]]))
+        saved_type = str(row["media_type"] or "")
+        saved_quality = str(row["quality"] or "")
+        if saved_type in _ALLOWED and saved_quality in _ALLOWED[saved_type]:
+            context.user_data["ux_saved_preference"] = saved_quality
+        else:
+            context.user_data.pop("ux_saved_preference", None)
+        await query.edit_message_text(
+            "🔁 <b>إعادة تحميل من المكتبة</b>\n\nاختر النوع:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎥 فيديو", callback_data="video_menu")],
+                [InlineKeyboardButton("🎵 صوت", callback_data="audio_menu")],
+                [InlineKeyboardButton("⚙️ استخدام الإعدادات", callback_data="ux_use_preferences")],
+            ]),
+        )
         return
     if data == "ux_use_preferences":
         url = context.user_data.get("video_url")
         if not url:
             await query.edit_message_text("❌ لا يوجد رابط جاهز.")
             return
+        saved_quality = context.user_data.pop("ux_saved_preference", None)
         _, quality = _get_preferences(bot_module, user.id)
+        quality = saved_quality or quality
         original_query = query
+
         class QueryProxy:
             def __init__(self):
                 self.data = quality
                 self.message = original_query.message
                 self.from_user = original_query.from_user
+
             async def answer(self, *args, **kwargs):
                 return None
+
             def __getattr__(self, name):
                 return getattr(original_query, name)
+
         class UpdateProxy:
             callback_query = QueryProxy()
+
             def __getattr__(self, name):
                 return getattr(update, name)
+
         await bot_module.download_media(UpdateProxy(), context)
 
 
@@ -253,7 +306,13 @@ def register_user_experience_v2(app) -> None:
     app._user_experience_v2_registered = True
     app.add_handler(CommandHandler("settings", settings_command), group=-3)
     app.add_handler(CommandHandler("library", library_command), group=-3)
-    app.add_handler(CallbackQueryHandler(callback, pattern=r"^ux_(?:settings|library|set_video|set_audio|quality_menu|quality_(?:best|1080|720|480|360|320|256|192|128)|favorite_current|fav_\d+|load_\d+|use_preferences)$"), group=-3)
+    app.add_handler(
+        CallbackQueryHandler(
+            callback,
+            pattern=r"^ux_(?:settings|library|set_video|set_audio|quality_menu|quality_(?:best|1080|720|480|360|320|256|192|128)|favorite_current|fav_\d+|load_\d+|use_preferences)$",
+        ),
+        group=-3,
+    )
     print("🧩 User Experience v2: preferences + library enabled", flush=True)
 
 
