@@ -18,6 +18,129 @@ PROBE_TIMEOUT = 25
 THUMBNAIL_TIMEOUT = 20
 THUMBNAIL_MAX_BYTES = 10 * 1024 * 1024
 
+_CARD_TEXTS = {
+    "ar": {
+        "title": "🎛️ معلومات الرابط",
+        "unknown": "غير معروف",
+        "unavailable": "غير متاحة",
+        "duration": "المدة",
+        "source": "المصدر",
+        "uploader": "الناشر",
+        "views": "المشاهدات",
+        "quality": "الدقة المتاحة",
+        "status": "الحالة",
+        "partial": "تم جلب الرابط، لكن بعض المعلومات غير متاحة.",
+        "ready": "الرابط جاهز للتحميل.",
+        "choose": "اختر ما تريد:",
+        "video": "🎥 فيديو",
+        "audio": "🎵 MP3",
+        "favorite": "⭐ حفظ",
+        "library": "📚 مكتبتي",
+        "settings": "⚙️ الإعدادات",
+        "thumbnail": "🖼 الصورة المصغرة",
+        "cancel": "❌ إلغاء",
+        "open": "🔗 فتح الرابط",
+        "analyzing": "🔎 جاري تحليل الرابط...",
+        "thumbnail_unavailable": "الصورة المصغرة غير متاحة لهذا الرابط.",
+        "thumbnail_sent": "تم إرسال الصورة المصغرة.",
+        "thumbnail_failed": "تعذر تحميل الصورة المصغرة من المصدر.",
+        "cancelled": "✅ تم إلغاء العملية.",
+    },
+    "en": {
+        "title": "🎛️ Link information",
+        "unknown": "Unknown",
+        "unavailable": "Unavailable",
+        "duration": "Duration",
+        "source": "Source",
+        "uploader": "Uploader",
+        "views": "Views",
+        "quality": "Available resolution",
+        "status": "Status",
+        "partial": "The link was detected, but some information is unavailable.",
+        "ready": "The link is ready to download.",
+        "choose": "Choose an action:",
+        "video": "🎥 Video",
+        "audio": "🎵 MP3",
+        "favorite": "⭐ Save",
+        "library": "📚 Library",
+        "settings": "⚙️ Settings",
+        "thumbnail": "🖼 Thumbnail",
+        "cancel": "❌ Cancel",
+        "open": "🔗 Open link",
+        "analyzing": "🔎 Analyzing link...",
+        "thumbnail_unavailable": "Thumbnail is not available for this link.",
+        "thumbnail_sent": "Thumbnail sent.",
+        "thumbnail_failed": "Could not load the thumbnail from the source.",
+        "cancelled": "✅ Operation cancelled.",
+    },
+    "tr": {
+        "title": "🎛️ Bağlantı bilgileri",
+        "unknown": "Bilinmiyor",
+        "unavailable": "Mevcut değil",
+        "duration": "Süre",
+        "source": "Kaynak",
+        "uploader": "Yayıncı",
+        "views": "Görüntülenme",
+        "quality": "Mevcut çözünürlük",
+        "status": "Durum",
+        "partial": "Bağlantı algılandı, ancak bazı bilgiler alınamadı.",
+        "ready": "Bağlantı indirmeye hazır.",
+        "choose": "Bir işlem seçin:",
+        "video": "🎥 Video",
+        "audio": "🎵 MP3",
+        "favorite": "⭐ Kaydet",
+        "library": "📚 Kitaplığım",
+        "settings": "⚙️ Ayarlar",
+        "thumbnail": "🖼 Küçük resim",
+        "cancel": "❌ İptal",
+        "open": "🔗 Bağlantıyı aç",
+        "analyzing": "🔎 Bağlantı analiz ediliyor...",
+        "thumbnail_unavailable": "Bu bağlantı için küçük resim mevcut değil.",
+        "thumbnail_sent": "Küçük resim gönderildi.",
+        "thumbnail_failed": "Kaynak küçük resmi yüklenemedi.",
+        "cancelled": "✅ İşlem iptal edildi.",
+    },
+    "de": {
+        "title": "🎛️ Linkinformationen",
+        "unknown": "Unbekannt",
+        "unavailable": "Nicht verfügbar",
+        "duration": "Dauer",
+        "source": "Quelle",
+        "uploader": "Uploader",
+        "views": "Aufrufe",
+        "quality": "Verfügbare Auflösung",
+        "status": "Status",
+        "partial": "Der Link wurde erkannt, aber einige Informationen sind nicht verfügbar.",
+        "ready": "Der Link ist zum Download bereit.",
+        "choose": "Aktion auswählen:",
+        "video": "🎥 Video",
+        "audio": "🎵 MP3",
+        "favorite": "⭐ Speichern",
+        "library": "📚 Bibliothek",
+        "settings": "⚙️ Einstellungen",
+        "thumbnail": "🖼 Vorschaubild",
+        "cancel": "❌ Abbrechen",
+        "open": "🔗 Link öffnen",
+        "analyzing": "🔎 Link wird analysiert...",
+        "thumbnail_unavailable": "Für diesen Link ist kein Vorschaubild verfügbar.",
+        "thumbnail_sent": "Vorschaubild gesendet.",
+        "thumbnail_failed": "Das Vorschaubild konnte nicht geladen werden.",
+        "cancelled": "✅ Vorgang abgebrochen.",
+    },
+}
+
+
+def _language(bot_module, user_id: int) -> str:
+    try:
+        language = bot_module.get_language(user_id)
+    except Exception:
+        language = None
+    return language if language in _CARD_TEXTS else "ar"
+
+
+def _labels(language: str) -> dict:
+    return _CARD_TEXTS.get(language, _CARD_TEXTS["ar"])
+
 
 def _public_url(value: str) -> bool:
     try:
@@ -56,43 +179,84 @@ def _source(url: str) -> str:
     return host or "Other"
 
 
-def _duration(value) -> str:
+def _duration(value, language: str = "ar") -> str:
+    labels = _labels(language)
     try:
         seconds = max(0, int(float(value)))
     except (TypeError, ValueError):
-        return "غير متاحة"
+        return labels["unavailable"]
     hours, rem = divmod(seconds, 3600)
     minutes, seconds = divmod(rem, 60)
     return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
 
 
-def _text(data: dict) -> str:
-    title = html.escape(str(data.get("title") or "غير معروف"))
+def _views(value, language: str = "ar") -> str:
+    labels = _labels(language)
+    try:
+        views = int(value)
+    except (TypeError, ValueError):
+        return labels["unavailable"]
+    if views < 0:
+        return labels["unavailable"]
+    if views >= 1_000_000:
+        return f"{views / 1_000_000:.1f}M"
+    if views >= 1_000:
+        return f"{views / 1_000:.1f}K"
+    return str(views)
+
+
+def _quality(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    height = data.get("height")
+    width = data.get("width")
+    try:
+        height = int(height) if height is not None else None
+        width = int(width) if width is not None else None
+    except (TypeError, ValueError):
+        height = width = None
+    if height and width:
+        return f"{width}×{height}p"
+    if height:
+        return f"{height}p"
+    return labels["unavailable"]
+
+
+def _text(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    title = html.escape(str(data.get("title") or labels["unknown"]))
     source = html.escape(str(data.get("source") or "Other"))
-    duration = html.escape(_duration(data.get("duration")))
-    uploader = html.escape(str(data.get("uploader") or "غير معروف"))
+    duration = html.escape(_duration(data.get("duration"), language))
+    uploader = html.escape(str(data.get("uploader") or labels["unknown"]))
+    views = html.escape(_views(data.get("view_count"), language))
+    quality = html.escape(_quality(data, language))
+    status = labels["partial"] if data.get("probe_error") else labels["ready"]
     return (
-        "🎛️ <b>Smart Download Control</b>\n"
+        f"{labels['title']}\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         f"🎬 <b>{title}</b>\n"
-        f"⏱ المدة: {duration}\n"
-        f"🌐 المصدر: {source}\n"
-        f"👤 الناشر: {uploader}\n\n"
-        "اختر ما تريد:\n"
+        f"⏱ {labels['duration']}: {duration}\n"
+        f"🌐 {labels['source']}: {source}\n"
+        f"👤 {labels['uploader']}: {uploader}\n"
+        f"👁 {labels['views']}: {views}\n"
+        f"📐 {labels['quality']}: {quality}\n\n"
+        f"ℹ️ {html.escape(status)}\n\n"
+        f"{labels['choose']}\n"
     )
 
 
-def _keyboard() -> InlineKeyboardMarkup:
+def _keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
+    labels = _labels(language)
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎥 فيديو", callback_data="video_menu")],
-        [InlineKeyboardButton("🎵 MP3", callback_data="audio_menu")],
+        [InlineKeyboardButton(labels["video"], callback_data="video_menu")],
+        [InlineKeyboardButton(labels["audio"], callback_data="audio_menu")],
         [
-            InlineKeyboardButton("⭐ حفظ", callback_data="ux_favorite_current"),
-            InlineKeyboardButton("📚 مكتبتي", callback_data="ux_library"),
+            InlineKeyboardButton(labels["favorite"], callback_data="ux_favorite_current"),
+            InlineKeyboardButton(labels["library"], callback_data="ux_library"),
         ],
-        [InlineKeyboardButton("⚙️ الإعدادات", callback_data="ux_settings")],
-        [InlineKeyboardButton("🖼 الصورة المصغرة", callback_data="sdc_thumbnail")],
-        [InlineKeyboardButton("❌ إلغاء", callback_data="sdc_cancel")],
+        [InlineKeyboardButton(labels["settings"], callback_data="ux_settings")],
+        [InlineKeyboardButton(labels["thumbnail"], callback_data="sdc_thumbnail")],
+        [InlineKeyboardButton(labels["open"], url=url)],
+        [InlineKeyboardButton(labels["cancel"], callback_data="sdc_cancel")],
     ])
 
 
@@ -119,6 +283,9 @@ async def _probe(url: str) -> dict:
         "uploader": data.get("uploader") or data.get("channel"),
         "thumbnail": data.get("thumbnail"),
         "source": _source(url),
+        "view_count": data.get("view_count"),
+        "width": data.get("width"),
+        "height": data.get("height"),
     }
 
 
@@ -140,22 +307,47 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
     if bot_module.is_banned(user.id):
         await message.reply_text(bot_module.TEXTS["ar"]["banned"])
         return True
-    language = bot_module.get_language(user.id)
-    if not language:
+    language = _language(bot_module, user.id)
+    if not bot_module.get_language(user.id):
         await message.reply_text(
             bot_module.TEXTS["ar"]["choose_language"],
             reply_markup=bot_module.language_keyboard(),
         )
         return True
+
     context.user_data["video_url"] = url
-    data = {"source": _source(url), "title": None, "duration": None, "uploader": None, "thumbnail": None}
-    await message.reply_text("🔎 جاري تحليل الرابط...", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    data = {
+        "source": _source(url),
+        "title": None,
+        "duration": None,
+        "uploader": None,
+        "thumbnail": None,
+        "view_count": None,
+        "width": None,
+        "height": None,
+    }
+    status_message = await message.reply_text(
+        _labels(language)["analyzing"],
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
+    )
     try:
         data.update(await _probe(url))
     except Exception as exc:
         data["probe_error"] = type(exc).__name__
     context.user_data["sdc_info"] = data
-    await message.reply_text(_text(data), parse_mode="HTML", reply_markup=_keyboard())
+    try:
+        await status_message.edit_text(
+            _text(data, language),
+            parse_mode="HTML",
+            reply_markup=_keyboard(url, language),
+        )
+    except Exception:
+        await message.reply_text(
+            _text(data, language),
+            parse_mode="HTML",
+            reply_markup=_keyboard(url, language),
+        )
     return True
 
 
@@ -167,10 +359,13 @@ async def _send_thumbnail(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     info = context.user_data.get("sdc_info") or {}
     thumbnail = info.get("thumbnail")
     if not thumbnail or not _public_url(thumbnail):
-        await query.answer("الصورة المصغرة غير متاحة لهذا الرابط.", show_alert=True)
+        bot_module = __import__("bot")
+        language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
+        await query.answer(_labels(language)["thumbnail_unavailable"], show_alert=True)
         return
 
     bot_module = __import__("bot")
+    language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
     try:
         request = Request(
             thumbnail,
@@ -198,17 +393,17 @@ async def _send_thumbnail(query, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         image = BytesIO(image_bytes)
         image.name = "thumbnail.jpg"
-        caption = str(info.get("title") or "الصورة المصغرة")[:900]
+        caption = str(info.get("title") or _labels(language)["thumbnail"])[:900]
         try:
             await query.message.reply_photo(photo=image, caption=caption)
         except Exception:
             image.seek(0)
             await query.message.reply_document(document=image, caption=caption)
     except Exception:
-        await query.answer("تعذر تحميل الصورة المصغرة من المصدر.", show_alert=True)
+        await query.answer(_labels(language)["thumbnail_failed"], show_alert=True)
         return
 
-    await query.answer("تم إرسال الصورة المصغرة.")
+    await query.answer(_labels(language)["thumbnail_sent"])
 
 
 async def _restore_control_from_quality_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -217,11 +412,13 @@ async def _restore_control_from_quality_menu(update: Update, context: ContextTyp
     query = update.callback_query
     if not query:
         return False
+    bot_module = __import__("bot")
+    language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
     await query.answer()
     await query.edit_message_text(
-        _text(context.user_data["sdc_info"]),
+        _text(context.user_data["sdc_info"], language),
         parse_mode="HTML",
-        reply_markup=_keyboard(),
+        reply_markup=_keyboard(context.user_data["video_url"], language),
     )
     return True
 
@@ -240,6 +437,8 @@ async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data or ""
+    bot_module = __import__("bot")
+    language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
 
     if data == "main_menu":
         if await _restore_control_from_quality_menu(update, context):
@@ -252,7 +451,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if data == "sdc_cancel":
         context.user_data.pop("video_url", None)
         context.user_data.pop("sdc_info", None)
-        await query.edit_message_text("✅ تم إلغاء العملية.")
+        await query.edit_message_text(_labels(language)["cancelled"])
         raise ApplicationHandlerStop
 
     if data == "sdc_thumbnail":
