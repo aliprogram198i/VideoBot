@@ -2024,6 +2024,9 @@ def detect_website(url):
     if "facebook.com" in host or "fb.watch" in host:
         return "Facebook"
 
+    if host in {"t.me", "telegram.me"}:
+        return "Telegram"
+
     if "twitter.com" in host or "x.com" in host:
         return "X / Twitter"
 
