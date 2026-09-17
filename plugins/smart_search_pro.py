@@ -19,6 +19,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from downloader.smart_search import SearchResult, search as base_search
+from plugins.smart_download_control import show_control_for_url
 
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 PICK_RE = re.compile(r"^smart_pro_pick_(\d+)$")
@@ -335,14 +336,17 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     except Exception:
         await query.edit_message_text("❌ تعذر التحقق من نتيجة البحث.")
         return
-    context.user_data["video_url"] = selected["url"]
-    language = bot_module.get_language(user.id) or "ar"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(bot_module.TEXTS[language]["video_type"], callback_data="video_menu")],
-        [InlineKeyboardButton(bot_module.TEXTS[language]["audio_type"], callback_data="audio_menu")],
-        [InlineKeyboardButton(bot_module.TEXTS[language]["back"], callback_data="main_menu")],
-    ])
-    await query.edit_message_text(f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\nاختر نوع التحميل:", parse_mode="HTML", reply_markup=keyboard)
+
+    # Smart Search now hands the selected URL to the canonical Smart Download
+    # Control instead of maintaining a second download-choice UX.
+    context.user_data.pop("smart_search_results", None)
+    context.user_data.pop("smart_search_query", None)
+    await query.edit_message_text(
+        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
+        parse_mode="HTML",
+    )
+    await show_control_for_url(query.message, context, selected["url"], user)
+    raise ApplicationHandlerStop
 
 
 async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
