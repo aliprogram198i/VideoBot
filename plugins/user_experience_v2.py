@@ -83,6 +83,7 @@ def _settings_keyboard(media_type: str, quality: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🎵 صوت" + (" ✅" if media_type == "audio" else ""), callback_data="ux_set_audio")],
         [InlineKeyboardButton(f"⚙️ الجودة الحالية: {_LABELS.get(quality, 'غير محددة')}", callback_data="ux_quality_menu")],
         [InlineKeyboardButton("📚 مكتبتي", callback_data="ux_library")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")],
     ])
 
 
