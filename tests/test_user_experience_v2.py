@@ -61,3 +61,23 @@ def test_library_schema_is_additive_and_user_scoped(tmp_path):
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"user_preferences", "user_favorites"}.issubset(tables)
     conn.close()
+
+
+def test_library_duplicate_url_is_ignored_by_user_scope(tmp_path):
+    bot = FakeBot(tmp_path / "duplicates.db")
+    conn = _db(bot)
+    sql = (
+        "INSERT INTO user_favorites(user_id,url,website,media_type,quality,title,created_at) "
+        "SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS ("
+        "SELECT 1 FROM user_favorites WHERE user_id = ? AND url = ?)"
+    )
+    params = (7, "https://example.com/a", "example.com", None, None, "A", "2026-09-17T00:00:00", 7, "https://example.com/a")
+    conn.execute(sql, params)
+    conn.execute(sql, params)
+    conn.commit()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM user_favorites WHERE user_id = ? AND url = ?",
+        (7, "https://example.com/a"),
+    ).fetchone()[0]
+    assert count == 1
+    conn.close()
