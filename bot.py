@@ -4602,11 +4602,22 @@ async def download_media(
 
                     "valid_candidate_count": 0,
 
-                    "skipped": "youtube_smart_extraction_not_applicable",
+                    "skipped": (
+                        "instagram_access_restricted"
+                        if instagram_access_blocked
+                        else "youtube_smart_extraction_not_applicable"
+                    ),
 
                 }
 
-                print("ℹ️ Skipping generic Smart Extraction fallback for YouTube")
+                if instagram_access_blocked:
+                    print(
+                        "ℹ️ Skipping generic Smart Extraction fallback for Instagram access restriction"
+                    )
+                else:
+                    print(
+                        "ℹ️ Skipping generic Smart Extraction fallback for YouTube"
+                    )
 
             else:
 
@@ -4643,17 +4654,39 @@ async def download_media(
                 # ------------------------------------------------
                 # Yoinku fallback
                 # يتم تجربته فقط إذا فشل Smart Extraction.
+                # Instagram access/audience restrictions are content-shaped
+                # failures; Yoinku cannot make restricted posts public and
+                # retrying it only adds latency. Keep Yoinku for other
+                # Instagram failures and all other platforms.
                 # ------------------------------------------------
 
-                yoinku_attempted = True
-
-                yoinku_file, yoinku_diagnostics = await download_with_yoinku(
-                    url=url,
-                    temp_dir=temp_dir,
-                    is_audio=is_audio,
-                    attempt_id=attempt_id,
-                    attempt_number=attempt_number,
-                )
+                if instagram_access_blocked:
+                    yoinku_attempted = False
+                    yoinku_file = None
+                    yoinku_diagnostics = {
+                        "status": "skipped",
+                        "attempt_id": attempt_id,
+                        "attempt_number": attempt_number,
+                        "internal_attempts": 0,
+                        "exception_type": "InstagramAccessRestricted",
+                        "error_message": (
+                            "Yoinku skipped because Instagram rejected access to the content."
+                        ),
+                        "skipped": "instagram_access_restricted",
+                        "duration_ms": 0,
+                    }
+                    print(
+                        "ℹ️ Skipping Yoinku fallback for Instagram access restriction"
+                    )
+                else:
+                    yoinku_attempted = True
+                    yoinku_file, yoinku_diagnostics = await download_with_yoinku(
+                        url=url,
+                        temp_dir=temp_dir,
+                        is_audio=is_audio,
+                        attempt_id=attempt_id,
+                        attempt_number=attempt_number,
+                    )
 
                 # ------------------------------------------------
                 # محاولة استخراج مصدر مباشر من صفحة الموقع
