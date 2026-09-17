@@ -164,7 +164,16 @@ async def _retry_callback(update, context, bot_module):
     context.user_data[_STATE_KEY] = state
     context.user_data[_RETRY_INVOCATION_KEY] = True
 
-    await bot_module.download_media(update, context)
+    retry_query = _RetryQueryProxy(query, context, bot_module)
+    retry_query.data = state["choice"]
+    retry_update = SimpleNamespace(
+        callback_query=retry_query,
+        effective_user=user,
+        effective_chat=getattr(update, "effective_chat", None),
+        message=getattr(update, "message", None),
+    )
+
+    await bot_module.download_media(retry_update, context)
 
 
 def install_download_retry(bot_module: Any) -> None:
