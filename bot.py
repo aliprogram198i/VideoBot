@@ -4762,6 +4762,14 @@ async def download_media(
                     fallback_file = yoinku_file
                     fallback_diagnostics = {}
                 elif is_youtube:
+                    fallback_file = None
+                    fallback_diagnostics = {
+                        "candidate_count": 0,
+                        "skipped": "youtube_direct_fallback_not_applicable",
+                    }
+                    print(
+                        "ℹ️ Skipping generic direct-media fallback for YouTube"
+                    )
                 elif telegram_source is not None:
                     fallback_file = None
                     fallback_diagnostics = {
@@ -4777,14 +4785,6 @@ async def download_media(
                     }
                     print(
                         "ℹ️ Skipping generic direct-media fallback for Telegram source identity safety"
-                    )
-                    fallback_file = None
-                    fallback_diagnostics = {
-                        "candidate_count": 0,
-                        "skipped": "youtube_direct_fallback_not_applicable",
-                    }
-                    print(
-                        "ℹ️ Skipping generic direct-media fallback for YouTube"
                     )
                 else:
                     # Instagram may explicitly reject the post before any
