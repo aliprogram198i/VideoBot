@@ -11,6 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 from .smart_download_control import register_smart_download_control
+from .user_experience_v2 import register_user_experience_v2
 
 CALLBACK = "admin_smart_operations"
 
@@ -55,36 +56,25 @@ def collect_smart_operations(get_db):
         users = _safe_count(conn, "SELECT COUNT(*) FROM users") if "users" in tables else 0
         downloads = _safe_count(conn, "SELECT COUNT(*) FROM downloads WHERE created_at >= ?", (_today_prefix(),)) if "downloads" in tables else 0
         active = _safe_count(conn, "SELECT COUNT(*) FROM users WHERE last_seen >= ?", (_today_prefix(),)) if "users" in tables else 0
-
         website = None
         website_count = 0
         if "downloads" in tables:
-            rows = conn.execute(
-                """SELECT website, COUNT(*) AS count FROM downloads
-                   WHERE created_at >= ? GROUP BY website ORDER BY count DESC LIMIT 1""",
-                (_today_prefix(),),
-            ).fetchall()
+            rows = conn.execute("""SELECT website, COUNT(*) AS count FROM downloads
+                   WHERE created_at >= ? GROUP BY website ORDER BY count DESC LIMIT 1""", (_today_prefix(),)).fetchall()
             if rows:
                 website = rows[0][0] or "غير معروف"
                 website_count = int(rows[0][1] or 0)
-
         total_today = downloads or 0
         platform_pct = round((website_count / total_today) * 100, 1) if total_today else 0
-
         success_rate = None
         if "downloads" in tables:
             cols = _column_names(conn, "downloads")
             status_col = next((c for c in ("status", "result", "download_status") if c in cols), None)
             if status_col:
                 total = _safe_count(conn, "SELECT COUNT(*) FROM downloads WHERE created_at >= ?", (_today_prefix(),))
-                success = _safe_count(
-                    conn,
-                    f"SELECT COUNT(*) FROM downloads WHERE created_at >= ? AND LOWER(CAST({status_col} AS TEXT)) IN ('success','successful','ok','completed','done','1')",
-                    (_today_prefix(),),
-                )
+                success = _safe_count(conn, f"SELECT COUNT(*) FROM downloads WHERE created_at >= ? AND LOWER(CAST({status_col} AS TEXT)) IN ('success','successful','ok','completed','done','1')", (_today_prefix(),))
                 if total:
                     success_rate = round((success or 0) * 100 / total, 1)
-
         error_summary = None
         error_count = 0
         error_monitoring = False
@@ -97,26 +87,11 @@ def collect_smart_operations(get_db):
                 error_monitoring = True
                 where = f"WHERE {time_col} >= ?" if time_col else ""
                 params = (_today_prefix(),) if time_col else ()
-                row = conn.execute(
-                    f"SELECT {message_col}, COUNT(*) AS count FROM {error_table} {where} GROUP BY {message_col} ORDER BY count DESC LIMIT 1",
-                    params,
-                ).fetchone()
+                row = conn.execute(f"SELECT {message_col}, COUNT(*) AS count FROM {error_table} {where} GROUP BY {message_col} ORDER BY count DESC LIMIT 1", params).fetchone()
                 error_count = _safe_count(conn, f"SELECT COUNT(*) FROM {error_table} {where}", params) or 0
                 if row:
                     error_summary = str(row[0])[:120]
-
-        return {
-            "users": users or 0,
-            "downloads_today": total_today,
-            "active_today": active or 0,
-            "website": website,
-            "platform_pct": platform_pct,
-            "success_rate": success_rate,
-            "error_summary": error_summary,
-            "error_count": error_count,
-            "error_monitoring": error_monitoring,
-            "ai_configured": bool(os.getenv("GEMINI_API_KEY")),
-        }
+        return {"users": users or 0, "downloads_today": total_today, "active_today": active or 0, "website": website, "platform_pct": platform_pct, "success_rate": success_rate, "error_summary": error_summary, "error_count": error_count, "error_monitoring": error_monitoring, "ai_configured": bool(os.getenv("GEMINI_API_KEY"))}
     finally:
         conn.close()
 
@@ -136,14 +111,7 @@ def render_smart_operations(data):
     status = "🟢 قراءة البيانات مستقرة"
     monitoring = "🟢 تعمل" if data["error_monitoring"] else "🟠 غير مهيأة"
     success = f"{data['success_rate']}%" if data["success_rate"] is not None else "غير متاح — لا يوجد حقل نتيجة موثوق"
-    text = (
-        "🤖 <b>Smart Operations</b>\n━━━━━━━━━━━━━━━━━━\n\n"
-        f"{status}\n🧠 مراقبة الأخطاء     {monitoring}\n"
-        f"📥 تحميلات اليوم      {data['downloads_today']}\n"
-        f"✅ معدل النجاح        {success}\n"
-        f"👥 مستخدمون نشطون     {data['active_today']}\n\n"
-        "━━━━━━━━━━━━━━━━━━\n\n🚨 <b>المشاكل الحالية</b>\n"
-    )
+    text = ("🤖 <b>Smart Operations</b>\n━━━━━━━━━━━━━━━━━━\n\n" f"{status}\n🧠 مراقبة الأخطاء     {monitoring}\n" f"📥 تحميلات اليوم      {data['downloads_today']}\n" f"✅ معدل النجاح        {success}\n" f"👥 مستخدمون نشطون     {data['active_today']}\n\n" "━━━━━━━━━━━━━━━━━━\n\n🚨 <b>المشاكل الحالية</b>\n")
     if data["error_count"]:
         text += f"🟠 أخطاء مسجلة اليوم: {data['error_count']}\n"
     elif data["error_monitoring"]:
@@ -176,14 +144,10 @@ async def smart_operations_callback(update: Update, context: ContextTypes.DEFAUL
         data = collect_smart_operations(get_db)
         await query.edit_message_text(render_smart_operations(data), parse_mode="HTML", reply_markup=_keyboard())
     except Exception:
-        await query.edit_message_text(
-            "🤖 <b>Smart Operations</b>\n━━━━━━━━━━━━━━━━━━\n\n🔴 تعذر قراءة بيانات المراقبة حاليًا.\n\nℹ️ لم يتم تعديل قاعدة البيانات.",
-            parse_mode="HTML", reply_markup=_keyboard(),
-        )
+        await query.edit_message_text("🤖 <b>Smart Operations</b>\n━━━━━━━━━━━━━━━━━━\n\n🔴 تعذر قراءة بيانات المراقبة حاليًا.\n\nℹ️ لم يتم تعديل قاعدة البيانات.", parse_mode="HTML", reply_markup=_keyboard())
 
 
 def _has_smart_operations_handler(app):
-    """Return True when this callback route is already registered."""
     handlers_by_group = getattr(app, "handlers", {})
     for handlers in handlers_by_group.values():
         for handler in handlers:
@@ -197,11 +161,8 @@ def _has_smart_operations_handler(app):
 
 
 def register_smart_operations(app, get_db, admin_id):
-    """Register Smart Operations once, even when legacy bootstrap calls it too."""
     register_smart_download_control(app)
+    register_user_experience_v2(app)
     if _has_smart_operations_handler(app):
         return
-    app.add_handler(CallbackQueryHandler(
-        lambda update, context: smart_operations_callback(update, context, get_db, admin_id),
-        pattern=rf"^{CALLBACK}$",
-    ))
+    app.add_handler(CallbackQueryHandler(lambda update, context: smart_operations_callback(update, context, get_db, admin_id), pattern=rf"^{CALLBACK}$"))
