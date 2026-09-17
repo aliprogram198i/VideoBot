@@ -86,6 +86,11 @@ def _keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 فيديو", callback_data="video_menu")],
         [InlineKeyboardButton("🎵 MP3", callback_data="audio_menu")],
+        [
+            InlineKeyboardButton("⭐ حفظ", callback_data="ux_favorite_current"),
+            InlineKeyboardButton("📚 مكتبتي", callback_data="ux_library"),
+        ],
+        [InlineKeyboardButton("⚙️ الإعدادات", callback_data="ux_settings")],
         [InlineKeyboardButton("🖼 الصورة المصغرة", callback_data="sdc_thumbnail")],
         [InlineKeyboardButton("❌ إلغاء", callback_data="sdc_cancel")],
     ])
