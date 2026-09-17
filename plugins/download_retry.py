@@ -17,7 +17,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
-_RETRY_CALLBACK = re.compile(r"^download_retry$")
+_RETRY_CALLBACK = "download_retry"
 _QUALITY_CALLBACK = re.compile(
     r"^(?:video_(?:best|1080|720|480|360)|audio_(?:best|320|256|192|128))$"
 )
@@ -48,7 +48,7 @@ def _failure_texts(bot_module: Any, language: str) -> set[str]:
 def _retry_markup(language: str) -> InlineKeyboardMarkup:
     label = _retry_label(language)
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(label, callback_data=_RETRY_CALLBACK.pattern.removeprefix("^").removesuffix("$"))]
+        [InlineKeyboardButton(label, callback_data=_RETRY_CALLBACK)]
     ])
 
 
@@ -78,11 +78,10 @@ class _RetryQueryProxy:
 
         if isinstance(text, str) and text in _failure_texts(self._bot_module, language):
             state = self._context.user_data.get(_STATE_KEY) or {}
-            if state.get("url") and state.get("choice") in _QUALITY_CALLBACK.pattern:
+            if state.get("url") and _QUALITY_CALLBACK.fullmatch(str(state.get("choice") or "")):
                 retries = int(state.get("retries", 0))
                 if retries < _MAX_MANUAL_RETRIES:
                     kwargs["reply_markup"] = _retry_markup(language)
-                    state["retries"] = retries
                     self._context.user_data[_STATE_KEY] = state
 
         return await self._query.edit_message_text(*args, **kwargs)
@@ -139,7 +138,7 @@ async def _retry_callback(update, context, bot_module):
         return
 
     state = context.user_data.get(_STATE_KEY)
-    if not isinstance(state, dict) or not state.get("url") or not state.get("choice"):
+    if not isinstance(state, dict) or not state.get("url") or not _QUALITY_CALLBACK.fullmatch(str(state.get("choice") or "")):
         await query.answer()
         language = bot_module.get_language(user.id) or "ar"
         await query.edit_message_text(bot_module.TEXTS[language]["expired"])
@@ -149,9 +148,7 @@ async def _retry_callback(update, context, bot_module):
     if retries >= _MAX_MANUAL_RETRIES:
         await query.answer()
         language = bot_module.get_language(user.id) or "ar"
-        await query.edit_message_text(
-            bot_module.TEXTS[language]["download_error"]
-        )
+        await query.edit_message_text(bot_module.TEXTS[language]["download_error"])
         return
 
     try:
