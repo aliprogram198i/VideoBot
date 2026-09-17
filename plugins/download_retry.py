@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram.ext import CallbackQueryHandler, ContextTypes
 
 _RETRY_CALLBACK = "download_retry"
 _QUALITY_CALLBACK = re.compile(
@@ -177,7 +177,7 @@ async def _retry_callback(update, context, bot_module):
 
 
 def install_download_retry(bot_module: Any) -> None:
-    """Install the retry wrapper and register its unique callback exactly once."""
+    """Wrap the existing download handler without changing its internals."""
     if getattr(bot_module, "_alibot_download_retry_installed", False):
         return
 
@@ -191,22 +191,18 @@ def install_download_retry(bot_module: Any) -> None:
     bot_module.download_media = wrapped_download_media
     bot_module._alibot_download_retry_installed = True
 
-    original_run_polling = Application.run_polling
-    if not getattr(original_run_polling, "_alibot_download_retry_registration", False):
-        @functools.wraps(original_run_polling)
-        def run_polling_with_retry(self, *args, **kwargs):
-            if not getattr(self, "_alibot_download_retry_handler_registered", False):
-                self.add_handler(
-                    CallbackQueryHandler(
-                        lambda u, c: _retry_callback(u, c, bot_module),
-                        pattern=r"^download_retry$",
-                    ),
-                    group=-3,
-                )
-                self._alibot_download_retry_handler_registered = True
-            return original_run_polling(self, *args, **kwargs)
 
-        run_polling_with_retry._alibot_download_retry_registration = True
-        Application.run_polling = run_polling_with_retry
+def register_download_retry(app: Any, bot_module: Any) -> None:
+    """Register the retry callback in the existing runtime-layer hook."""
+    if getattr(app, "_alibot_download_retry_handler_registered", False):
+        return
 
+    app.add_handler(
+        CallbackQueryHandler(
+            lambda u, c: _retry_callback(u, c, bot_module),
+            pattern=r"^download_retry$",
+        ),
+        group=-3,
+    )
+    app._alibot_download_retry_handler_registered = True
     print("🔄 Download retry UX: ENABLED (bounded post-failure retry)", flush=True)
