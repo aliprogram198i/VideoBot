@@ -15,16 +15,8 @@ _ALLOWED = {
     "audio": ("audio_best", "audio_320", "audio_256", "audio_192", "audio_128"),
 }
 _LABELS = {
-    "video_best": "أفضل جودة",
-    "video_1080": "1080p",
-    "video_720": "720p",
-    "video_480": "480p",
-    "video_360": "360p",
-    "audio_best": "أفضل جودة",
-    "audio_320": "320 kbps",
-    "audio_256": "256 kbps",
-    "audio_192": "192 kbps",
-    "audio_128": "128 kbps",
+    "video_best": "أفضل جودة", "video_1080": "1080p", "video_720": "720p", "video_480": "480p", "video_360": "360p",
+    "audio_best": "أفضل جودة", "audio_320": "320 kbps", "audio_256": "256 kbps", "audio_192": "192 kbps", "audio_128": "128 kbps",
 }
 _FAV_RE = re.compile(r"^ux_fav_(\d+)$")
 _LOAD_RE = re.compile(r"^ux_load_(\d+)$")
@@ -172,7 +164,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.answer()
         return
     data = query.data or ""
-    await query.answer()
+    if data != "ux_favorite_current":
+        await query.answer()
     if data == "ux_settings":
         await _settings_screen(query, bot_module, user.id)
         return
