@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
 
 _ALLOWED = {
     "video": ("video_best", "video_1080", "video_720", "video_480", "video_360"),
@@ -221,7 +221,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 return getattr(update, name)
 
         await bot_module.download_media(UpdateProxy(), context)
-        return
+        raise ApplicationHandlerStop
 
     if data == "ux_settings":
         await _settings_screen(query, bot_module, user.id)
@@ -365,6 +365,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 return getattr(update, name)
 
         await bot_module.download_media(UpdateProxy(), context)
+        raise ApplicationHandlerStop
 
 
 def register_user_experience_v2(app) -> None:
