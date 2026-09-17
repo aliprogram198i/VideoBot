@@ -215,7 +215,7 @@ async def _noop_callback(update, context):
     raise ApplicationHandlerStop
 
 
-def _install_download_task_tracking(bot_module):
+def _install_download_task_tracking(bot_module, app=None):
     if getattr(bot_module, "_alibot_download_tracking_installed", False):
         return
     original = bot_module.download_media
@@ -229,6 +229,11 @@ def _install_download_task_tracking(bot_module):
             if context.user_data.get("active_download_task") is task:
                 context.user_data.pop("active_download_task", None)
     bot_module.download_media = tracked
+    if app is not None:
+        for handlers in getattr(app, "handlers", {}).values():
+            for handler in handlers:
+                if getattr(handler, "callback", None) is original:
+                    handler.callback = tracked
     bot_module._alibot_download_tracking_installed = True
 
 
@@ -351,7 +356,7 @@ def register(app, bot_module):
     if getattr(app, "_alibot_enhancements_registered", False):
         return
     app._alibot_enhancements_registered = True
-    _install_download_task_tracking(bot_module)
+    _install_download_task_tracking(bot_module, app)
     app.add_handler(CommandHandler("library", _library_command), group=-4)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _library_search_message), group=-4)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, _broadcast_capture), group=-4)
