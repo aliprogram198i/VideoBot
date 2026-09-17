@@ -135,6 +135,11 @@ def _authorized(update, get_db, owner_id, permission="center.view"):
     return authorize(update, get_db, owner_id, permission)
 
 
+def _actor_id(update, owner_id):
+    user = update.effective_user
+    return int(user.id) if user is not None else int(owner_id)
+
+
 def _home_text(get_db=None):
     if get_db is None:
         return (
@@ -214,7 +219,7 @@ async def admin_control_center_callback(update: Update, context: ContextTypes.DE
     await query.answer()
     if not _authorized(update, get_db, owner_id, "center.view"):
         return
-    audit(get_db, owner_id, "open_control_center")
+    audit(get_db, _actor_id(update, owner_id), "open_control_center")
     await query.edit_message_text(_home_text(get_db), parse_mode="HTML", reply_markup=admin_keyboard())
     raise ApplicationHandlerStop
 
@@ -224,7 +229,7 @@ async def admin_records_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     if not _authorized(update, get_db, owner_id, "history.view"):
         return
-    audit(get_db, owner_id, "open_records_center")
+    audit(get_db, _actor_id(update, owner_id), "open_records_center")
     await query.edit_message_text(_records_text(get_db), parse_mode="HTML", reply_markup=_records_keyboard())
     raise ApplicationHandlerStop
 
@@ -283,13 +288,13 @@ async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TY
         ("📥 yt-dlp", _module_available("yt_dlp"), "متاح"),
         ("🤖 Telegram", _module_available("telegram"), "المكتبة متاحة"),
     ]
-    audit(get_db, owner_id, "view_system_health")
+    audit(get_db, _actor_id(update, owner_id), "view_system_health")
     lines = ["🩺 <b>صحة النظام والتشخيص</b>", "━━━━━━━━━━━━━━━━━━━━", ""]
     for label, ok, detail in checks:
         lines.append(f"{label}: {'🟢' if ok else '🔴'} {detail}")
     lines += [
         f"💾 التخزين: {disk_status} {disk_detail}",
-        "🤖 خدمة البوت: 🟢 العملية الإدارية مستجيبة",
+        "🤖 واجهة الإدارة: 🟢 تستجيب للطلبات",
         f"🕒 وقت الفحص: {_now()}",
         "",
         "ℹ️ الفحص تشخيصي فقط ولا يغيّر إعدادات النظام.",
@@ -319,7 +324,7 @@ async def admin_audit_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             target = f" → {row['target_id']}" if row['target_id'] is not None else ""
             detail = f" — {row['details']}" if row['details'] else ""
             lines.append(f"• <code>{row['created_at']}</code> | {row['action']}{target}{detail}")
-    audit(get_db, owner_id, "view_audit_log")
+    audit(get_db, _actor_id(update, owner_id), "view_audit_log")
     await query.edit_message_text("\n".join(lines)[:3900], parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 تحديث", callback_data="admin_audit")],
         [InlineKeyboardButton("🎛️ لوحة القيادة", callback_data="admin_home")],
