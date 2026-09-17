@@ -289,7 +289,7 @@ async def admin_health_callback(update: Update, context: ContextTypes.DEFAULT_TY
         lines.append(f"{label}: {'🟢' if ok else '🔴'} {detail}")
     lines += [
         f"💾 التخزين: {disk_status} {disk_detail}",
-        "🤖 خدمة البوت: 🟢 العملية الإدارية مستجيبة",
+        "🤖 واجهة الإدارة: 🟢 تستجيب للطلبات",
         f"🕒 وقت الفحص: {_now()}",
         "",
         "ℹ️ الفحص تشخيصي فقط ولا يغيّر إعدادات النظام.",
