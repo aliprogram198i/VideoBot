@@ -13,7 +13,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes
 from .smart_download_control import register_smart_download_control
 from .user_experience_v2 import register_user_experience_v2
 from .telegram_message_guard import install as install_telegram_message_guard
-from ai.link_investigator import install as install_link_investigator
+from .link_investigator import install as install_link_investigator
 
 CALLBACK = "admin_smart_operations"
 
