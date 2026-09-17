@@ -361,6 +361,7 @@ def register(app, bot_module):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _library_search_message), group=-4)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, _broadcast_capture), group=-4)
     app.add_handler(CommandHandler("broadcast", _broadcast_start), group=-4)
+    app.add_handler(CallbackQueryHandler(_broadcast_start, pattern=r"^admin_broadcast$"), group=-4)
     app.add_handler(CallbackQueryHandler(_cancel_callback, pattern=r"^sdc_cancel$"), group=-4)
     app.add_handler(CallbackQueryHandler(_library_callback, pattern=r"^(ux_library|ux_lib_(?:page_\d+|search|clear|noop)|ux_fav_\d+|ux_load_\d+)$"), group=-4)
     app.add_handler(CallbackQueryHandler(_broadcast_confirm, pattern=r"^admin_rich_broadcast_confirm$"), group=-4)
