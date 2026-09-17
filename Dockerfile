@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ARG DENO_VERSION=2.8.3
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl unzip gosu \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 videobot \
     && curl -fsSL "https://dl.deno.land/release/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
@@ -66,11 +66,13 @@ else:
 PY
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
     && python -m py_compile bot.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/smart_search.py downloader/smart_media_bridge.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py downloader/smart_learning_foundation.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer_v2.py plugins/admin_operations_center.py plugins/admin_fallback_intelligence.py plugins/admin_backup_recovery.py plugins/admin_security_center.py plugins/admin_smart_analytics.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/user_features.py plugins/yoinku_compat.py plugins/whatsapp_audio.py telegram_layer/media_retry.py
-RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app
+RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app && chmod 777 /app/data /app/tmp
+RUN printf '%s\n' '#!/bin/sh' 'set -eu' 'chmod 777 /app/data /app/tmp' 'exec gosu videobot python -u /app/entrypoint.py' > /usr/local/bin/docker-entrypoint.sh \
+    && chmod 0755 /usr/local/bin/docker-entrypoint.sh
 ENV TMPDIR=/app/tmp
 ENV YTDLP_PLUGIN_DIRS=/opt/yt-dlp-plugins
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 ENV ALIBOT_PLUGINS_ENABLED=1
 ENV ALIBOT_BROWSER_RESOLVER=1
-USER videobot
-CMD ["python", "-u", "entrypoint.py"]
+USER root
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
