@@ -4574,8 +4574,25 @@ async def download_media(
             # Smart Extraction fallback
             # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
             # ------------------------------------------------
+            # If Instagram itself reports an audience/access restriction,
+            # do not enter browser/static/Cobalt probing: those resolvers
+            # cannot make restricted content public and only add latency.
+            instagram_access_blocked = (
+                "instagram.com" in hostname
+                and any(
+                    marker in (
+                        stderr_text[-4000:] or stdout_text[-4000:]
+                    ).lower()
+                    for marker in (
+                        "this content isn't available to everyone",
+                        "requested content is not available",
+                        "login required",
+                        "rate-limit reached",
+                    )
+                )
+            )
 
-            if is_youtube:
+            if is_youtube or instagram_access_blocked:
 
                 smart_file = None
 
