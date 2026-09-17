@@ -4604,6 +4604,7 @@ async def download_media(
             # Its generic HTML/direct-media fallback is not an
             # independent recovery path for YouTube.
             hostname = (urlparse(url).hostname or "").lower()
+            telegram_source = parse_telegram_post_url(url)
             is_youtube = hostname in {
                 "youtube.com",
                 "www.youtube.com",
@@ -4723,6 +4724,25 @@ async def download_media(
                     print(
                         "ℹ️ Skipping Yoinku fallback for Instagram access restriction"
                     )
+                elif telegram_source is not None:
+                    yoinku_attempted = False
+                    yoinku_file = None
+                    yoinku_diagnostics = {
+                        "status": "skipped",
+                        "attempt_id": attempt_id,
+                        "attempt_number": attempt_number,
+                        "internal_attempts": 0,
+                        "exception_type": "TelegramSourceIdentityUnverified",
+                        "error_message": (
+                            "Yoinku skipped because the Telegram post identity "
+                            "was not verified by the source identity gate."
+                        ),
+                        "skipped": "telegram_source_identity_unverified",
+                        "duration_ms": 0,
+                    }
+                    print(
+                        "ℹ️ Skipping Yoinku fallback for Telegram source identity safety"
+                    )
                 else:
                     yoinku_attempted = True
                     yoinku_file, yoinku_diagnostics = await download_with_yoinku(
@@ -4742,6 +4762,22 @@ async def download_media(
                     fallback_file = yoinku_file
                     fallback_diagnostics = {}
                 elif is_youtube:
+                elif telegram_source is not None:
+                    fallback_file = None
+                    fallback_diagnostics = {
+                        "candidate_count": 0,
+                        "skipped": "telegram_source_identity_unverified",
+                        "extraction_error": {
+                            "exception_type": "TelegramSourceIdentityUnverified",
+                            "error_message": (
+                                "Generic direct-media fallback was skipped because "
+                                "the requested Telegram post identity was not verified."
+                            ),
+                        },
+                    }
+                    print(
+                        "ℹ️ Skipping generic direct-media fallback for Telegram source identity safety"
+                    )
                     fallback_file = None
                     fallback_diagnostics = {
                         "candidate_count": 0,
