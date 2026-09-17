@@ -74,11 +74,7 @@ def _is_instagram_yt_dlp_command(args):
 
 
 def _patch_yt_dlp_subprocesses():
-    """Inject optional Instagram cookies only into yt-dlp Instagram commands."""
-    cookie_file = _instagram_cookie_file()
-    if not cookie_file:
-        return
-
+    """Inject optional Instagram cookies and bounded network retries into yt-dlp Instagram commands."""
     original_async_exec = asyncio.create_subprocess_exec
     if getattr(original_async_exec, "_alibot_instagram_cookie_bridge", False):
         return
@@ -91,13 +87,27 @@ def _patch_yt_dlp_subprocesses():
             or "yt-dlp" in executable
             or any(str(item) == "yt_dlp" for item in command)
         ) and _is_instagram_yt_dlp_command(command):
-            if "--cookies" not in command:
+            cookie_file = _instagram_cookie_file()
+            if cookie_file and "--cookies" not in command:
                 command[1:1] = ["--cookies", cookie_file]
+            # Instagram can leave an extractor request waiting for a response.
+            # Keep this platform-specific so other downloaders retain their
+            # existing retry/timeout behavior and can reach their fallbacks.
+            if "--socket-timeout" not in command:
+                command[1:1] = ["--socket-timeout", "25"]
+            if "--retries" not in command:
+                command[1:1] = ["--retries", "1"]
+            if "--fragment-retries" not in command:
+                command[1:1] = ["--fragment-retries", "1"]
+            if "--extractor-retries" not in command:
+                command[1:1] = ["--extractor-retries", "1"]
+            if "--no-playlist" not in command:
+                command[1:1] = ["--no-playlist"]
         return await original_async_exec(*command, **kwargs)
 
     guarded_create_subprocess_exec._alibot_instagram_cookie_bridge = True
     asyncio.create_subprocess_exec = guarded_create_subprocess_exec
-    _LOG.info("Instagram authentication bridge: ENABLED")
+    _LOG.info("Instagram yt-dlp guard: ENABLED")
 
 
 def _install_admin_runtime_guard():
