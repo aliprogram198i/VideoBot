@@ -85,12 +85,6 @@ def _messages(language: str) -> dict[str, str]:
             "tr": "📦 {count} bağlantı alındı.\n\n👇 İndirme türünü seçin:",
             "de": "📦 {count} Links erhalten.\n\n👇 Wählen Sie den Download-Typ:",
         }[language],
-        "batch_done": {
-            "ar": "📦 <b>اكتمل التحميل المتعدد</b>\n━━━━━━━━━━━━━━━━━━\n\nتمت معالجة {count} روابط عبر مسار التنزيل الحالي.",
-            "en": "📦 <b>Batch download complete</b>\n━━━━━━━━━━━━━━━━━━\n\nProcessed {count} links through the existing download pipeline.",
-            "tr": "📦 <b>Toplu indirme tamamlandı</b>\n━━━━━━━━━━━━━━━━━━\n\n{count} bağlantı mevcut indirme hattından işlendi.",
-            "de": "📦 <b>Stapel-Download abgeschlossen</b>\n━━━━━━━━━━━━━━━━━━\n\n{count} Links wurden über die bestehende Download-Pipeline verarbeitet.",
-        }[language],
         "invalid_batch": {
             "ar": f"❌ يجب إرسال من 2 إلى {MAX_BATCH_URLS} روابط HTTP(S) صحيحة في رسالة واحدة.",
             "en": f"❌ Send 2 to {MAX_BATCH_URLS} valid HTTP(S) links in one message.",
@@ -130,12 +124,67 @@ def _type_keyboard(language: str) -> InlineKeyboardMarkup:
 def _extract_urls(text: str) -> list[str]:
     found: list[str] = []
     for raw in URL_RE.findall(text or ""):
-        url = raw.rstrip(".,;!?)[]}>")
+        url = raw.rstrip(".,;!?)[]}>\")
         if len(url) > MAX_URL_LENGTH:
             continue
         if url not in found:
             found.append(url)
     return found
+
+
+def _download_record_exists(bot_module: Any, user_id: int, url: str) -> bool:
+    """Use the existing downloads ledger as the success signal."""
+    conn = bot_module.get_db()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM downloads WHERE user_id = ? AND url = ? LIMIT 1",
+            (user_id, url),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def _batch_summary(language: str, total: int, succeeded: list[int], failed: list[int]) -> str:
+    labels = {
+        "ar": {
+            "title": "📦 <b>نتيجة التحميل المتعدد</b>",
+            "success": "✅ نجح: {n}",
+            "failed": "❌ فشل: {n}",
+            "none_failed": "🎉 تم تحميل جميع الروابط بنجاح.",
+            "failed_list": "الروابط التي فشلت: {items}",
+        },
+        "en": {
+            "title": "📦 <b>Batch download result</b>",
+            "success": "✅ Succeeded: {n}",
+            "failed": "❌ Failed: {n}",
+            "none_failed": "🎉 All links downloaded successfully.",
+            "failed_list": "Failed links: {items}",
+        },
+        "tr": {
+            "title": "📦 <b>Toplu indirme sonucu</b>",
+            "success": "✅ Başarılı: {n}",
+            "failed": "❌ Başarısız: {n}",
+            "none_failed": "🎉 Tüm bağlantılar başarıyla indirildi.",
+            "failed_list": "Başarısız bağlantılar: {items}",
+        },
+        "de": {
+            "title": "📦 <b>Ergebnis des Stapel-Downloads</b>",
+            "success": "✅ Erfolgreich: {n}",
+            "failed": "❌ Fehlgeschlagen: {n}",
+            "none_failed": "🎉 Alle Links wurden erfolgreich heruntergeladen.",
+            "failed_list": "Fehlgeschlagene Links: {items}",
+        },
+    }[language]
+    lines = [labels["title"], "━━━━━━━━━━━━━━━━━━", "", labels["success"].format(n=len(succeeded)), labels["failed"].format(n=len(failed))]
+    if failed:
+        lines.extend(["", labels["failed_list"].format(items=", ".join(str(index) for index in failed))])
+    else:
+        lines.extend(["", labels["none_failed"]])
+    lines.extend(["", f"📊 {len(succeeded) + len(failed)}/{total}"])
+    return "\n".join(lines)
 
 
 async def _show_hub(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
@@ -181,10 +230,7 @@ async def _history(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_modul
     language = _language(bot_module, user.id)
     conn = bot_module.get_db()
     try:
-        rows = conn.execute(
-            "SELECT id, url, website, media_type, quality, created_at FROM downloads WHERE user_id = ? ORDER BY id DESC LIMIT 10",
-            (user.id,),
-        ).fetchall()
+        rows = conn.execute("SELECT id, url, website, media_type, quality, created_at FROM downloads WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user.id,)).fetchall()
     finally:
         conn.close()
     if not rows:
@@ -229,11 +275,7 @@ async def _history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return
     context.user_data["video_url"] = selected["url"]
     language = _language(bot_module, user.id)
-    await query.edit_message_text(
-        f"🔁 <b>إعادة تحميل</b>\n\n{selected['website']} • {selected['quality']}",
-        parse_mode="HTML",
-        reply_markup=_type_keyboard(language),
-    )
+    await query.edit_message_text(f"🔁 <b>إعادة تحميل</b>\n\n{selected['website']} • {selected['quality']}", parse_mode="HTML", reply_markup=_type_keyboard(language))
 
 
 async def _batch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
@@ -264,7 +306,6 @@ async def _batch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, bot
 
 
 class _QueryProxy:
-    """Forward Telegram callback operations but keep the source message alive."""
     def __init__(self, query):
         self._query = query
         self.data = query.data
@@ -296,9 +337,7 @@ async def _batch_type_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
     query = update.callback_query
     user = update.effective_user
-    if not query or not user:
-        return
-    if not context.user_data.get("user_batch_urls"):
+    if not query or not user or not context.user_data.get("user_batch_urls"):
         return
     if not BATCH_QUALITY_RE.match(query.data or ""):
         return
@@ -311,22 +350,28 @@ async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot
         return
     async with lock:
         proxy = _QueryProxy(query)
-        batch_update = SimpleNamespace(
-            callback_query=proxy,
-            effective_user=update.effective_user,
-            effective_chat=update.effective_chat,
-        )
+        batch_update = SimpleNamespace(callback_query=proxy, effective_user=update.effective_user, effective_chat=update.effective_chat)
+        succeeded: list[int] = []
+        failed: list[int] = []
         for index, url in enumerate(urls, start=1):
             context.user_data["video_url"] = url
             context.user_data["batch_index"] = index
+            before_success = _download_record_exists(bot_module, user.id, url)
             try:
                 await bot_module.download_media(batch_update, context)
             except Exception:
+                failed.append(index)
                 continue
+            after_success = _download_record_exists(bot_module, user.id, url)
+            if after_success and not before_success:
+                succeeded.append(index)
+            else:
+                failed.append(index)
         context.user_data.pop("user_batch_urls", None)
         context.user_data.pop("batch_index", None)
+        context.user_data.pop("video_url", None)
         try:
-            await query.edit_message_text(_messages(language)["batch_done"].format(count=len(urls)), parse_mode="HTML")
+            await query.edit_message_text(_batch_summary(language, len(urls), succeeded, failed), parse_mode="HTML")
         except Exception:
             pass
     raise ApplicationHandlerStop
@@ -342,7 +387,6 @@ async def _user_history_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 def register_user_features(app: Any, bot_module: Any) -> None:
-    """Register user features ahead of legacy handlers without replacing them."""
     app.add_handler(CallbackQueryHandler(lambda u, c: _show_hub(u, c, bot_module), pattern=r"^start_button$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: _single_download(u, c, bot_module), pattern=r"^user_single_download$"), group=-1)
     app.add_handler(CallbackQueryHandler(lambda u, c: _batch_prompt(u, c, bot_module), pattern=r"^user_batch_prompt$"), group=-1)
