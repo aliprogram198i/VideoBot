@@ -305,7 +305,7 @@ def register_user_experience_v2(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             callback,
-            pattern=r"^ux_(?:settings|library|set_video|set_audio|quality_menu|quality_(?:best|1080|720|480|360|320|256|192|128)|favorite_current|fav_\d+|load_\d+|use_preferences)$",
+            pattern=r"^ux_(?:settings|library|set_video|set_audio|quality_menu|quality_(?:video_(?:best|1080|720|480|360)|audio_(?:best|320|256|192|128))|favorite_current|fav_\d+|load_\d+|use_preferences)$",
         ),
         group=-3,
     )
