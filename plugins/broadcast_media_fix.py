@@ -49,6 +49,10 @@ def install() -> None:
             try:
                 return await original_copy(*args, **kwargs)
             except Exception as exc:
+                from telegram.error import RetryAfter
+                if isinstance(exc, RetryAfter):
+                    raise
+
                 kind = payload.get("kind")
                 file_id = payload.get("file_id")
                 if not file_id or kind not in {"photo", "video", "audio", "voice", "document"}:
