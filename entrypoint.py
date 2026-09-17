@@ -59,6 +59,7 @@ def main() -> None:
         register_smart_search_pro = importlib.import_module("plugins.smart_search_pro").register_smart_search_pro
         register_user_features = importlib.import_module("plugins.user_features").register_user_features
         register_user_location = importlib.import_module("plugins.user_location").register_user_location
+        register_enhancements = importlib.import_module("plugins.alibot_enhancements").register
         install_shhaiid4u_resolver = importlib.import_module("downloader.shhaiid4u_resolver").install
         install_shhaiid4u_network_discovery = importlib.import_module("downloader.shhaiid4u_network_discovery").install
         install_shhaiid4u_player_bridge = importlib.import_module("downloader.shhaiid4u_player_bridge").install
@@ -108,6 +109,7 @@ def main() -> None:
                 register_features(self, bot_module, bot_module.ADMIN_ID)
                 register_whatsapp_audio(self, bot_module)
                 register_download_retry(self, bot_module)
+                register_enhancements(self, bot_module)
 
                 # One canonical administrative runtime. It removes retired
                 # handlers before installing the isolated admin ownership graph.
