@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 _RETRY_CALLBACK = "download_retry"
@@ -84,7 +85,21 @@ class _RetryQueryProxy:
                     kwargs["reply_markup"] = _retry_markup(language)
                     self._context.user_data[_STATE_KEY] = state
 
-        return await self._query.edit_message_text(*args, **kwargs)
+        try:
+            return await self._query.edit_message_text(*args, **kwargs)
+        except BadRequest as exc:
+            # A long-running download can outlive Telegram's callback-query
+            # lifetime. The callback query itself then cannot be edited, but
+            # its message is still editable. Fall back to the message object
+            # so the user never remains stuck on the loading screen.
+            error_text = str(exc).lower()
+            if (
+                "query is too old" in error_text
+                or "query id is invalid" in error_text
+                or "response timeout expired" in error_text
+            ) and self.message is not None:
+                return await self.message.edit_text(*args, **kwargs)
+            raise
 
     async def delete_message(self, *args, **kwargs):
         self._context.user_data.pop(_STATE_KEY, None)
