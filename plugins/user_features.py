@@ -124,7 +124,7 @@ def _type_keyboard(language: str) -> InlineKeyboardMarkup:
 def _extract_urls(text: str) -> list[str]:
     found: list[str] = []
     for raw in URL_RE.findall(text or ""):
-        url = raw.rstrip(".,;!?)[]}>\")
+        url = raw.rstrip(".,;!?)[]}>")
         if len(url) > MAX_URL_LENGTH:
             continue
         if url not in found:
