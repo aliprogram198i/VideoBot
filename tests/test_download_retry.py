@@ -1,6 +1,5 @@
+import asyncio
 from types import SimpleNamespace
-
-import pytest
 
 from plugins import download_retry
 
@@ -59,79 +58,91 @@ def test_retry_markup_has_stable_callback():
     assert button.text == "🔄 إعادة المحاولة"
 
 
-@pytest.mark.asyncio
-async def test_failure_proxy_adds_retry_button_without_changing_failure_text():
-    query = _FakeQuery()
-    context = _FakeContext()
-    context.user_data[download_retry._STATE_KEY] = {
-        "url": "https://example.com/video",
-        "choice": "video_720",
-        "retries": 0,
-    }
-    proxy = download_retry._RetryQueryProxy(query, context, _FakeBotModule())
+def test_failure_proxy_adds_retry_button_without_changing_failure_text():
+    async def scenario():
+        query = _FakeQuery()
+        context = _FakeContext()
+        context.user_data[download_retry._STATE_KEY] = {
+            "url": "https://example.com/video",
+            "choice": "video_720",
+            "retries": 0,
+        }
+        proxy = download_retry._RetryQueryProxy(query, context, _FakeBotModule())
 
-    await proxy.edit_message_text("download failed")
+        await proxy.edit_message_text("download failed")
 
-    args, kwargs = query.edits[-1]
-    assert args[0] == "download failed"
-    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "download_retry"
-    assert context.user_data[download_retry._STATE_KEY]["retries"] == 0
+        args, kwargs = query.edits[-1]
+        assert args[0] == "download failed"
+        assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "download_retry"
+        assert context.user_data[download_retry._STATE_KEY]["retries"] == 0
 
-
-@pytest.mark.asyncio
-async def test_non_failure_edit_does_not_get_retry_button():
-    query = _FakeQuery()
-    context = _FakeContext()
-    context.user_data[download_retry._STATE_KEY] = {
-        "url": "https://example.com/video",
-        "choice": "video_720",
-        "retries": 0,
-    }
-    proxy = download_retry._RetryQueryProxy(query, context, _FakeBotModule())
-
-    await proxy.edit_message_text("loading")
-
-    _, kwargs = query.edits[-1]
-    assert "reply_markup" not in kwargs
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_successful_delete_clears_retry_state():
-    query = _FakeQuery()
-    context = _FakeContext()
-    context.user_data[download_retry._STATE_KEY] = {"url": "https://example.com/video", "choice": "video_720", "retries": 0}
-    proxy = download_retry._RetryQueryProxy(query, context, _FakeBotModule())
+def test_non_failure_edit_does_not_get_retry_button():
+    async def scenario():
+        query = _FakeQuery()
+        context = _FakeContext()
+        context.user_data[download_retry._STATE_KEY] = {
+            "url": "https://example.com/video",
+            "choice": "video_720",
+            "retries": 0,
+        }
+        proxy = download_retry._RetryQueryProxy(query, context, _FakeBotModule())
 
-    await proxy.delete_message()
+        await proxy.edit_message_text("loading")
 
-    assert download_retry._STATE_KEY not in context.user_data
-    assert query.deleted == 1
+        _, kwargs = query.edits[-1]
+        assert "reply_markup" not in kwargs
+
+    asyncio.run(scenario())
 
 
-@pytest.mark.asyncio
-async def test_retry_callback_increments_attempt_and_reuses_exact_choice(monkeypatch):
-    query = _FakeQuery()
-    context = _FakeContext()
-    context.user_data[download_retry._STATE_KEY] = {
-        "url": "https://example.com/video",
-        "choice": "video_720",
-        "retries": 1,
-    }
-    update = SimpleNamespace(callback_query=query, effective_user=query.from_user)
+def test_successful_delete_clears_retry_state():
+    async def scenario():
+        query = _FakeQuery()
+        context = _FakeContext()
+        context.user_data[download_retry._STATE_KEY] = {
+            "url": "https://example.com/video",
+            "choice": "video_720",
+            "retries": 0,
+        }
+        proxy = download_retry._RetryQueryProxy(query, context, _FakeBotModule())
 
-    calls = []
+        await proxy.delete_message()
 
-    class BotModule(_FakeBotModule):
-        @staticmethod
-        def validate_public_http_url(url):
-            assert url == "https://example.com/video"
+        assert download_retry._STATE_KEY not in context.user_data
+        assert query.deleted == 1
 
-        async def download_media(self, update, context):
-            calls.append((update.callback_query.data, context.user_data["video_url"]))
+    asyncio.run(scenario())
 
-    bot_module = BotModule()
-    await download_retry._retry_callback(update, context, bot_module)
 
-    assert calls == [("video_720", "https://example.com/video")]
-    assert context.user_data[download_retry._STATE_KEY]["retries"] == 2
-    assert query.answered == 0
+def test_retry_callback_increments_attempt_and_reuses_exact_choice():
+    async def scenario():
+        query = _FakeQuery()
+        context = _FakeContext()
+        context.user_data[download_retry._STATE_KEY] = {
+            "url": "https://example.com/video",
+            "choice": "video_720",
+            "retries": 1,
+        }
+        update = SimpleNamespace(callback_query=query, effective_user=query.from_user)
+
+        calls = []
+
+        class BotModule(_FakeBotModule):
+            @staticmethod
+            def validate_public_http_url(url):
+                assert url == "https://example.com/video"
+
+            async def download_media(self, update, context):
+                calls.append((update.callback_query.data, context.user_data["video_url"]))
+
+        bot_module = BotModule()
+        await download_retry._retry_callback(update, context, bot_module)
+
+        assert calls == [("video_720", "https://example.com/video")]
+        assert context.user_data[download_retry._STATE_KEY]["retries"] == 2
+        assert query.answered == 0
+
+    asyncio.run(scenario())
