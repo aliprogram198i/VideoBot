@@ -132,51 +132,27 @@ def _extract_urls(text: str) -> list[str]:
     return found
 
 
-def _download_record_exists(bot_module: Any, user_id: int, url: str) -> bool:
-    """Use the existing downloads ledger as the success signal."""
+def _download_record_count(bot_module: Any, user_id: int, url: str) -> int:
+    """Read the existing download ledger without changing its schema."""
     conn = bot_module.get_db()
     try:
         row = conn.execute(
-            "SELECT 1 FROM downloads WHERE user_id = ? AND url = ? LIMIT 1",
+            "SELECT COUNT(*) AS count FROM downloads WHERE user_id = ? AND url = ?",
             (user_id, url),
         ).fetchone()
-        return row is not None
+        return int(row["count"] if row else 0)
     except Exception:
-        return False
+        return 0
     finally:
         conn.close()
 
 
 def _batch_summary(language: str, total: int, succeeded: list[int], failed: list[int]) -> str:
     labels = {
-        "ar": {
-            "title": "📦 <b>نتيجة التحميل المتعدد</b>",
-            "success": "✅ نجح: {n}",
-            "failed": "❌ فشل: {n}",
-            "none_failed": "🎉 تم تحميل جميع الروابط بنجاح.",
-            "failed_list": "الروابط التي فشلت: {items}",
-        },
-        "en": {
-            "title": "📦 <b>Batch download result</b>",
-            "success": "✅ Succeeded: {n}",
-            "failed": "❌ Failed: {n}",
-            "none_failed": "🎉 All links downloaded successfully.",
-            "failed_list": "Failed links: {items}",
-        },
-        "tr": {
-            "title": "📦 <b>Toplu indirme sonucu</b>",
-            "success": "✅ Başarılı: {n}",
-            "failed": "❌ Başarısız: {n}",
-            "none_failed": "🎉 Tüm bağlantılar başarıyla indirildi.",
-            "failed_list": "Başarısız bağlantılar: {items}",
-        },
-        "de": {
-            "title": "📦 <b>Ergebnis des Stapel-Downloads</b>",
-            "success": "✅ Erfolgreich: {n}",
-            "failed": "❌ Fehlgeschlagen: {n}",
-            "none_failed": "🎉 Alle Links wurden erfolgreich heruntergeladen.",
-            "failed_list": "Fehlgeschlagene Links: {items}",
-        },
+        "ar": {"title": "📦 <b>نتيجة التحميل المتعدد</b>", "success": "✅ نجح: {n}", "failed": "❌ فشل: {n}", "none_failed": "🎉 تم تحميل جميع الروابط بنجاح.", "failed_list": "الروابط التي فشلت: {items}"},
+        "en": {"title": "📦 <b>Batch download result</b>", "success": "✅ Succeeded: {n}", "failed": "❌ Failed: {n}", "none_failed": "🎉 All links downloaded successfully.", "failed_list": "Failed links: {items}"},
+        "tr": {"title": "📦 <b>Toplu indirme sonucu</b>", "success": "✅ Başarılı: {n}", "failed": "❌ Başarısız: {n}", "none_failed": "🎉 Tüm bağlantılar başarıyla indirildi.", "failed_list": "Başarısız bağlantılar: {items}"},
+        "de": {"title": "📦 <b>Ergebnis des Stapel-Downloads</b>", "success": "✅ Erfolgreich: {n}", "failed": "❌ Fehlgeschlagen: {n}", "none_failed": "🎉 Alle Links wurden erfolgreich heruntergeladen.", "failed_list": "Fehlgeschlagene Links: {items}"},
     }[language]
     lines = [labels["title"], "━━━━━━━━━━━━━━━━━━", "", labels["success"].format(n=len(succeeded)), labels["failed"].format(n=len(failed))]
     if failed:
@@ -356,14 +332,14 @@ async def _batch_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, bot
         for index, url in enumerate(urls, start=1):
             context.user_data["video_url"] = url
             context.user_data["batch_index"] = index
-            before_success = _download_record_exists(bot_module, user.id, url)
+            before_count = _download_record_count(bot_module, user.id, url)
             try:
                 await bot_module.download_media(batch_update, context)
             except Exception:
                 failed.append(index)
                 continue
-            after_success = _download_record_exists(bot_module, user.id, url)
-            if after_success and not before_success:
+            after_count = _download_record_count(bot_module, user.id, url)
+            if after_count > before_count:
                 succeeded.append(index)
             else:
                 failed.append(index)
