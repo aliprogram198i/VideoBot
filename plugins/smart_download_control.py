@@ -122,14 +122,15 @@ async def _probe(url: str) -> dict:
     }
 
 
-async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
-    message = update.message
-    if not message:
+async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url: str, user=None) -> bool:
+    """Show the canonical Smart Download Control for an already selected URL.
+
+    This is the single handoff used by both direct URL messages and Smart Search
+    selections, so search results cannot enter a second download-control UX.
+    """
+    if not message or not user:
         return False
     bot_module = __import__("bot")
-    user = update.effective_user
-    if not user:
-        return False
     if user.id == getattr(bot_module, "ADMIN_ID", None) and any(
         context.user_data.get(key)
         for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search")
@@ -156,6 +157,10 @@ async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url:
     context.user_data["sdc_info"] = data
     await message.reply_text(_text(data), parse_mode="HTML", reply_markup=_keyboard())
     return True
+
+
+async def _show_control(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
+    return await show_control_for_url(update.message, context, url, update.effective_user)
 
 
 async def _send_thumbnail(query, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -269,3 +274,6 @@ def register_smart_download_control(app) -> None:
         group=-2,
     )
     print("🎛️ Smart Download Control: ENABLED", flush=True)
+
+
+__all__ = ["register_smart_download_control", "show_control_for_url"]
