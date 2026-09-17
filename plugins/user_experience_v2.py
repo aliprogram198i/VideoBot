@@ -167,6 +167,38 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     data = query.data or ""
     if data != "ux_favorite_current":
         await query.answer()
+
+    # The saved preference is the default for ordinary video/audio requests.
+    # The existing downloader remains the single execution path; this layer only
+    # resolves the callback choice before delegating to it.
+    if data in {"video_menu", "audio_menu"}:
+        requested_type = "video" if data == "video_menu" else "audio"
+        _, preferred_quality = _get_preferences(bot_module, user.id)
+        if preferred_quality not in _ALLOWED[requested_type]:
+            preferred_quality = _ALLOWED[requested_type][2]
+        original_query = query
+
+        class QueryProxy:
+            def __init__(self):
+                self.data = preferred_quality
+                self.message = original_query.message
+                self.from_user = original_query.from_user
+
+            async def answer(self, *args, **kwargs):
+                return None
+
+            def __getattr__(self, name):
+                return getattr(original_query, name)
+
+        class UpdateProxy:
+            callback_query = QueryProxy()
+
+            def __getattr__(self, name):
+                return getattr(update, name)
+
+        await bot_module.download_media(UpdateProxy(), context)
+        return
+
     if data == "ux_settings":
         await _settings_screen(query, bot_module, user.id)
         return
@@ -203,16 +235,32 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             await query.answer("تعذر التحقق من الرابط.", show_alert=True)
             return
+
+        # A favorite can be created before a download starts, so use the
+        # user's saved default as its explicit media type/quality metadata.
+        media_type, quality = _get_preferences(bot_module, user.id)
+        website = info.get("source") or bot_module.detect_website(url)
+        title = info.get("title")
+
         conn = _db(bot_module)
         try:
-            conn.execute(
-                """INSERT INTO user_favorites(user_id,url,website,media_type,quality,title,created_at)
-                   SELECT ?,?,?,?,?,?,?
-                   WHERE NOT EXISTS (
-                       SELECT 1 FROM user_favorites WHERE user_id = ? AND url = ?
-                   )""",
-                (user.id, url, info.get("source"), None, None, info.get("title"), _now(), user.id, url),
-            )
+            existing = conn.execute(
+                "SELECT id FROM user_favorites WHERE user_id = ? AND url = ? ORDER BY id ASC LIMIT 1",
+                (user.id, url),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE user_favorites
+                       SET website = ?, media_type = ?, quality = ?, title = ?, created_at = ?
+                       WHERE id = ? AND user_id = ?""",
+                    (website, media_type, quality, title, _now(), existing["id"], user.id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO user_favorites(user_id,url,website,media_type,quality,title,created_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (user.id, url, website, media_type, quality, title, _now()),
+                )
             conn.commit()
         finally:
             conn.close()
@@ -306,7 +354,7 @@ def register_user_experience_v2(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             callback,
-            pattern=r"^ux_(?:settings|library|set_video|set_audio|quality_menu|quality_(?:video_(?:best|1080|720|480|360)|audio_(?:best|320|256|192|128))|favorite_current|fav_\d+|load_\d+|use_preferences)$",
+            pattern=r"^(?:video_menu|audio_menu|ux_(?:settings|library|set_video|set_audio|quality_menu|quality_(?:video_(?:best|1080|720|480|360)|audio_(?:best|320|256|192|128))|favorite_current|fav_\d+|load_\d+|use_preferences))$",
         ),
         group=-3,
     )
