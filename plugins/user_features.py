@@ -38,7 +38,8 @@ def _lock_for(user_id: int) -> asyncio.Lock:
 
 
 def _language(bot_module: Any, user_id: int) -> str:
-    return bot_module.get_language(user_id) or "ar"
+    language = bot_module.get_language(user_id) or "ar"
+    return language if language in {"ar", "en", "tr", "de"} else "ar"
 
 
 def _messages(language: str) -> dict[str, str]:
@@ -91,6 +92,25 @@ def _messages(language: str) -> dict[str, str]:
             "tr": f"❌ Tek mesajda 2-{MAX_BATCH_URLS} geçerli HTTP(S) bağlantısı gönderin.",
             "de": f"❌ Senden Sie 2 bis {MAX_BATCH_URLS} gültige HTTP(S)-Links in einer Nachricht.",
         }[language],
+        "history_expired": {
+            "ar": "❌ انتهت صلاحية السجل. أرسل /history من جديد.",
+            "en": "❌ This history view has expired. Send /history again.",
+            "tr": "❌ Bu geçmiş görünümünün süresi doldu. /history komutunu tekrar gönderin.",
+            "de": "❌ Diese Verlaufsansicht ist abgelaufen. Senden Sie /history erneut.",
+        }[language],
+        "saved_url_invalid": {
+            "ar": "❌ تعذر التحقق من الرابط المحفوظ.",
+            "en": "❌ Unable to validate the saved link.",
+            "tr": "❌ Kayıtlı bağlantı doğrulanamadı.",
+            "de": "❌ Der gespeicherte Link konnte nicht validiert werden.",
+        }[language],
+        "reload": {
+            "ar": "🔁 <b>إعادة تحميل</b>",
+            "en": "🔁 <b>Reload</b>",
+            "tr": "🔁 <b>Yeniden indir</b>",
+            "de": "🔁 <b>Erneut herunterladen</b>",
+        }[language],
+        "other": {"ar": "أخرى", "en": "Other", "tr": "Diğer", "de": "Andere"}[language],
     }
 
 
@@ -171,10 +191,10 @@ async def _show_hub(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_modu
             await query.answer()
         return
     await query.answer()
-    if bot_module.is_banned(user.id):
-        await query.message.reply_text(bot_module.TEXTS["ar"]["banned"])
-        return
     language = _language(bot_module, user.id)
+    if bot_module.is_banned(user.id):
+        await query.message.reply_text(bot_module.TEXTS[language]["banned"])
+        return
     await query.edit_message_text(_messages(language)["hub"], parse_mode="HTML", reply_markup=_hub_keyboard(language))
 
 
@@ -204,6 +224,7 @@ async def _history(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_modul
     if not user or bot_module.is_banned(user.id):
         return
     language = _language(bot_module, user.id)
+    messages = _messages(language)
     conn = bot_module.get_db()
     try:
         rows = conn.execute("SELECT id, url, website, media_type, quality, created_at FROM downloads WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user.id,)).fetchall()
@@ -212,13 +233,13 @@ async def _history(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_modul
     if not rows:
         target = getattr(update, "message", None)
         if target:
-            await target.reply_text(_messages(language)["history_empty"], parse_mode="HTML")
+            await target.reply_text(messages["history_empty"], parse_mode="HTML")
         return
     context.user_data["user_history"] = [dict(row) for row in rows]
-    text = _messages(language)["history_title"]
+    text = messages["history_title"]
     keyboard = []
     for index, row in enumerate(rows):
-        website = str(row["website"] or "Other")[:22]
+        website = str(row["website"] or messages["other"])[:22]
         media = "🎵" if str(row["media_type"]).lower() == "audio" else "🎥"
         quality = str(row["quality"] or "")[:18]
         label = f"{index + 1}️⃣ {media} {website} {quality}".strip()
@@ -235,23 +256,24 @@ async def _history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await query.answer()
     if not user or bot_module.is_banned(user.id):
         return
+    language = _language(bot_module, user.id)
+    messages = _messages(language)
     match = HISTORY_RE.match(query.data or "")
     if not match:
         return
     rows = context.user_data.get("user_history") or []
     index = int(match.group(1))
     if index < 0 or index >= len(rows):
-        await query.edit_message_text("❌ انتهت صلاحية السجل. أرسل /history من جديد.")
+        await query.edit_message_text(messages["history_expired"])
         return
     selected = rows[index]
     try:
         bot_module.validate_public_http_url(selected["url"])
     except Exception:
-        await query.edit_message_text("❌ تعذر التحقق من الرابط المحفوظ.")
+        await query.edit_message_text(messages["saved_url_invalid"])
         return
     context.user_data["video_url"] = selected["url"]
-    language = _language(bot_module, user.id)
-    await query.edit_message_text(f"🔁 <b>إعادة تحميل</b>\n\n{selected['website']} • {selected['quality']}", parse_mode="HTML", reply_markup=_type_keyboard(language))
+    await query.edit_message_text(f"{messages['reload']}\n\n{selected['website']} • {selected['quality']}", parse_mode="HTML", reply_markup=_type_keyboard(language))
 
 
 async def _batch_message(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
