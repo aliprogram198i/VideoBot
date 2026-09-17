@@ -212,9 +212,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         conn = _db(bot_module)
         try:
             conn.execute(
-                """INSERT OR IGNORE INTO user_favorites(user_id,url,website,media_type,quality,title,created_at)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (user.id, url, info.get("source"), None, None, info.get("title"), _now()),
+                """INSERT INTO user_favorites(user_id,url,website,media_type,quality,title,created_at)
+                   SELECT ?,?,?,?,?,?,?
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM user_favorites WHERE user_id = ? AND url = ?
+                   )""",
+                (user.id, url, info.get("source"), None, None, info.get("title"), _now(), user.id, url),
             )
             conn.commit()
         finally:
