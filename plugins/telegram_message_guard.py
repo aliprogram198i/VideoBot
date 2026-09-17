@@ -1,8 +1,10 @@
 """Safe Telegram message-edit guard.
 
-Protect user/admin flows from stale or deleted Telegram messages. Only the
-specific ``Message to edit not found`` BadRequest is converted to a safe
-fallback; all other Telegram errors keep their original behavior.
+Protect user/admin flows from stale or deleted Telegram messages. A stale
+callback edit is treated as an obsolete UI action and is ignored; it must not
+create a new message because that can place an old menu after a successfully
+delivered media file. Message.edit_text keeps the existing safe reply fallback
+for non-callback flows.
 """
 
 from __future__ import annotations
@@ -43,8 +45,12 @@ def _wrap_callback_edit(original):
         except BadRequest as exc:
             if not _is_stale_message_error(exc):
                 raise
-            text = args[0] if args else kwargs.get("text")
-            return await _fallback_reply(getattr(self, "message", None), text, kwargs)
+            # The callback points at an obsolete Telegram message. Do not
+            # reply with the requested UI text: doing so resurrects stale menus
+            # after a successful media delivery and can produce out-of-order
+            # prompts such as the audio-quality menu appearing below a file.
+            logger.info("Ignored stale Telegram callback-message edit")
+            return None
     return safe_edit
 
 
