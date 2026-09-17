@@ -32,7 +32,7 @@ def _edit_failure_kind(exc: BadRequest) -> str | None:
     return None
 
 
-def _fallback_reply(message, text, kwargs):
+async def _fallback_reply(message, text, kwargs):
     if message is None or text is None:
         logger.warning("Telegram stale-message edit has no fallback target")
         return None
