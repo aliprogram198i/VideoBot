@@ -241,7 +241,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             raise ApplicationHandlerStop
         return
 
-    await query.answer()
+    if data != "sdc_thumbnail":
+        await query.answer()
 
     if data == "sdc_cancel":
         context.user_data.pop("video_url", None)
