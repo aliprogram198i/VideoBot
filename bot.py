@@ -4656,15 +4656,55 @@ async def download_media(
                         "ℹ️ Skipping generic direct-media fallback for YouTube"
                     )
                 else:
-                    fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
-                        url=url,
-                        temp_dir=temp_dir,
-                        output_template=output_template,
-                        format_option=format_option,
-                        is_audio=is_audio,
-                        attempt_id=attempt_id,
-                        attempt_number=attempt_number,
+                    # Instagram may explicitly reject the post before any
+                    # public media can be discovered. In that case the generic
+                    # page/iframe resolver cannot add useful information and
+                    # can spend tens of seconds probing login-gated pages.
+                    # Keep the resolver available for other Instagram errors
+                    # and all other platforms.
+                    instagram_access_blocked = (
+                        "instagram.com" in hostname
+                        and any(
+                            marker in (
+                                stderr_text[-4000:]
+                                or stdout_text[-4000:]
+                            ).lower()
+                            for marker in (
+                                "this content isn't available to everyone",
+                                "requested content is not available",
+                                "login required",
+                                "rate-limit reached",
+                            )
+                        )
                     )
+
+                    if instagram_access_blocked:
+                        fallback_file = None
+                        fallback_diagnostics = {
+                            "candidate_count": 0,
+                            "skipped": "instagram_access_restricted",
+                            "extraction_error": {
+                                "exception_type": "InstagramAccessRestricted",
+                                "error_message": (
+                                    "Instagram rejected primary extraction; "
+                                    "generic direct-media probing was skipped."
+                                ),
+                            },
+                        }
+                        print(
+                            "ℹ️ Skipping generic direct-media fallback for "
+                            "Instagram access-restricted content"
+                        )
+                    else:
+                        fallback_file, _, _, fallback_diagnostics = await download_with_fallback(
+                            url=url,
+                            temp_dir=temp_dir,
+                            output_template=output_template,
+                            format_option=format_option,
+                            is_audio=is_audio,
+                            attempt_id=attempt_id,
+                            attempt_number=attempt_number,
+                        )
 
                 if fallback_file:
                     media_file = fallback_file
