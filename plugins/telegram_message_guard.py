@@ -20,11 +20,19 @@ logger = logging.getLogger(__name__)
 _INSTALLED = False
 
 
-def _is_stale_message_error(exc: BadRequest) -> bool:
-    return "Message to edit not found" in str(exc)
+def _edit_failure_kind(exc: BadRequest) -> str | None:
+    """Classify Telegram edit failures that must never resurrect old UI."""
+    message = str(exc).strip().lower()
+    if "message to edit not found" in message or "message to edit is not found" in message:
+        return "not_found"
+    if "message is not modified" in message:
+        return "not_modified"
+    if "message can't be edited" in message or "message cannot be edited" in message:
+        return "not_editable"
+    return None
 
 
-async def _fallback_reply(message, text, kwargs):
+def _fallback_reply(message, text, kwargs):
     if message is None or text is None:
         logger.warning("Telegram stale-message edit has no fallback target")
         return None
@@ -43,13 +51,17 @@ def _wrap_callback_edit(original):
         try:
             return await original(self, *args, **kwargs)
         except BadRequest as exc:
-            if not _is_stale_message_error(exc):
+            kind = _edit_failure_kind(exc)
+            if kind is None:
                 raise
-            # The callback points at an obsolete Telegram message. Do not
-            # reply with the requested UI text: doing so resurrects stale menus
-            # after a successful media delivery and can produce out-of-order
-            # prompts such as the audio-quality menu appearing below a file.
-            logger.info("Ignored stale Telegram callback-message edit")
+            # A callback edit failure means the callback UI is stale, already
+            # applied, or no longer editable. Never reply with the requested
+            # menu text: doing so can resurrect an old audio/video menu after
+            # the media file has already been delivered.
+            logger.info(
+                "Ignored Telegram callback-message edit failure: %s",
+                kind,
+            )
             return None
     return safe_edit
 
@@ -60,8 +72,15 @@ def _wrap_message_edit(original):
         try:
             return await original(self, *args, **kwargs)
         except BadRequest as exc:
-            if not _is_stale_message_error(exc):
+            kind = _edit_failure_kind(exc)
+            if kind is None:
                 raise
+            if kind in {"not_modified", "not_editable"}:
+                logger.info(
+                    "Ignored Telegram message edit failure: %s",
+                    kind,
+                )
+                return None
             text = args[0] if args else kwargs.get("text")
             return await _fallback_reply(self, text, kwargs)
     return safe_edit
