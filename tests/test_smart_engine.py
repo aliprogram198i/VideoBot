@@ -1,10 +1,11 @@
 import unittest
 
 from downloader.candidate_ranker import CandidateRanker
-from downloader.candidate_validator import CandidateValidator
+from downloader.candidate_validator import CandidateValidator, ValidationResult
 from downloader.embed_resolver import EmbedResolver
 from downloader.page_fetcher import FetchedPage, PageFetcher
 from downloader.smart_engine import ExtractionResult, SmartExtractionEngine
+from downloader.smart_extractor import MediaCandidate
 
 
 class SmartEngineTests(unittest.TestCase):
@@ -221,6 +222,75 @@ class SmartEngineTests(unittest.TestCase):
         )
         self.assertTrue(
             result.diagnostics[0].startswith("resolution_failed:")
+        )
+
+    def test_source_identity_gate_rejects_generic_telegram_candidate(self):
+        source = "https://t.me/example/8453"
+        wrong_page = "https://t.me/example/8454"
+        candidate = MediaCandidate(
+            url="https://cdn.example/wrong.mp4",
+            kind="progressive",
+            source_page=wrong_page,
+            discovered_by="generic_browser",
+            metadata={"telegram_data_post": "example/8454"},
+        )
+        validation = ValidationResult(
+            candidate=candidate,
+            valid=True,
+            reason="validated",
+            status=200,
+            content_type="video/mp4",
+        )
+        diagnostics = []
+
+        filtered = SmartExtractionEngine._apply_source_identity_gate(
+            source,
+            [validation],
+            diagnostics,
+        )
+
+        self.assertEqual(filtered, [])
+        self.assertIn(
+            "source_identity_rejected:telegram:generic_browser",
+            diagnostics,
+        )
+        self.assertIn(
+            "source_identity_gate:telegram:rejected=1",
+            diagnostics,
+        )
+
+    def test_source_identity_gate_rejects_neighboring_instagram_candidate(self):
+        source = "https://www.instagram.com/reel/Dcqf3AXNgfL/"
+        wrong_page = "https://www.instagram.com/reel/OTHER123/"
+        candidate = MediaCandidate(
+            url="https://cdn.example/other.mp4",
+            kind="progressive",
+            source_page=wrong_page,
+            discovered_by="generic_browser",
+        )
+        validation = ValidationResult(
+            candidate=candidate,
+            valid=True,
+            reason="validated",
+            status=200,
+            content_type="video/mp4",
+        )
+        diagnostics = []
+
+        filtered = SmartExtractionEngine._apply_source_identity_gate(
+            source,
+            [validation],
+            diagnostics,
+        )
+
+        self.assertEqual(filtered, [])
+        self.assertIn(
+            "source_identity_rejected:instagram:generic_browser",
+            diagnostics,
+        )
+        self.assertIn(
+            "source_identity_gate:instagram:rejected=1",
+            diagnostics,
         )
 
     def test_summary_contains_operational_fields(self):
