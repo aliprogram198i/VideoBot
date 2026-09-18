@@ -5287,6 +5287,76 @@ async def download_media(
             return
 
         # ----------------------------------------------------
+        # Universal local-artifact acceptance gate.
+        # Every resolver path must pass here before Telegram delivery.
+        # ----------------------------------------------------
+        artifact_diagnostics = {}
+        for _diag in (
+            smart_diagnostics,
+            relay_diagnostics,
+            graphql_diagnostics,
+            cobalt_diagnostics,
+            fallback_diagnostics,
+            yoinku_diagnostics,
+        ):
+            if isinstance(_diag, dict):
+                artifact_diagnostics.update(_diag)
+
+        for _nested_key in (
+            "instagram_relay_html",
+            "instagram_graphql",
+            "cobalt",
+        ):
+            _nested = artifact_diagnostics.get(_nested_key)
+            if isinstance(_nested, dict):
+                artifact_diagnostics.update(_nested)
+
+        artifact_resolver = artifact_diagnostics.get("resolver") or "download_pipeline"
+
+        admitted_file, artifact_admission = admit_media_artifact(
+            url,
+            media_file,
+            temp_dir=temp_dir,
+            resolver=artifact_resolver,
+            diagnostics=artifact_diagnostics,
+            media_type="audio" if is_audio else "video",
+        )
+        if not admitted_file:
+            print(
+                "🛡️ Universal Media Artifact Gate: rejected "
+                f"({artifact_admission.get('reason')})"
+            )
+            await query.edit_message_text(
+                TEXTS[language]["file_error"]
+            )
+            return
+
+        media_file = admitted_file
+        print(
+            "✅ Universal Media Artifact Gate: admitted + media validated "
+            f"(resolver={artifact_admission.get('resolver')})"
+        )
+
+        # Mandatory Telegram Delivery Policy before any send/split.
+        from delivery.policy import DeliveryPolicy
+
+        delivery_policy = DeliveryPolicy()
+        try:
+            delivery_policy.validate_file(
+                media_file,
+                media_type="audio" if is_audio else "video",
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(
+                "🛡️ Delivery Policy: rejected final artifact "
+                f"({type(exc).__name__})"
+            )
+            await query.edit_message_text(
+                TEXTS[language]["file_error"]
+            )
+            return
+
+        # ----------------------------------------------------
         # ----------------------------------------------------
         # ----------------------------------------------------
         # إرسال الصوت مع تقسيم الملفات الكبيرة
