@@ -10,24 +10,15 @@ jobs:
       - run: |
           python - <<'PY'
           import requests,re
-          code='Dcqf3AXNgfL'
-          urls=[
-          f'https://www.instagram.com/reel/{code}/embed/',
-          f'https://www.instagram.com/reel/{code}/embed/captioned/',
-          f'https://www.instagram.com/p/{code}/embed/',
-          f'https://www.instagram.com/reel/{code}/?__a=1&__d=dis',
-          f'https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222a8b47dc12b090e4e64&variables=%7B%22shortcode%22%3A%22{code}%22%7D']
+          from html import unescape
+          code='Dcqf3AXNgfL'; u=f'https://www.instagram.com/reel/{code}/embed/'
           h={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36','Accept':'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8','Accept-Language':'en-US,en;q=0.9'}
-          ok=0
-          for u in urls:
-            try:
-              r=requests.get(u,headers=h,timeout=20,allow_redirects=True); t=r.text
-              print('ENDPOINT',u,'STATUS',r.status_code,'FINAL',r.url,'CT',r.headers.get('content-type'),'LEN',len(t))
-              print('MARKERS',{'video_versions':'video_versions' in t,'relay':'ScheduledServerJS' in t,'media_id':'media_id' in t,'login':'/accounts/login/' in r.url})
-              for pat in [r'https?[^"\\s]+(?:\\.mp4|scontent[^"\\s]*)',r'"video_url"\\s*:\\s*"([^"]+)"']:
-                m=re.search(pat,t,re.I)
-                if m: print('MEDIA_HINT',m.group(0)[:1500]); ok+=1
-            except Exception as e: print('ERROR',type(e).__name__,str(e))
-          print('OK',ok)
-          if not ok: raise SystemExit(2)
+          r=requests.get(u,headers=h,timeout=30); t=r.text
+          print('STATUS',r.status_code,'LEN',len(t),'FINAL',r.url)
+          for term in ['Dcqf3AXNgfL','video_versions','video_dash_manifest','video_url','playback_url','is_video','media_type','xdt_api__v1__media__shortcode__web_info','xdt_api__v1__clips__home__connection_v2','ScheduledServerJS']:
+            print('TERM',term,'COUNT',t.count(term))
+          for term in ['Dcqf3AXNgfL','xdt_api__v1__media__shortcode__web_info','xdt_api__v1__clips__home__connection_v2']:
+            p=t.find(term)
+            print('SNIP',term,'POS',p)
+            if p>=0: print(unescape(t[max(0,p-1800):p+6000])[:7800])
           PY
