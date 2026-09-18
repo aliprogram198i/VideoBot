@@ -103,18 +103,6 @@ def _extract_video_urls_from_script(
         return None
 
     for start in _candidate_item_starts(text, shortcode):
-        video_versions = _json_value_after(text, '"video_versions"', start)
-        if isinstance(video_versions, list):
-            urls = [
-                value.get("url")
-                for value in video_versions
-                if isinstance(value, dict)
-                and isinstance(value.get("url"), str)
-                and value["url"].startswith(("https://", "http://"))
-            ]
-            if urls:
-                return urls, {"selection": "video_versions"}
-
         carousel = _json_value_after(text, '"carousel_media"', start)
         if isinstance(carousel, list):
             candidates: list[str] = []
@@ -137,6 +125,22 @@ def _extract_video_urls_from_script(
                 return candidates, {"selection": "single_carousel_video"}
             if len(candidates) > 1:
                 return None
+            # A carousel with no video is not allowed to fall through to an
+            # unrelated video_versions field elsewhere in the parent object.
+            if carousel:
+                continue
+
+        video_versions = _json_value_after(text, '"video_versions"', start)
+        if isinstance(video_versions, list):
+            urls = [
+                value.get("url")
+                for value in video_versions
+                if isinstance(value, dict)
+                and isinstance(value.get("url"), str)
+                and value["url"].startswith(("https://", "http://"))
+            ]
+            if urls:
+                return urls, {"selection": "video_versions"}
     return None
 
 
