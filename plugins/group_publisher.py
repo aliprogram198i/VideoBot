@@ -315,7 +315,7 @@ def register_group_publisher(app: Any, get_db, admin_id: int | None = None) -> N
     app.add_handler(CallbackQueryHandler(lambda u, c: group_publisher_callback(u, c, get_db),
                                           pattern=rf"^({CALLBACK}|{CONSENT_PREFIX}(yes|no)|{PUBLISH_PREFIX}-?\d+|{REMOVE_PREFIX}-?\d+)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-                                   lambda u, c: process_group_publisher_message(u, c, get_db), group=-1))
+                                   lambda u, c: process_group_publisher_message(u, c, get_db)), group=-1)
     if admin_id is not None:
         app.add_handler(CallbackQueryHandler(lambda u, c: admin_group_publisher_callback(u, c, get_db, admin_id),
                                               pattern=rf"^(?:{ADMIN_CALLBACK}|admin_group_toggle_-?\\d+|admin_group_remove_-?\\d+|admin_group_logs)$"))
