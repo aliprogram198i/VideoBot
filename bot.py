@@ -5215,6 +5215,8 @@ async def download_media(
                     print()
 
                     if instagram_source is not None:
+                        from downloader.instagram_failure import instagram_failure_message
+
                         cobalt_code = (
                             cobalt_diagnostics.get("error_code")
                             if isinstance(cobalt_diagnostics, dict)
