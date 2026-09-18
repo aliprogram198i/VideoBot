@@ -13,6 +13,7 @@ from typing import Any
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, CommandHandler
 
+from .admin_command_center import command_center_callback, more_callback, command_center_keyboard
 from .admin_control_center import (
     _home_text,
     admin_keyboard,
@@ -51,7 +52,7 @@ async def _admin_entry(update, context, admin_id: int) -> None:
     message = update.effective_message
     if not user or not message or user.id != admin_id:
         return
-    await message.reply_text(_home_text(), parse_mode="HTML", reply_markup=admin_keyboard())
+    await message.reply_text(_home_text(), parse_mode="HTML", reply_markup=command_center_keyboard())
     raise ApplicationHandlerStop
 
 
@@ -131,11 +132,8 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_download_log_enrichment(bot_module)
 
     # Canonical dashboard/navigation: one owner per top-level callback.
-    _register_core_callback(app, admin_control_center_callback, r"^admin_home$", get_db, admin_id)
-    # Compatibility alias: existing admin submodules historically used
-    # admin_control_center for their return buttons. Keep one canonical owner
-    # for that callback while routing it to the current admin home UI.
-    _register_core_callback(app, admin_control_center_callback, r"^admin_control_center$", get_db, admin_id)
+    _register_core_callback(app, command_center_callback, r"^admin_home$|^admin_control_center$", get_db, admin_id)
+    _register_core_callback(app, more_callback, r"^admin_more$", get_db, admin_id)
     _register_core_callback(app, admin_records_callback, r"^admin_records$", get_db, admin_id)
     _register_core_callback(app, admin_health_callback, r"^admin_health$", get_db, admin_id)
     _register_core_callback(app, admin_audit_callback, r"^admin_audit$", get_db, admin_id)
