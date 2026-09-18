@@ -59,4 +59,4 @@ def test_transient_cleanup_removes_old_entries(monkeypatch, tmp_path):
 def test_gemini_isolated_from_bot_initialization():
     bot_source = Path(__file__).resolve().parents[1].joinpath("bot.py").read_text(encoding="utf-8")
     assert "from google import genai" not in bot_source
-    assert "gemini_service import generate" in bot_source
+    assert "from plugins import gemini_service" in bot_source
