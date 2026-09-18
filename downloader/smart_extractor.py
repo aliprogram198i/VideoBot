@@ -367,6 +367,27 @@ def extract_telegram_post_candidates(
         if candidates:
             return candidates
 
+        # Telegram's native embed extractor accepts the <video src> URL
+        # directly and treats it as MP4 even when the CDN URL has no .mp4
+        # suffix. Our generic parser intentionally requires a recognizable
+        # media extension, so handle this exact-message case explicitly.
+        video_src = re.search(
+            r'<video\\b[^>]*\\bsrc=["\\']([^"\\']+)["\\']',
+            block,
+            flags=re.IGNORECASE,
+        )
+        if video_src:
+            normalized = _normalize_candidate_url(video_src.group(1), page_url)
+            if normalized:
+                return [MediaCandidate(
+                    url=normalized,
+                    kind="progressive",
+                    source_page=page_url,
+                    discovered_by="video",
+                    depth=depth,
+                    score=_score("progressive", "video"),
+                )]
+
     # Telegram embed pages may omit the outer wrapper but expose the exact
     # post identity on the video-player anchor href. Select only the player
     # whose href points to the requested channel/message.
@@ -412,6 +433,23 @@ def extract_telegram_post_candidates(
         )
         if candidates:
             return candidates
+
+        video_src = re.search(
+            r'<video\\b[^>]*\\bsrc=["\\']([^"\\']+)["\\']',
+            block,
+            flags=re.IGNORECASE,
+        )
+        if video_src:
+            normalized = _normalize_candidate_url(video_src.group(1), page_url)
+            if normalized:
+                return [MediaCandidate(
+                    url=normalized,
+                    kind="progressive",
+                    source_page=page_url,
+                    discovered_by="video",
+                    depth=depth,
+                    score=_score("progressive", "video"),
+                )]
 
     return []
 
