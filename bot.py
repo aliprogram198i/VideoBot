@@ -40,7 +40,6 @@ from downloader.instagram_identity import (
     parse_instagram_post_url,
 )
 
-from downloader.instagram_failure import instagram_failure_message
 try:
     from google import genai
 except ImportError:
