@@ -7628,7 +7628,7 @@ async def admin_home_callback(
 
         "اختر القسم الذي تريد إدارته:",
 
-        reply_markup=admin_keyboard()
+        reply_markup=_admin_home_keyboard_with_operations()
     )
 
 
