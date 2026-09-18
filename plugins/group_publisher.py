@@ -118,10 +118,22 @@ def _record_publish(get_db,chat_id,actor_user_id,actor_type,message,status,error
     conn=get_db()
     try:
         now=datetime.now().isoformat()
-        conn.execute("INSERT INTO group_publish_logs(chat_id,actor_user_id,actor_type,status,message_preview,created_at,error_type) VALUES(?,?,?,?,?,?,?)",(chat_id,actor_user_id,actor_type,status,message[:160],now,error_type))
-            if status=="success": conn.execute("UPDATE bot_groups SET last_publish_at=?,publish_count=publish_count+1,status='active',updated_at=? WHERE chat_id=?",(now,now,chat_id))
-        elif status=="failed":
-            conn.execute("UPDATE bot_groups SET status='publish_error',updated_at=? WHERE chat_id=?", (now, chat_id))
+        conn.execute(
+            "INSERT INTO group_publish_logs(chat_id,actor_user_id,actor_type,status,message_preview,created_at,error_type) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (chat_id,actor_user_id,actor_type,status,message[:160],now,error_type),
+        )
+        if status == "success":
+            conn.execute(
+                "UPDATE bot_groups SET last_publish_at=?,publish_count=publish_count+1,status='active',updated_at=? "
+                "WHERE chat_id=?",
+                (now,now,chat_id),
+            )
+        elif status == "failed":
+            conn.execute(
+                "UPDATE bot_groups SET status='publish_error',updated_at=? WHERE chat_id=?",
+                (now, chat_id),
+            )
         conn.commit()
     finally: conn.close()
 
@@ -221,6 +233,15 @@ async def group_publisher_callback(update: Update, context, get_db):
                 await query.edit_message_text("⚠️ لم تعد تملك صلاحية إرسال الرسائل في هذه المجموعة حاليًا. تم الاحتفاظ بالربط ويمكنك المحاولة مجددًا بعد عودة الصلاحية.")
                 return
             if not await _bot_can_publish(context, chat_id):
+                conn = get_db()
+                try:
+                    conn.execute(
+                        "UPDATE bot_groups SET status='bot_permission_error',updated_at=? WHERE chat_id=?",
+                        (datetime.now().isoformat(), chat_id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
                 await query.edit_message_text("❌ لا يستطيع AliBot إرسال الرسائل إلى هذه المجموعة حاليًا.")
                 return
             context.user_data[WAITING_KEY] = True
@@ -317,20 +338,79 @@ async def handle_my_chat_member(update, context, get_db):
     chat = update.effective_chat
     if chat.type not in {"group", "supergroup"}:
         return
+
     new_status = change.new_chat_member.status
     old_status = change.old_chat_member.status
-    if new_status in {"member", "administrator"} and old_status in {"left", "kicked"}:
+
+    # Telegram sends MY_CHAT_MEMBER whenever the bot's own membership changes.
+    # Keep the linkage instead of deleting it when permissions temporarily change.
+    if new_status in {"left", "kicked"}:
+        conn = get_db()
         try:
-            if not await _user_can_publish(context, chat.id, change.from_user.id):
-                logger.info("Group add ignored: inviter cannot send messages")
-                return
-            if not await _bot_can_publish(context, chat.id):
-                logger.info("Group add ignored: bot cannot publish")
-                return
-            _upsert_group(get_db, chat.id, chat.title or "مجموعة", change.from_user)
-            await context.bot.send_message(chat_id=chat.id, text="✅ تم ربط AliBot بهذه المجموعة.\nاستخدم /groups في الخاص لإدارة النشر.")
+            conn.execute(
+                "UPDATE bot_groups SET status=?,enabled=0,updated_at=? WHERE chat_id=?",
+                ("bot_left" if new_status == "left" else "bot_kicked", datetime.now().isoformat(), chat.id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return
+
+    if new_status == "restricted":
+        can_send = bool(getattr(change.new_chat_member, "can_send_messages", False))
+        conn = get_db()
+        try:
+            conn.execute(
+                "UPDATE bot_groups SET status=?,updated_at=? WHERE chat_id=?",
+                ("active" if can_send else "bot_permission_error", datetime.now().isoformat(), chat.id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return
+
+    if new_status in {"member", "administrator"}:
+        try:
+            bot_can_send = await _bot_can_publish(context, chat.id)
+            if old_status in {"left", "kicked"}:
+                if not await _user_can_publish(context, chat.id, change.from_user.id):
+                    logger.info("Group add ignored: inviter cannot send messages")
+                    return
+                _upsert_group(get_db, chat.id, chat.title or "مجموعة", change.from_user)
+                # Respect a previous manual disablement on re-add.
+                row = _get_group(get_db, chat.id)
+                if row and int(row["enabled"]) and bot_can_send:
+                    status = "active"
+                elif row and not int(row["enabled"]):
+                    status = "disabled"
+                else:
+                    status = "bot_permission_error"
+                conn = get_db()
+                try:
+                    conn.execute(
+                        "UPDATE bot_groups SET status=?,updated_at=? WHERE chat_id=?",
+                        (status, datetime.now().isoformat(), chat.id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                if bot_can_send:
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        text="✅ تم ربط AliBot بهذه المجموعة.\nاستخدم /groups في الخاص لإدارة النشر.",
+                    )
+            else:
+                conn = get_db()
+                try:
+                    conn.execute(
+                        "UPDATE bot_groups SET status=?,updated_at=? WHERE chat_id=?",
+                        ("active" if bot_can_send else "bot_permission_error", datetime.now().isoformat(), chat.id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
         except Exception as exc:
-            logger.warning("Group registration failed: %s", type(exc).__name__)
+            logger.warning("Group membership update failed: %s", type(exc).__name__)
 
 
 async def admin_group_publisher_callback(update: Update, context, get_db, admin_id: int):
@@ -398,38 +478,88 @@ async def admin_group_publisher_callback(update: Update, context, get_db, admin_
 
     if data == "admin_group_send_confirm":
         message = context.user_data.get(ADMIN_MESSAGE_KEY)
-        selected = [int(x) for x in context.user_data.get(ADMIN_SELECTED_KEY, set())]
+        selected = sorted({int(x) for x in context.user_data.get(ADMIN_SELECTED_KEY, set())})
         if not message or not selected:
-            await q.edit_message_text("❌ انتهت عملية النشر أو لم يتم تحديد مجموعات.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]))
+            await q.edit_message_text(
+                "❌ انتهت عملية النشر أو لم يتم تحديد مجموعات.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]
+                ),
+            )
             return
+
+        # Consume the confirmation state before any network I/O. A repeated
+        # Telegram callback cannot send the same broadcast twice.
         context.user_data.pop("admin_group_waiting_message", None)
+        context.user_data.pop(ADMIN_SELECTED_KEY, None)
+        context.user_data.pop(ADMIN_MESSAGE_KEY, None)
+
         results = []
-        for cid in selected:
+        for cid in selected[:50]:
             try:
                 row = _get_group(get_db, cid)
                 if not row:
                     results.append("❌ " + str(cid) + ": غير مرتبطة")
                     continue
+                if not int(row["enabled"]):
+                    results.append("⏸️ " + html.escape(str(row["title"] or cid)) + ": معطلة")
+                    continue
+                if not await _bot_can_publish(context, cid):
+                    conn = get_db()
+                    try:
+                        conn.execute(
+                            "UPDATE bot_groups SET status='bot_permission_error',updated_at=? WHERE chat_id=?",
+                            (datetime.now().isoformat(), cid),
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    _record_publish(
+                        get_db, cid, admin_id, "admin", message, "failed", "BotPermissionError"
+                    )
+                    results.append("❌ " + html.escape(str(row["title"] or cid)) + ": صلاحية AliBot غير متاحة")
+                    continue
+
                 await context.bot.send_message(chat_id=cid, text=message[:4000])
                 _record_publish(get_db, cid, admin_id, "admin", message, "success")
                 results.append("✅ " + html.escape(str(row["title"] or cid)))
             except Exception as exc:
-                _record_publish(get_db, cid, admin_id, "admin", message, "failed", type(exc).__name__)
+                _record_publish(
+                    get_db, cid, admin_id, "admin", message, "failed", type(exc).__name__
+                )
                 results.append("❌ " + str(cid) + ": " + type(exc).__name__)
-        context.user_data.pop(ADMIN_SELECTED_KEY, None)
-        context.user_data.pop(ADMIN_MESSAGE_KEY, None)
-        await q.edit_message_text("📢 <b>نتيجة النشر</b>\n\n" + "\n".join(results[:50]), parse_mode="HTML",
-                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]))
+
+        await q.edit_message_text(
+            "📢 <b>نتيجة النشر</b>\n\n" + "\n".join(results[:50]),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]
+            ),
+        )
         return
 
     if data.startswith("admin_group_remove_"):
         cid=int(data[len("admin_group_remove_"):]); _delete_group(get_db,cid)
         await q.edit_message_text("✅ تمت إزالة المجموعة.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات",callback_data=ADMIN_CALLBACK)]])); return
     rows=_list_groups(get_db)
-    lines=[f"👥 <b>إدارة المجموعات — {len(rows)}</b>","━━━━━━━━━━━━━━━━━━"]
+    active_count=sum(1 for r in rows if int(r["enabled"]) and r["status"]=="active")
+    disabled_count=sum(1 for r in rows if not int(r["enabled"]))
+    issue_count=len(rows)-active_count-disabled_count
+    lines=[
+        f"👥 <b>إدارة المجموعات — {len(rows)}</b>",
+        "━━━━━━━━━━━━━━━━━━",
+        f"🟢 نشطة: {active_count}   ⏸️ معطلة: {disabled_count}   ⚠️ تحتاج فحص: {issue_count}",
+        "",
+    ]
     for r in rows[:30]:
-        state="🟢" if int(r["enabled"]) and r["status"]=="active" else "🔴"
-        lines.append(f"{state} <b>{html.escape(str(r['title'] or 'مجموعة'))}</b> | 👤 {html.escape(str(r['owner_username'] or r['owner_user_id']))} | 📢 {r['publish_count']} | 🕒 {str(r['last_publish_at'] or 'لم ينشر بعد')[:19]}")
+        status=str(r["status"] or "active")
+        state="🟢" if int(r["enabled"]) and status=="active" else ("⏸️" if not int(r["enabled"]) else "⚠️")
+        lines.append(
+            f"{state} <b>{html.escape(str(r['title'] or 'مجموعة'))}</b> | "
+            f"👤 {html.escape(str(r['owner_username'] or r['owner_user_id']))} | "
+            f"📢 {r['publish_count']} | 🕒 {str(r['last_publish_at'] or 'لم ينشر بعد')[:19]} | "
+            f"<code>{html.escape(status)}</code>"
+        )
     buttons=[[InlineKeyboardButton("🔄 تحديث",callback_data=ADMIN_CALLBACK)]]
     for r in rows[:20]:
         cid=int(r["chat_id"])
