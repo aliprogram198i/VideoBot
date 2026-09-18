@@ -34,7 +34,7 @@ jobs:
           from pathlib import Path
           forbidden = ("rm -rf /app/data", "rmtree('/app/data')", 'rmtree("/app/data")', "unlink('/app/data')", 'unlink("/app/data")')
           for path in Path(".").rglob("*"):
-              if ".git" in path.parts or not path.is_file():
+              if ".git" in path.parts or ".github" in path.parts or not path.is_file():
                   continue
               text = path.read_text(encoding="utf-8", errors="ignore")
               for marker in forbidden:
