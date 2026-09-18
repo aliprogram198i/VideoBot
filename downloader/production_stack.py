@@ -84,6 +84,7 @@ def build_production_smart_extraction_stack(
         raise ValueError("max_declared_bytes must be greater than zero")
 
     headers = dict(page_headers or DEFAULT_PAGE_HEADERS)
+    budget = ResolverBudget.from_environment()
 
     production_fetcher = ProductionPageFetcher(
         request_factory=request_factory,
@@ -123,7 +124,6 @@ def build_production_smart_extraction_stack(
     # Telemetry is persistent and isolated from the extraction path. If its
     # database cannot be initialized, the stack still fails fast here rather
     # than silently pretending that learning data is durable.
-    budget = ResolverBudget.from_environment()
     telemetry_store = get_telemetry_store()
 
     engine = SmartExtractionEngine(
