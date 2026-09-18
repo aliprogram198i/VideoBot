@@ -38,7 +38,8 @@ def test_matching_source_page_is_accepted():
         "https://www.instagram.com/reel/DdYyj56qw54/"
     )
     candidate = SimpleNamespace(
-        source_page="https://www.instagram.com/reel/DdYyj56qw54/?stkn=example"
+        source_page="https://www.instagram.com/reel/DdYyj56qw54/?stkn=example",
+        metadata={"instagram_shortcode": "DdYyj56qw54"},
     )
     assert candidate_matches_instagram_source(candidate, source)
 
