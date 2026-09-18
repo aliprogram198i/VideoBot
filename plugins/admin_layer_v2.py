@@ -33,6 +33,7 @@ from .admin_backup_recovery import register_admin_backup_recovery
 from .admin_security_center import register_admin_security_center
 from .admin_smart_analytics import register_admin_smart_analytics
 from .admin_observability_center import register_admin_observability
+from .admin_monitoring_center import register_admin_monitoring
 from .download_log_enrichment import register_download_log_enrichment
 from .admin_stats import register_admin_stats
 from .admin_broadcast import register_admin_broadcast, process_broadcast
@@ -146,6 +147,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     register_admin_security_center(app, admin_id, get_db)
     register_admin_smart_analytics(app, get_db, admin_id)
     register_admin_observability(app, get_db, admin_id)
+    register_admin_monitoring(app, get_db, admin_id)
     register_admin_user_intelligence(app, get_db, admin_id, bot_module)
 
     # Explicit owner-only phase-3 commands provide safe entry points without

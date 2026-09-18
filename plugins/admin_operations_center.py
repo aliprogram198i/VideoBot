@@ -268,5 +268,3 @@ def register_admin_operations_center(app: Any, get_db, owner_id: int) -> None:
     """Register the isolated operations-center callbacks exactly once."""
     app.add_handler(CallbackQueryHandler(lambda u, c: dashboard_callback(u, c, get_db, owner_id), pattern=r"^admin_ops_dashboard$"), group=-150)
     app.add_handler(CallbackQueryHandler(lambda u, c: downloads_callback(u, c, get_db, owner_id), pattern=r"^admin_ops_downloads$"), group=-150)
-    app.add_handler(CallbackQueryHandler(lambda u, c: platforms_callback(u, c, get_db, owner_id), pattern=r"^admin_ops_platforms$"), group=-150)
-    app.add_handler(CallbackQueryHandler(lambda u, c: incidents_callback(u, c, get_db, owner_id), pattern=r"^admin_ops_incidents$"), group=-150)
