@@ -5305,7 +5305,7 @@ async def download_media(
             print()
             print("===== VIDEO READY =====")
             print(f"Attempt ID: {attempt_id[:12]}")
-            print(f"File: {media_file}
+            print(f"File: {media_file}")
             print(
                 f"Video size: "
                 f"{video_size_mb:.2f} MB"
