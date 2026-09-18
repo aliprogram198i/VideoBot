@@ -224,7 +224,7 @@ def _render(data: dict[str, Any], view: str) -> str:
     return "\n".join(lines)[:_MAX_TEXT]
 
 
-async def observability_callback(update: Update, context, owner_id: int) -> None:
+async def observability_callback(update: Update, context, get_db, owner_id: int) -> None:
     query = update.callback_query
     await query.answer()
     if not _authorized(update, owner_id):
@@ -234,20 +234,10 @@ async def observability_callback(update: Update, context, owner_id: int) -> None
     view = raw.split(":", 1)[1] if ":" in raw else "overview"
     if view not in {"overview", "health", "performance", "failures"}:
         view = "overview"
-    try:
-        from .admin_control_center import audit
-        audit(_get_db_from_context(context), owner_id, f"view_observability_{view}")
-    except Exception:
-        pass
+    from .admin_control_center import audit
+    audit(get_db, owner_id, f"view_observability_{view}")
     await query.edit_message_text(_render(data, view), parse_mode="HTML", reply_markup=_keyboard())
     raise ApplicationHandlerStop
-
-
-def _get_db_from_context(context):
-    getter = getattr(context, "bot_data", {}).get("get_db")
-    if not callable(getter):
-        raise RuntimeError("admin observability database handle unavailable")
-    return getter
 
 
 def register_admin_observability(app, get_db, owner_id: int) -> None:
@@ -255,7 +245,7 @@ def register_admin_observability(app, get_db, owner_id: int) -> None:
     app.bot_data["get_db"] = get_db
     app.add_handler(
         CallbackQueryHandler(
-            lambda u, c: observability_callback(u, c, owner_id),
+            lambda u, c: observability_callback(u, c, get_db, owner_id),
             pattern=rf"^{_CALLBACK}(?::(?:overview|health|performance|failures))?$",
         ),
         group=-160,
