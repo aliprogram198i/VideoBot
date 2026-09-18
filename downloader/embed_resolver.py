@@ -147,7 +147,14 @@ class EmbedResolver:
         """
         host = (urlparse(source_url).hostname or "").lower().rstrip(".")
         if host in {"t.me", "telegram.me", "www.t.me", "www.telegram.me"} or host.endswith(".t.me") or host.endswith(".telegram.me"):
-            return
+            # Generic Telegram post URLs are unsafe for universal yt-dlp: the
+            # extractor can expose media from adjacent posts. The only
+            # exception is Telegram's exact single-post embed mode, which is
+            # constrained by embed=1&single=1 and keeps source identity tied
+            # to the requested message.
+            query = urlparse(source_url).query.lower()
+            if "embed=1" not in query or "single=1" not in query:
+                return
         for variant in public_media_variants(source_url):
             try:
                 extracted = extract_with_yt_dlp(variant)
