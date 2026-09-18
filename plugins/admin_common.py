@@ -26,6 +26,8 @@ PERMISSIONS = {
     "broadcast.send",
     "security.view",
     "database.backup",
+    "monitoring.view",
+    "monitoring.manage",
 }
 
 
