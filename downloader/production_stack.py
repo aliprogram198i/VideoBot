@@ -17,6 +17,7 @@ from .production_network import SmartNetworkAdapter
 from .production_page_fetcher import ProductionPageFetcher
 from .smart_engine import SmartExtractionEngine
 from .smart_learning import get_telemetry_store
+from .resolver_budget import ResolverBudget
 
 
 DEFAULT_MAX_HTML_BYTES = 5 * 1024 * 1024
@@ -97,8 +98,8 @@ def build_production_smart_extraction_stack(
     resolver = EmbedResolver(
         page_fetcher,
         max_depth=max_depth,
-        max_pages=max_pages,
-        max_candidates=max_candidates,
+        max_pages=min(max_pages, budget.max_pages),
+        max_candidates=min(max_candidates, budget.max_candidates),
     )
 
     # Use the same browser-like request headers for candidate probes as for
@@ -122,6 +123,7 @@ def build_production_smart_extraction_stack(
     # Telemetry is persistent and isolated from the extraction path. If its
     # database cannot be initialized, the stack still fails fast here rather
     # than silently pretending that learning data is durable.
+    budget = ResolverBudget.from_environment()
     telemetry_store = get_telemetry_store()
 
     engine = SmartExtractionEngine(
