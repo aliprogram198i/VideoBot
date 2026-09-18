@@ -316,7 +316,18 @@ async def search_pro(query: str) -> list[SearchResult]:
 def _is_admin_workflow(context: ContextTypes.DEFAULT_TYPE, bot_module: Any, user_id: int) -> bool:
     if user_id != bot_module.ADMIN_ID:
         return False
-    return any(context.user_data.get(key) for key in ("waiting_broadcast", "waiting_user_message", "waiting_admin_search"))
+    return any(
+        context.user_data.get(key)
+        for key in (
+            "waiting_broadcast",
+            "waiting_user_message",
+            "waiting_admin_search",
+            # Admin Group Publisher owns the next private text while the
+            # administrator is composing a group broadcast. Smart Search
+            # must not intercept that message.
+            "admin_group_waiting_message",
+        )
+    )
 
 
 async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
