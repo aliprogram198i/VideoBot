@@ -47,3 +47,80 @@ def test_only_owner_can_remove(tmp_path):
     _upsert_group(get_db, -1001, "Test", Owner(11))
     assert not _delete_group(get_db, -1001, 22)
     assert _delete_group(get_db, -1001, 11)
+
+
+def test_publish_record_updates_last_publish_and_count(tmp_path):
+    from plugins.group_publisher import _record_publish
+
+    get_db = make_db(tmp_path)
+    ensure_schema(get_db)
+    _upsert_group(get_db, -1001, "Test", Owner(11))
+    _record_publish(get_db, -1001, 11, "owner", "hello", "success")
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT status,last_publish_at,publish_count FROM bot_groups WHERE chat_id=?",
+        (-1001,),
+    ).fetchone()
+    log = conn.execute(
+        "SELECT actor_type,status,message_preview FROM group_publish_logs WHERE chat_id=?",
+        (-1001,),
+    ).fetchone()
+    conn.close()
+
+    assert row["status"] == "active"
+    assert row["last_publish_at"]
+    assert row["publish_count"] == 1
+    assert log["actor_type"] == "owner"
+    assert log["status"] == "success"
+    assert log["message_preview"] == "hello"
+
+
+def test_failed_publish_records_error_and_group_state(tmp_path):
+    from plugins.group_publisher import _record_publish
+
+    get_db = make_db(tmp_path)
+    ensure_schema(get_db)
+    _upsert_group(get_db, -1001, "Test", Owner(11))
+    _record_publish(get_db, -1001, 1486412391, "admin", "hello", "failed", "BotPermissionError")
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT status,publish_count,last_publish_at FROM bot_groups WHERE chat_id=?",
+        (-1001,),
+    ).fetchone()
+    log = conn.execute(
+        "SELECT actor_type,status,error_type FROM group_publish_logs WHERE chat_id=?",
+        (-1001,),
+    ).fetchone()
+    conn.close()
+
+    assert row["status"] == "publish_error"
+    assert row["publish_count"] == 0
+    assert row["last_publish_at"] is None
+    assert log["actor_type"] == "admin"
+    assert log["status"] == "failed"
+    assert log["error_type"] == "BotPermissionError"
+
+
+def test_manual_disable_survives_group_refresh(tmp_path):
+    get_db = make_db(tmp_path)
+    ensure_schema(get_db)
+    _upsert_group(get_db, -1001, "Test", Owner(11))
+
+    conn = get_db()
+    conn.execute("UPDATE bot_groups SET enabled=0,status='disabled' WHERE chat_id=?", (-1001,))
+    conn.commit()
+    conn.close()
+
+    _upsert_group(get_db, -1001, "Renamed", Owner(11))
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT enabled,status FROM bot_groups WHERE chat_id=?",
+        (-1001,),
+    ).fetchone()
+    conn.close()
+
+    assert row["enabled"] == 0
+    assert row["status"] == "disabled"
