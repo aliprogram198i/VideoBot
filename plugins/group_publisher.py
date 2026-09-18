@@ -34,7 +34,13 @@ def ensure_schema(get_db) -> None:
         conn.execute("""CREATE TABLE IF NOT EXISTS bot_groups (
             chat_id INTEGER PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
             owner_user_id INTEGER NOT NULL, owner_username TEXT,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'active',
+            last_publish_at TEXT, publish_count INTEGER NOT NULL DEFAULT 0)""")
+        cols={str(r[1]) for r in conn.execute("PRAGMA table_info(bot_groups)").fetchall()}
+        for n,ddl in (("enabled","ALTER TABLE bot_groups ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"),("status","ALTER TABLE bot_groups ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),("last_publish_at","ALTER TABLE bot_groups ADD COLUMN last_publish_at TEXT"),("publish_count","ALTER TABLE bot_groups ADD COLUMN publish_count INTEGER NOT NULL DEFAULT 0")):
+            if n not in cols: conn.execute(ddl)
+        conn.execute("CREATE TABLE IF NOT EXISTS group_publish_logs (id INTEGER PRIMARY KEY AUTOINCREMENT,chat_id INTEGER NOT NULL,actor_user_id INTEGER NOT NULL,actor_type TEXT NOT NULL,status TEXT NOT NULL,message_preview TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,error_type TEXT)")
         conn.commit()
     finally:
         conn.close()
@@ -59,8 +65,8 @@ def _list_groups(get_db, owner_user_id: int | None = None):
     conn = get_db()
     try:
         if owner_user_id is None:
-            return conn.execute("SELECT chat_id,title,owner_user_id,owner_username,created_at,updated_at FROM bot_groups ORDER BY title COLLATE NOCASE,chat_id").fetchall()
-        return conn.execute("SELECT chat_id,title,owner_username FROM bot_groups WHERE owner_user_id=? ORDER BY title COLLATE NOCASE,chat_id", (owner_user_id,)).fetchall()
+            return conn.execute("SELECT chat_id,title,owner_user_id,owner_username,created_at,updated_at,enabled,status,last_publish_at,publish_count FROM bot_groups ORDER BY title COLLATE NOCASE,chat_id").fetchall()
+        return conn.execute("SELECT chat_id,title,owner_username,enabled,status,last_publish_at,publish_count FROM bot_groups WHERE owner_user_id=? ORDER BY title COLLATE NOCASE,chat_id", (owner_user_id,)).fetchall()
     finally:
         conn.close()
 
@@ -84,6 +90,21 @@ def _upsert_group(get_db, chat_id: int, title: str, owner) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _set_group_enabled(get_db,chat_id,enabled):
+    conn=get_db()
+    try: conn.execute("UPDATE bot_groups SET enabled=?,updated_at=? WHERE chat_id=?",(1 if enabled else 0,datetime.now().isoformat(),chat_id)); conn.commit()
+    finally: conn.close()
+
+def _record_publish(get_db,chat_id,actor_user_id,actor_type,message,status,error_type=None):
+    conn=get_db()
+    try:
+        now=datetime.now().isoformat()
+        conn.execute("INSERT INTO group_publish_logs(chat_id,actor_user_id,actor_type,status,message_preview,created_at,error_type) VALUES(?,?,?,?,?,?,?)",(chat_id,actor_user_id,actor_type,status,message[:160],now,error_type))
+        if status=="success": conn.execute("UPDATE bot_groups SET last_publish_at=?,publish_count=publish_count+1,status='active',updated_at=? WHERE chat_id=?",(now,now,chat_id))
+        conn.commit()
+    finally: conn.close()
 
 
 def _delete_group(get_db, chat_id: int, owner_user_id: int | None = None) -> bool:
@@ -167,7 +188,7 @@ async def group_publisher_callback(update: Update, context, get_db):
         if data.startswith(PUBLISH_PREFIX):
             chat_id = int(data[len(PUBLISH_PREFIX):])
             row = _get_group(get_db, chat_id)
-            if not row or int(row["owner_user_id"]) != query.from_user.id:
+            if not row or int(row["owner_user_id"]) != query.from_user.id or not int(row["enabled"]):
                 await query.edit_message_text("❌ هذه المجموعة غير مرتبطة بحسابك.")
                 return
             if not await _is_group_admin(context, chat_id, query.from_user.id):
@@ -219,8 +240,10 @@ async def process_group_publisher_message(update, context, get_db) -> bool:
             await update.message.reply_text("❌ AliBot لا يستطيع إرسال الرسائل إلى هذه المجموعة.")
             return True
         await context.bot.send_message(chat_id=chat_id, text=text.strip()[:4000])
+        _record_publish(get_db,chat_id,update.effective_user.id,"owner",text.strip(),"success")
         await update.message.reply_text("✅ تم نشر الرسالة في المجموعة بنجاح.")
     except Exception as exc:
+        _record_publish(get_db,chat_id,update.effective_user.id,"owner",text.strip(),"failed",type(exc).__name__)
         logger.warning("Group publish failed: %s", type(exc).__name__)
         await update.message.reply_text("❌ تعذر نشر الرسالة. تحقق من وجود AliBot وصلاحياته.")
     return True
