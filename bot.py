@@ -43,7 +43,7 @@ from downloader.instagram_failure import (
     instagram_failure_message,
 )
 
-from plugins.gemini_service import generate as gemini_generate
+from plugins import gemini_service
 
 
 # ============================================================
@@ -88,7 +88,28 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_TIMEOUT_SECONDS = 30
+# Compatibility hook retained for existing admin tests/extensions. Real Gemini
+# initialization is lazy and lives in plugins.gemini_service.
+gemini_client = None
 print("🤖 Gemini AI: OPTIONAL ADMIN SERVICE", flush=True)
+
+
+async def gemini_generate(prompt):
+    if gemini_client is None:
+        return await gemini_service.generate(prompt)
+
+    def _generate():
+        response = gemini_client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+        )
+        return response.text or ""
+
+    return await asyncio.wait_for(
+        asyncio.to_thread(_generate),
+        timeout=GEMINI_TIMEOUT_SECONDS,
+    )
 
 def redact_url(value):
     """Return a log-safe URL without credentials, query values, or fragments."""
