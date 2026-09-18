@@ -43,6 +43,8 @@ def ensure_schema(get_db) -> None:
         for n,ddl in (("enabled","ALTER TABLE bot_groups ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"),("status","ALTER TABLE bot_groups ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),("last_publish_at","ALTER TABLE bot_groups ADD COLUMN last_publish_at TEXT"),("publish_count","ALTER TABLE bot_groups ADD COLUMN publish_count INTEGER NOT NULL DEFAULT 0")):
             if n not in cols: conn.execute(ddl)
         conn.execute("CREATE TABLE IF NOT EXISTS group_publish_logs (id INTEGER PRIMARY KEY AUTOINCREMENT,chat_id INTEGER NOT NULL,actor_user_id INTEGER NOT NULL,actor_type TEXT NOT NULL,status TEXT NOT NULL,message_preview TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,error_type TEXT)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_group_publish_logs_chat_created ON group_publish_logs(chat_id,created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_group_publish_logs_status_created ON group_publish_logs(status,created_at)")
         conn.commit()
     finally:
         conn.close()
@@ -64,7 +66,11 @@ async def _user_can_publish(context, chat_id: int, user_id: int) -> bool:
 async def _bot_can_publish(context, chat_id: int) -> bool:
     me = await context.bot.get_me()
     member = await context.bot.get_chat_member(chat_id, me.id)
-    return member.status in {"creator", "administrator", "member"}
+    if member.status in {"creator", "administrator", "member"}:
+        return bool(getattr(member, "can_send_messages", True))
+    if member.status == "restricted":
+        return bool(getattr(member, "can_send_messages", False))
+    return False
 
 
 def _list_groups(get_db, owner_user_id: int | None = None):
@@ -80,7 +86,12 @@ def _list_groups(get_db, owner_user_id: int | None = None):
 def _get_group(get_db, chat_id: int):
     conn = get_db()
     try:
-        return conn.execute("SELECT chat_id,title,owner_user_id,owner_username FROM bot_groups WHERE chat_id=?", (chat_id,)).fetchone()
+        return conn.execute(
+            """SELECT chat_id,title,owner_user_id,owner_username,created_at,updated_at,
+                      enabled,status,last_publish_at,publish_count
+               FROM bot_groups WHERE chat_id=?""",
+            (chat_id,),
+        ).fetchone()
     finally:
         conn.close()
 
@@ -108,7 +119,9 @@ def _record_publish(get_db,chat_id,actor_user_id,actor_type,message,status,error
     try:
         now=datetime.now().isoformat()
         conn.execute("INSERT INTO group_publish_logs(chat_id,actor_user_id,actor_type,status,message_preview,created_at,error_type) VALUES(?,?,?,?,?,?,?)",(chat_id,actor_user_id,actor_type,status,message[:160],now,error_type))
-        if status=="success": conn.execute("UPDATE bot_groups SET last_publish_at=?,publish_count=publish_count+1,status='active',updated_at=? WHERE chat_id=?",(now,now,chat_id))
+            if status=="success": conn.execute("UPDATE bot_groups SET last_publish_at=?,publish_count=publish_count+1,status='active',updated_at=? WHERE chat_id=?",(now,now,chat_id))
+        elif status=="failed":
+            conn.execute("UPDATE bot_groups SET status='publish_error',updated_at=? WHERE chat_id=?", (now, chat_id))
         conn.commit()
     finally: conn.close()
 
@@ -198,8 +211,14 @@ async def group_publisher_callback(update: Update, context, get_db):
                 await query.edit_message_text("❌ هذه المجموعة غير مرتبطة بحسابك.")
                 return
             if not await _user_can_publish(context, chat_id, query.from_user.id):
-                _delete_group(get_db, chat_id, query.from_user.id)
-                await query.edit_message_text("⚠️ لم تعد تملك صلاحية إرسال الرسائل في هذه المجموعة، لذلك أُلغي الربط تلقائيًا.")
+                conn = get_db()
+                try:
+                    conn.execute("UPDATE bot_groups SET status='owner_access_lost',updated_at=? WHERE chat_id=? AND owner_user_id=?",
+                                 (datetime.now().isoformat(), chat_id, query.from_user.id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                await query.edit_message_text("⚠️ لم تعد تملك صلاحية إرسال الرسائل في هذه المجموعة حاليًا. تم الاحتفاظ بالربط ويمكنك المحاولة مجددًا بعد عودة الصلاحية.")
                 return
             if not await _bot_can_publish(context, chat_id):
                 await query.edit_message_text("❌ لا يستطيع AliBot إرسال الرسائل إلى هذه المجموعة حاليًا.")
@@ -269,8 +288,14 @@ async def process_group_publisher_message(update, context, get_db) -> bool:
         return True
     try:
         if not await _user_can_publish(context, chat_id, update.effective_user.id):
-            _delete_group(get_db, chat_id, update.effective_user.id)
-            await update.message.reply_text("⚠️ لم تعد تملك صلاحية إرسال الرسائل في المجموعة، وتم إلغاء الربط.")
+            conn = get_db()
+            try:
+                conn.execute("UPDATE bot_groups SET status='owner_access_lost',updated_at=? WHERE chat_id=? AND owner_user_id=?",
+                             (datetime.now().isoformat(), chat_id, update.effective_user.id))
+                conn.commit()
+            finally:
+                conn.close()
+            await update.message.reply_text("⚠️ لا تملك حاليًا صلاحية إرسال الرسائل في هذه المجموعة. تم الاحتفاظ بالربط.")
             return True
         if not await _bot_can_publish(context, chat_id):
             await update.message.reply_text("❌ AliBot لا يستطيع إرسال الرسائل إلى هذه المجموعة.")
