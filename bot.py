@@ -4554,7 +4554,28 @@ async def download_media(
                 "mp4",
             ])
 
-        command.append(url)
+        # Telegram public posts must be resolved through Telegram's exact single-post embed.
+        # Generic yt-dlp on the channel post URL can select an adjacent post while
+        # still exiting successfully (for example, download_8454.mp4 for 8453).
+        telegram_download_url = url
+        telegram_identity = parse_telegram_post_url(url)
+        if telegram_identity is not None:
+            parsed_telegram_url = urlparse(url)
+            telegram_query = "embed=1&single=1"
+            telegram_download_url = urlunparse((
+                parsed_telegram_url.scheme,
+                parsed_telegram_url.netloc,
+                parsed_telegram_url.path,
+                parsed_telegram_url.params,
+                telegram_query,
+                "",
+            ))
+            print(
+                "🛡️ Telegram Primary Download: exact single-post embed "
+                f"enabled for {telegram_identity.channel}/{telegram_identity.message_id}"
+            )
+
+        command.append(telegram_download_url)
 
         print()
         print("===== yt-dlp COMMAND =====")
