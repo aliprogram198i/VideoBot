@@ -522,14 +522,14 @@ def register_admin_monitoring(app: Any, get_db, owner_id: int) -> None:
     app.add_handler(
         CallbackQueryHandler(
             lambda u, c: incidents_callback(u, c, get_db, owner_id),
-            pattern=rf"^{_INCIDENTS}$",
+            pattern=rf"^(?:{_INCIDENTS}|admin_ops_incidents)$",
         ),
         group=-210,
     )
     app.add_handler(
         CallbackQueryHandler(
             lambda u, c: resolver_callback(u, c, get_db, owner_id),
-            pattern=rf"^{_RESOLVERS}$",
+            pattern=rf"^(?:{_RESOLVERS}|admin_ops_platforms)$",
         ),
         group=-210,
     )
