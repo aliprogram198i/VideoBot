@@ -39,6 +39,9 @@ from downloader.instagram_identity import (
     candidate_matches_instagram_source,
     parse_instagram_post_url,
 )
+from downloader.instagram_failure import (
+    instagram_failure_message,
+)
 
 try:
     from google import genai
@@ -5214,9 +5217,18 @@ async def download_media(
                     print("========================================")
                     print()
 
-                    await query.edit_message_text(
-                        TEXTS[language]["download_error"]
-                    )
+                    if instagram_source is not None:
+                        failure_message = instagram_failure_message(
+                            language,
+                            primary_stderr=stderr_text,
+                            primary_stdout=stdout_text,
+                            smart_diagnostics=smart_diagnostics,
+                            cobalt_diagnostics=cobalt_diagnostics,
+                        )
+                    else:
+                        failure_message = TEXTS[language]["download_error"]
+
+                    await query.edit_message_text(failure_message)
 
                     return
 
