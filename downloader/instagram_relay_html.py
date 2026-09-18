@@ -294,6 +294,7 @@ def download_instagram_with_relay(
             "filename": destination.name,
             "page_route": route,
         })
+        diagnostics.update({"source_identity_verified": True, "identity_proof": {"type": "instagram_shortcode", "key": shortcode}})
         return str(destination), diagnostics
 
     diagnostics.update({

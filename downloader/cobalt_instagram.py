@@ -239,6 +239,7 @@ def download_instagram_with_cobalt(
             "selected_media": "cobalt",
             "filename": destination.name,
         })
+        diagnostics.update({"source_identity_verified": True, "identity_proof": {"type": "instagram_shortcode", "key": shortcode}})
         return str(destination), diagnostics
 
     except Exception as exc:

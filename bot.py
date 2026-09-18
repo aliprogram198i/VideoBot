@@ -42,6 +42,7 @@ from downloader.instagram_identity import (
 from downloader.instagram_failure import (
     instagram_failure_message,
 )
+from downloader.resolver_admission import admit_local_media
 
 from plugins import gemini_service
 
@@ -4718,13 +4719,30 @@ async def download_media(
                     max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
                 )
                 if relay_file:
-                    smart_file = relay_file
-                    smart_diagnostics = {
-                        **smart_diagnostics,
-                        "resolver": "instagram_relay_html",
-                        "instagram_relay_html": relay_diagnostics,
-                    }
-                    print("🎯 Instagram Direct Relay HTML Resolver: SUCCESS")
+                    admitted_file, admission = admit_local_media(
+                        url,
+                        relay_file,
+                        temp_dir=temp_dir,
+                        resolver="instagram_relay_html",
+                        diagnostics=relay_diagnostics,
+                    )
+                    if admitted_file:
+                        smart_file = admitted_file
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_relay_html",
+                            "instagram_relay_html": relay_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print("🎯 Instagram Direct Relay HTML Resolver: SUCCESS")
+                    else:
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_relay_html",
+                            "instagram_relay_html": relay_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print(f"🛡️ Instagram Relay HTML: admission rejected ({admission.get('reason')})")
 
             # Instagram direct public GraphQL recovery. This resolver is
             # intentionally independent of Cobalt and uses Instagram's current
@@ -4745,13 +4763,30 @@ async def download_media(
                     max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
                 )
                 if graphql_file:
-                    smart_file = graphql_file
-                    smart_diagnostics = {
-                        **smart_diagnostics,
-                        "resolver": "instagram_graphql",
-                        "instagram_graphql": graphql_diagnostics,
-                    }
-                    print("🎯 Instagram Direct GraphQL Resolver: SUCCESS")
+                    admitted_file, admission = admit_local_media(
+                        url,
+                        graphql_file,
+                        temp_dir=temp_dir,
+                        resolver="instagram_graphql",
+                        diagnostics=graphql_diagnostics,
+                    )
+                    if admitted_file:
+                        smart_file = admitted_file
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_graphql",
+                            "instagram_graphql": graphql_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print("🎯 Instagram Direct GraphQL Resolver: SUCCESS")
+                    else:
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_graphql",
+                            "instagram_graphql": graphql_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print(f"🛡️ Instagram GraphQL: admission rejected ({admission.get('reason')})")
 
             # Instagram has a dedicated private Cobalt resolver in the
             # same Railway project. It remains the next isolated fallback.
@@ -4769,13 +4804,30 @@ async def download_media(
                     max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
                 )
                 if cobalt_file:
-                    smart_file = cobalt_file
-                    smart_diagnostics = {
-                        **smart_diagnostics,
-                        "resolver": "cobalt_instagram",
-                        "cobalt": cobalt_diagnostics,
-                    }
-                    print("🎯 Instagram Cobalt Resolver: SUCCESS")
+                    admitted_file, admission = admit_local_media(
+                        url,
+                        cobalt_file,
+                        temp_dir=temp_dir,
+                        resolver="cobalt_instagram",
+                        diagnostics=cobalt_diagnostics,
+                    )
+                    if admitted_file:
+                        smart_file = admitted_file
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "cobalt_instagram",
+                            "cobalt": cobalt_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print("🎯 Instagram Cobalt Resolver: SUCCESS")
+                    else:
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "cobalt_instagram",
+                            "cobalt": cobalt_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print(f"🛡️ Instagram Cobalt: admission rejected ({admission.get('reason')})")
 
             if smart_file:
                 media_file = smart_file
