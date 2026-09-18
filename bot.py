@@ -4590,7 +4590,7 @@ async def download_media(
             )
 
         print()
-        print("===== yt-dlp COMMAND =====
+        print("===== yt-dlp COMMAND =====")
         print("yt-dlp command prepared")
         print("==========================")
         print()
