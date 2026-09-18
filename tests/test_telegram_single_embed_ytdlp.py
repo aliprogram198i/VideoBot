@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from downloader.embed_resolver import EmbedResolver
 
@@ -34,9 +35,19 @@ class TelegramSingleEmbedYtdlpTests(unittest.TestCase):
             all_candidates=candidates,
             seen_candidates=seen,
         )
-        # This test verifies routing policy without requiring a live Telegram
-        # request. A live extractor may legitimately return no formats.
-        self.assertIsInstance(candidates, list)
+        with patch(
+            "downloader.embed_resolver.extract_with_yt_dlp",
+            return_value=[],
+        ) as extractor:
+            resolver._add_universal_ytdlp_candidates(
+                "https://t.me/syrevarch/8453?embed=1&single=1",
+                depth=0,
+                all_candidates=candidates,
+                seen_candidates=seen,
+            )
+        extractor.assert_called_once_with(
+            "https://t.me/syrevarch/8453?embed=1&single=1"
+        )
 
 
 if __name__ == "__main__":
