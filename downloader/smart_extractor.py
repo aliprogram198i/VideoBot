@@ -450,6 +450,21 @@ def extract_telegram_post_candidates(
             max_candidates=max_candidates,
         )
         if candidates:
+            candidates = [
+                MediaCandidate(
+                    url=item.url,
+                    kind=item.kind,
+                    source_page=item.source_page,
+                    discovered_by=item.discovered_by,
+                    depth=item.depth,
+                    score=item.score,
+                    metadata={
+                        **item.metadata,
+                        "telegram_data_post": f"{channel}/{message_id}",
+                    },
+                )
+                for item in candidates
+            ]
             return candidates
 
         video_src = re.search(
@@ -467,6 +482,9 @@ def extract_telegram_post_candidates(
                     discovered_by="video",
                     depth=depth,
                     score=_score("progressive", "video"),
+                    metadata={
+                        "telegram_data_post": f"{channel}/{message_id}",
+                    },
                 )]
 
     return []
