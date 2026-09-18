@@ -582,7 +582,7 @@ def register_group_publisher(app: Any, get_db, admin_id: int | None = None) -> N
                                           pattern=rf"^({CALLBACK}|{CONSENT_PREFIX}(yes|no)|{PUBLISH_PREFIX}-?\d+|{REMOVE_PREFIX}-?\d+)$"))
     if admin_id is not None:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-                                       lambda u, c: process_admin_group_message(u, c, get_db, admin_id)), group=-2)
+                                       lambda u, c: process_admin_group_message(u, c, get_db, admin_id)), group=-3)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
                                    lambda u, c: process_group_publisher_message(u, c, get_db)), group=-1)
     if admin_id is not None:
