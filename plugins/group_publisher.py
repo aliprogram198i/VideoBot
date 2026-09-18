@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import html
 import logging
-import sqlite3
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -326,9 +325,11 @@ def register_group_publisher(app: Any, get_db) -> None:
     ))
     app.add_handler(CallbackQueryHandler(
         lambda update, context: group_publisher_callback(update, context, get_db),
-        pattern=rf"^({CALLBACK}|{PUBLISH_PREFIX}-?\\d+|{REMOVE_PREFIX}-?\\d+)$",
+        pattern=rf"^({CALLBACK}|{PUBLISH_PREFIX}-?\d+|{REMOVE_PREFIX}-?\d+)$",
     ))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         lambda update, context: process_group_publisher_message(update, context, get_db),
-    ))
+        ),
+        group=-1,
+    )
