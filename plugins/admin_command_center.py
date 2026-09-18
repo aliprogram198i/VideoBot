@@ -25,6 +25,10 @@ def command_center_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚙️ النظام والعمليات", callback_data="admin_health"),
         ],
         [
+            InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations"),
+            InlineKeyboardButton("👥 إدارة المجموعات", callback_data="admin_group_publisher"),
+        ],
+        [
             InlineKeyboardButton("📢 التواصل", callback_data="admin_broadcast"),
             InlineKeyboardButton("🛡️ الأمان والإدارة", callback_data="admin_roles"),
         ],
