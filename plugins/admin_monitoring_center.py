@@ -59,6 +59,8 @@ def _audit(get_db, admin_id: int, action: str, target_id: int | None = None) -> 
 
 
 def ensure_schema(get_db) -> None:
+    if not callable(get_db):
+        return
     conn = get_db()
     try:
         conn.execute(
