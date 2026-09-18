@@ -7573,34 +7573,8 @@ async def admin_storage_cancel_callback(
     await query.edit_message_text(
         "🛠️ لوحة إدارة بوت التحميل\n\n"
         "اختر القسم الذي تريد إدارته:",
-        reply_markup=_admin_home_keyboard_with_operations()
+        reply_markup=admin_keyboard()
     )
-
-
-def _admin_home_keyboard_with_operations():
-    """Keep the existing admin menu and expose the new operations safely."""
-    existing = globals().get("admin_keyboard")
-    rows = []
-    if callable(existing):
-        try:
-            markup = existing()
-            rows = [list(row) for row in getattr(markup, "inline_keyboard", ())]
-        except Exception:
-            rows = []
-    callbacks = {str(button.callback_data) for row in rows for button in row if getattr(button, "callback_data", None)}
-    additions = []
-    if "admin_smart_operations" not in callbacks:
-        additions.append([InlineKeyboardButton("⚙️ Smart Operations", callback_data="admin_smart_operations")])
-    if "admin_group_publisher" not in callbacks:
-        additions.append([InlineKeyboardButton("👥 إدارة المجموعات", callback_data="admin_group_publisher")])
-    if not rows:
-        rows = [
-            [InlineKeyboardButton("📊 لوحة المعلومات والتحليلات", callback_data="admin_dashboard_30")],
-            [InlineKeyboardButton("👥 إدارة المستخدمين", callback_data="admin_users_0")],
-            [InlineKeyboardButton("📢 الإعلانات", callback_data="admin_broadcast")],
-            [InlineKeyboardButton("💾 التخزين والنظام", callback_data="admin_storage")],
-        ]
-    return InlineKeyboardMarkup(additions + rows)
 
 
 async def admin_home_callback(
