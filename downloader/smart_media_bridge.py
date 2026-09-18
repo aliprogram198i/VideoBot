@@ -505,8 +505,14 @@ def install(bot_module) -> None:
                 for telegram_url in telegram_variants:
                     try:
                         variant_kwargs = dict(kwargs)
-                        variant_kwargs["url"] = telegram_url
-                        variant_result = original_smart(*args, **variant_kwargs)
+                        if args:
+                            variant_args = list(args)
+                            variant_args[0] = telegram_url
+                            variant_kwargs.pop("url", None)
+                        else:
+                            variant_args = []
+                            variant_kwargs["url"] = telegram_url
+                        variant_result = original_smart(*variant_args, **variant_kwargs)
                         if inspect.isawaitable(variant_result):
                             variant_result = await variant_result
                         if isinstance(variant_result, tuple) and variant_result and _is_local_file(variant_result[0], temp_dir):
