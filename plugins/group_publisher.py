@@ -23,6 +23,8 @@ CONSENT_PREFIX = "group_consent_"
 PUBLISH_PREFIX = "group_publish_"
 REMOVE_PREFIX = "group_remove_"
 ADMIN_CALLBACK = "admin_group_publisher"
+ADMIN_SELECTED_KEY = "admin_group_selected"
+ADMIN_MESSAGE_KEY = "admin_group_message"
 WAITING_KEY = "group_publisher_waiting_message"
 TARGET_KEY = "group_publisher_target"
 ADD_GROUP_URL = "https://t.me/MyVideoDownloaderAliBot?startgroup=publisher"
@@ -50,9 +52,13 @@ def _is_private(update: Update) -> bool:
     return bool(update.effective_chat and update.effective_chat.type == "private")
 
 
-async def _is_group_admin(context, chat_id: int, user_id: int) -> bool:
+async def _user_can_publish(context, chat_id: int, user_id: int) -> bool:
     member = await context.bot.get_chat_member(chat_id, user_id)
-    return member.status in {"creator", "administrator"}
+    if member.status in {"creator", "administrator", "member"}:
+        return bool(getattr(member, "can_send_messages", True))
+    if member.status == "restricted":
+        return bool(getattr(member, "can_send_messages", False))
+    return False
 
 
 async def _bot_can_publish(context, chat_id: int) -> bool:
@@ -152,7 +158,7 @@ async def groups_command(update: Update, context, get_db):
         "👥 <b>ربط وإدارة المجموعات</b>\n\n"
         "🔐 لا يصل AliBot إلى قائمة مجموعاتك تلقائيًا.\n"
         "أنت تختار المجموعة بنفسك، وتضيف AliBot إليها بإرادتك.\n\n"
-        "بعد الإضافة، لا يتم تفعيل النشر إلا بعد التحقق من أنك مدير المجموعة.\n\n"
+        "بعد الإضافة، يكفي أن تكون لديك صلاحية إرسال الرسائل في المجموعة؛ لا يشترط أن تكون مديرًا.\n\n"
         "يمكنك إلغاء الربط في أي وقت.",
         parse_mode="HTML", reply_markup=_consent_keyboard())
 
@@ -191,9 +197,9 @@ async def group_publisher_callback(update: Update, context, get_db):
             if not row or int(row["owner_user_id"]) != query.from_user.id or not int(row["enabled"]):
                 await query.edit_message_text("❌ هذه المجموعة غير مرتبطة بحسابك.")
                 return
-            if not await _is_group_admin(context, chat_id, query.from_user.id):
+            if not await _user_can_publish(context, chat_id, query.from_user.id):
                 _delete_group(get_db, chat_id, query.from_user.id)
-                await query.edit_message_text("⚠️ لم تعد تملك صلاحية إدارة هذه المجموعة، لذلك أُلغي الربط تلقائيًا.")
+                await query.edit_message_text("⚠️ لم تعد تملك صلاحية إرسال الرسائل في هذه المجموعة، لذلك أُلغي الربط تلقائيًا.")
                 return
             if not await _bot_can_publish(context, chat_id):
                 await query.edit_message_text("❌ لا يستطيع AliBot إرسال الرسائل إلى هذه المجموعة حاليًا.")
@@ -215,6 +221,36 @@ async def group_publisher_callback(update: Update, context, get_db):
         await query.edit_message_text("❌ طلب غير صالح.")
 
 
+async def process_admin_group_message(update, context, get_db, admin_id: int) -> bool:
+    if not update.effective_user or update.effective_user.id != admin_id or not update.message or not _is_private(update):
+        return False
+    if not context.user_data.get("admin_group_waiting_message"):
+        return False
+    message = (update.message.text or "").strip()
+    if not message:
+        await update.message.reply_text("❌ الرسالة فارغة.")
+        return True
+    selected = set(context.user_data.get(ADMIN_SELECTED_KEY, set()))
+    if not selected:
+        await update.message.reply_text("❌ لم يتم اختيار أي مجموعة.")
+        return True
+    context.user_data["admin_group_waiting_message"] = False
+    context.user_data[ADMIN_MESSAGE_KEY] = message[:4000]
+    rows = {int(r["chat_id"]): str(r["title"] or "مجموعة") for r in _list_groups(get_db)}
+    names = [html.escape(rows.get(cid, str(cid))) for cid in selected]
+    await update.message.reply_text(
+        "🔎 <b>تأكيد النشر</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+        + "👥 المجموعات: " + str(len(selected)) + "\n"
+        + "\n".join("• " + n for n in names[:50])
+        + "\n\n📝 <b>المعاينة:</b>\n" + html.escape(message[:1000]),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ تأكيد وإرسال", callback_data="admin_group_send_confirm")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data="admin_group_send_cancel")],
+        ])
+    )
+    return True
+
 async def process_group_publisher_message(update, context, get_db) -> bool:
     if not update.effective_user or not update.message or not _is_private(update):
         return False
@@ -232,9 +268,9 @@ async def process_group_publisher_message(update, context, get_db) -> bool:
         await update.message.reply_text("❌ لم تعد هذه المجموعة مرتبطة بحسابك.")
         return True
     try:
-        if not await _is_group_admin(context, chat_id, update.effective_user.id):
+        if not await _user_can_publish(context, chat_id, update.effective_user.id):
             _delete_group(get_db, chat_id, update.effective_user.id)
-            await update.message.reply_text("⚠️ لم تعد تملك صلاحية إدارة المجموعة، وتم إلغاء الربط.")
+            await update.message.reply_text("⚠️ لم تعد تملك صلاحية إرسال الرسائل في المجموعة، وتم إلغاء الربط.")
             return True
         if not await _bot_can_publish(context, chat_id):
             await update.message.reply_text("❌ AliBot لا يستطيع إرسال الرسائل إلى هذه المجموعة.")
@@ -260,8 +296,8 @@ async def handle_my_chat_member(update, context, get_db):
     old_status = change.old_chat_member.status
     if new_status in {"member", "administrator"} and old_status in {"left", "kicked"}:
         try:
-            if not await _is_group_admin(context, chat.id, change.from_user.id):
-                logger.info("Group add ignored: inviter is not an admin")
+            if not await _user_can_publish(context, chat.id, change.from_user.id):
+                logger.info("Group add ignored: inviter cannot send messages")
                 return
             if not await _bot_can_publish(context, chat.id):
                 logger.info("Group add ignored: bot cannot publish")
@@ -287,6 +323,80 @@ async def admin_group_publisher_callback(update: Update, context, get_db, admin_
         cid=int(data[len("admin_group_toggle_"):]); row=_get_group(get_db,cid)
         if row: _set_group_enabled(get_db,cid,not bool(row["enabled"]))
         await q.edit_message_text("✅ تم تغيير حالة النشر.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات",callback_data=ADMIN_CALLBACK)]])); return
+
+    if data == "admin_group_send":
+        rows = _list_groups(get_db)
+        if not rows:
+            await q.edit_message_text("📢 <b>إرسال إلى المجموعات</b>\n\nلا توجد مجموعات مرتبطة.", parse_mode="HTML",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]))
+            return
+        context.user_data[ADMIN_SELECTED_KEY] = set()
+        context.user_data.pop(ADMIN_MESSAGE_KEY, None)
+        buttons = [[InlineKeyboardButton(("☐ " + str(r["title"] or "مجموعة"))[:34], callback_data="admin_group_select_" + str(int(r["chat_id"])))] for r in rows[:50]]
+        buttons.append([InlineKeyboardButton("✍️ متابعة وكتابة الرسالة", callback_data="admin_group_send_compose")])
+        buttons.append([InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)])
+        await q.edit_message_text("📢 <b>إرسال رسالة للمجموعات</b>\n\nاختر مجموعة واحدة أو عدة مجموعات.", parse_mode="HTML",
+                                  reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data.startswith("admin_group_select_"):
+        cid = int(data[len("admin_group_select_"):])
+        selected = set(context.user_data.get(ADMIN_SELECTED_KEY, set()))
+        if cid in selected:
+            selected.remove(cid)
+        else:
+            selected.add(cid)
+        context.user_data[ADMIN_SELECTED_KEY] = selected
+        rows = _list_groups(get_db)
+        buttons = [[InlineKeyboardButton(("☑️ " if int(r["chat_id"]) in selected else "☐ ") + str(r["title"] or "مجموعة"), callback_data="admin_group_select_" + str(int(r["chat_id"])))] for r in rows[:50]]
+        buttons.append([InlineKeyboardButton("✍️ كتابة الرسالة (" + str(len(selected)) + " مختارة)", callback_data="admin_group_send_compose")])
+        buttons.append([InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)])
+        await q.edit_message_text("📢 <b>اختيار المجموعات</b>\n\nيمكن اختيار مجموعة واحدة أو عدة مجموعات.", parse_mode="HTML",
+                                  reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data == "admin_group_send_compose":
+        selected = set(context.user_data.get(ADMIN_SELECTED_KEY, set()))
+        if not selected:
+            await q.answer("اختر مجموعة واحدة على الأقل.", show_alert=True)
+            return
+        context.user_data["admin_group_waiting_message"] = True
+        await q.edit_message_text("✍️ <b>اكتب رسالة النشر الآن</b>\n\nبعد إرسالها ستظهر لك معاينة وزر تأكيد قبل أي إرسال.", parse_mode="HTML")
+        return
+
+    if data == "admin_group_send_cancel":
+        context.user_data.pop(ADMIN_SELECTED_KEY, None)
+        context.user_data.pop(ADMIN_MESSAGE_KEY, None)
+        context.user_data.pop("admin_group_waiting_message", None)
+        await q.edit_message_text("❌ تم إلغاء عملية النشر.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]))
+        return
+
+    if data == "admin_group_send_confirm":
+        message = context.user_data.get(ADMIN_MESSAGE_KEY)
+        selected = [int(x) for x in context.user_data.get(ADMIN_SELECTED_KEY, set())]
+        if not message or not selected:
+            await q.edit_message_text("❌ انتهت عملية النشر أو لم يتم تحديد مجموعات.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]))
+            return
+        context.user_data.pop("admin_group_waiting_message", None)
+        results = []
+        for cid in selected:
+            try:
+                row = _get_group(get_db, cid)
+                if not row:
+                    results.append("❌ " + str(cid) + ": غير مرتبطة")
+                    continue
+                await context.bot.send_message(chat_id=cid, text=message[:4000])
+                _record_publish(get_db, cid, admin_id, "admin", message, "success")
+                results.append("✅ " + html.escape(str(row["title"] or cid)))
+            except Exception as exc:
+                _record_publish(get_db, cid, admin_id, "admin", message, "failed", type(exc).__name__)
+                results.append("❌ " + str(cid) + ": " + type(exc).__name__)
+        context.user_data.pop(ADMIN_SELECTED_KEY, None)
+        context.user_data.pop(ADMIN_MESSAGE_KEY, None)
+        await q.edit_message_text("📢 <b>نتيجة النشر</b>\n\n" + "\n".join(results[:50]), parse_mode="HTML",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات", callback_data=ADMIN_CALLBACK)]]))
+        return
+
     if data.startswith("admin_group_remove_"):
         cid=int(data[len("admin_group_remove_"):]); _delete_group(get_db,cid)
         await q.edit_message_text("✅ تمت إزالة المجموعة.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات",callback_data=ADMIN_CALLBACK)]])); return
@@ -299,6 +409,7 @@ async def admin_group_publisher_callback(update: Update, context, get_db, admin_
     for r in rows[:20]:
         cid=int(r["chat_id"])
         buttons.append([InlineKeyboardButton(("⛔ تعطيل " if int(r["enabled"]) else "✅ تفعيل ")+str(r["title"] or "مجموعة")[:18],callback_data=f"admin_group_toggle_{cid}"),InlineKeyboardButton("🗑️ إزالة",callback_data=f"admin_group_remove_{cid}")])
+    buttons.append([InlineKeyboardButton("📢 إرسال رسالة للمجموعات",callback_data="admin_group_send")])
     buttons.append([InlineKeyboardButton("📜 سجل النشر",callback_data="admin_group_logs")])
     buttons.append([InlineKeyboardButton("🔙 Smart Operations",callback_data="admin_smart_operations")])
     await q.edit_message_text("\n".join(lines) if rows else "👥 <b>إدارة المجموعات</b>\n\nلا توجد مجموعات مرتبطة.",parse_mode="HTML",reply_markup=InlineKeyboardMarkup(buttons))
@@ -314,8 +425,11 @@ def register_group_publisher(app: Any, get_db, admin_id: int | None = None) -> N
     app.add_handler(ChatMemberHandler(lambda u, c: handle_my_chat_member(u, c, get_db), ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CallbackQueryHandler(lambda u, c: group_publisher_callback(u, c, get_db),
                                           pattern=rf"^({CALLBACK}|{CONSENT_PREFIX}(yes|no)|{PUBLISH_PREFIX}-?\d+|{REMOVE_PREFIX}-?\d+)$"))
+    if admin_id is not None:
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+                                       lambda u, c: process_admin_group_message(u, c, get_db, admin_id)), group=-2)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
                                    lambda u, c: process_group_publisher_message(u, c, get_db)), group=-1)
     if admin_id is not None:
         app.add_handler(CallbackQueryHandler(lambda u, c: admin_group_publisher_callback(u, c, get_db, admin_id),
-                                              pattern=rf"^(?:{ADMIN_CALLBACK}|admin_group_toggle_-?\d+|admin_group_remove_-?\d+|admin_group_logs)$"))
+                                              pattern=rf"^(?:{ADMIN_CALLBACK}|admin_group_toggle_-?\d+|admin_group_remove_-?\d+|admin_group_logs|admin_group_send|admin_group_send_compose|admin_group_send_cancel|admin_group_send_confirm|admin_group_select_-?\d+)$"))
