@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 
 from downloader.instagram_identity import parse_instagram_post_url
+from downloader.telegram_identity import parse_telegram_post_url
 
 
 def _inside(path: str, root: str | None) -> bool:
@@ -156,7 +157,21 @@ def admit_local_media(
         return None, result
 
     resolver_name = result["resolver"]
+    parsed_telegram = parse_telegram_post_url(source_url)
     parsed_instagram = parse_instagram_post_url(source_url)
+    if parsed_telegram is not None:
+        proof = details.get("identity_proof")
+        if (
+            details.get("source_identity_verified") is not True
+            or not isinstance(proof, dict)
+            or proof.get("type") != "telegram_post"
+            or proof.get("key") != parsed_telegram.key
+        ):
+            result["reason"] = "telegram_identity_proof_missing_or_mismatch"
+            return None, result
+
+        result["source_identity"] = parsed_telegram.key
+        result["identity_proof"] = proof
     if parsed_instagram is not None:
         if resolver_name not in {
             "instagram_relay_html",
