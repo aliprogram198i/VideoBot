@@ -7577,6 +7577,29 @@ async def admin_storage_cancel_callback(
     )
 
 
+def _admin_home_keyboard_with_operations():
+    """Expose Smart Operations without replacing the existing admin keyboard."""
+    existing = globals().get("admin_keyboard")
+    rows = []
+    if callable(existing):
+        try:
+            markup = existing()
+            rows = [list(row) for row in getattr(markup, "inline_keyboard", ())]
+        except Exception:
+            rows = []
+    callbacks = {
+        str(button.callback_data)
+        for row in rows
+        for button in row
+        if getattr(button, "callback_data", None)
+    }
+    additions = []
+    if "admin_smart_operations" not in callbacks:
+        additions.append([InlineKeyboardButton("⚙️ Smart Operations", callback_data="admin_smart_operations")])
+    if "admin_group_publisher" not in callbacks:
+        additions.append([InlineKeyboardButton("👥 إدارة المجموعات", callback_data="admin_group_publisher")])
+    return InlineKeyboardMarkup(additions + rows)
+
 async def admin_home_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
