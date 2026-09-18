@@ -14,7 +14,7 @@ import re
 import urllib.error
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
 DEFAULT_COBALT_URL = "http://cobalt-resolver:9000"
@@ -31,6 +31,15 @@ def _safe_filename(value: str | None, fallback: str) -> str:
     raw = re.sub(r"[^A-Za-z0-9._-]+", "_", raw)
     raw = raw.strip("._-")[:MAX_FILENAME]
     return raw or fallback
+
+
+def _canonicalize_instagram_url(url: str) -> str:
+    """Normalize query encoding without changing the Instagram post identity."""
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    query = urlencode(parse_qsl(parsed.query, keep_blank_values=True), doseq=True)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment))
 
 
 def _is_instagram_post_url(url: str) -> bool:
