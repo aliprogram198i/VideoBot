@@ -56,6 +56,42 @@ class TelegramExactMessageExtractionTests(unittest.TestCase):
             ["https://cdn.example/target.mp4"],
         )
 
+    def test_telegram_video_src_without_extension_is_accepted(self):
+        page = '''
+        <div class="tgme_widget_message_wrap">
+          <div class="tgme_widget_message" data-post="syrevarch/8453">
+            <video src="https://cdn.example/file/AgACAgQAAxkBAA"></video>
+          </div>
+        </div>
+        '''
+        candidates = extract_telegram_post_candidates(
+            page,
+            "https://t.me/syrevarch/8453?embed=1&single=1",
+            channel="syrevarch",
+            message_id=8453,
+        )
+        self.assertEqual(
+            [item.url for item in candidates],
+            ["https://cdn.example/file/AgACAgQAAxkBAA"],
+        )
+
+    def test_player_video_src_without_extension_is_accepted(self):
+        page = '''
+        <a class="tgme_widget_message_video_player" href="https://t.me/syrevarch/8453">
+          <video src="https://cdn.example/file/AgACAgQBBxkBAA"></video>
+        </a>
+        '''
+        candidates = extract_telegram_post_candidates(
+            page,
+            "https://t.me/syrevarch/8453?embed=1&single=1",
+            channel="syrevarch",
+            message_id=8453,
+        )
+        self.assertEqual(
+            [item.url for item in candidates],
+            ["https://cdn.example/file/AgACAgQBBxkBAA"],
+        )
+
     def test_embed_player_without_exact_href_fails_closed(self):
         page = '''
         <a class="tgme_widget_message_video_player" href="https://t.me/syrevarch/8454">
