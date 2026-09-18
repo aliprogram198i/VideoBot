@@ -135,7 +135,19 @@ class EmbedResolver:
         all_candidates: list[MediaCandidate],
         seen_candidates: set[tuple[str, str]],
     ) -> None:
-        """Use the installed yt-dlp registry as the broad final extraction layer."""
+        """Use yt-dlp only where its result can safely inherit source identity.
+
+        Telegram public post URLs are deliberately excluded. The generic
+        yt-dlp extractor can return media from adjacent/related Telegram posts
+        while still being invoked with the requested post URL. Labelling that
+        media with source_page=source_url would therefore create a false
+        source-identity match and can send the wrong video to the user.
+        Telegram has its own exact-post HTML/embed path in the smart bridge;
+        if that path cannot prove the requested post's media, fail closed.
+        """
+        host = (urlparse(source_url).hostname or "").lower().rstrip(".")
+        if host in {"t.me", "telegram.me", "www.t.me", "www.telegram.me"} or host.endswith(".t.me") or host.endswith(".telegram.me"):
+            return
         for variant in public_media_variants(source_url):
             try:
                 extracted = extract_with_yt_dlp(variant)
