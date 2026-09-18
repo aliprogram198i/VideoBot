@@ -7,7 +7,7 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from .page_fetcher import PageFetcher
-from .smart_extractor import MediaCandidate, extract_candidates
+from .smart_extractor import MediaCandidate, extract_candidates, extract_telegram_post_candidates
 from .source_url_variants import public_media_variants
 from .threads_extractor import extract_threads_media
 from .threads_ytdlp import extract_threads_with_yt_dlp
@@ -271,12 +271,32 @@ class EmbedResolver:
             if len(all_candidates) >= self.max_candidates:
                 break
 
-            candidates = extract_candidates(
-                fetched.html,
-                fetched.url,
-                depth=depth,
-                max_candidates=self.max_candidates,
-            )
+            if (
+                parsed_host in {"t.me", "telegram.me", "www.t.me", "www.telegram.me"}
+                or parsed_host.endswith(".t.me")
+                or parsed_host.endswith(".telegram.me")
+            ):
+                from .telegram_identity import parse_telegram_post_url
+
+                telegram_identity = parse_telegram_post_url(current_url)
+                if telegram_identity is not None:
+                    candidates = extract_telegram_post_candidates(
+                        fetched.html,
+                        fetched.url,
+                        channel=telegram_identity.channel,
+                        message_id=telegram_identity.message_id,
+                        depth=depth,
+                        max_candidates=self.max_candidates,
+                    )
+                else:
+                    candidates = []
+            else:
+                candidates = extract_candidates(
+                    fetched.html,
+                    fetched.url,
+                    depth=depth,
+                    max_candidates=self.max_candidates,
+                )
 
             for candidate in candidates:
                 self._add_candidate(
