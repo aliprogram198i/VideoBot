@@ -1,4 +1,4 @@
-name: Instagram public browser smoke
+name: Instagram public provider smoke
 
 on:
   push:
@@ -10,91 +10,92 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install Playwright
         run: |
           python -m pip install --upgrade pip
           pip install playwright==1.62.0
           python -m playwright install --with-deps chromium
-      - name: Test exact Instagram reel across public browser variants
+      - name: Test public downloader providers with exact Reel
         env:
           TARGET: https://www.instagram.com/reel/Dcqf3AXNgfL/?stkn=MXR6c2NkZGthN3N1OQ==
         run: |
           python - <<'PY'
-          import asyncio, os, re
-          from urllib.parse import urlparse
+          import asyncio, json, os, re
           from playwright.async_api import async_playwright
 
-          target = os.environ['TARGET']
-          shortcode = 'Dcqf3AXNgfL'
-          variants = [
-              target,
-              f'https://www.instagram.com/reel/{shortcode}/?l=1',
-              f'https://www.instagram.com/p/{shortcode}/',
-              f'https://www.instagram.com/reel/{shortcode}/embed/captioned/?hidecaption=true',
-              f'https://www.instagram.com/p/{shortcode}/embed/captioned/?hidecaption=true',
-          ]
-          uas = [
-              ('mobile', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36'),
-              ('desktop', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'),
-          ]
+          target=os.environ['TARGET']
 
-          async def inspect(page, url):
-              network=[]
+          async def run_sss(page):
+              loop=asyncio.get_running_loop(); future=loop.create_future()
               def on_response(resp):
-                  ct=(resp.headers.get('content-type') or '').lower(); u=resp.url
-                  if 'video' in ct or re.search(r'\\.mp4(?:$|[?])|/v/t',u,re.I): network.append((u,ct))
-              page.on('response', on_response)
-              nav_error=None
-              try:
-                  await page.goto(url, wait_until='domcontentloaded', timeout=30000)
-              except Exception as e:
-                  nav_error=type(e).__name__
-              await page.wait_for_timeout(5000)
-              try: body=await page.locator('body').inner_text(timeout=5000)
-              except Exception: body=''
-              try: dom=await page.locator('video,source').evaluate_all("els => els.map(e => e.currentSrc || e.src || e.getAttribute('src') || '').filter(Boolean)")
-              except Exception: dom=[]
-              try: scripts=await page.locator('script').all_text_contents()
-              except Exception: scripts=[]
-              relay=[s for s in scripts if shortcode in s and ('video_versions' in s or 'xdt_api__v1__clips__home__connection_v2' in s)]
-              direct=[]
-              for s in relay:
-                  for m in re.findall(r'https?://[^\\s"<>]+',s):
-                      if '.mp4' in m: direct.append(m.rstrip('\\\\.,;]}'))
-              candidates=[]
-              for u in dom+direct+[u for u,_ in network]:
-                  if isinstance(u,str) and u.startswith('http') and u not in candidates: candidates.append(u)
-              reusable=[u for u in candidates if '.mp4' in u.lower() or any(x in (urlparse(u).hostname or '').lower() for x in ('scontent','fbcdn'))]
-              print('VARIANT', url)
-              print('NAV_ERROR', nav_error)
-              print('FINAL_URL', page.url)
-              print('TITLE', (await page.title())[:120])
-              print('BODY_MARKERS', {k:(v.lower() in body.lower()) for k,v in {'login':'login','challenge':'challenge','audience':'certain audiences','unavailable':'isn\'t available'}.items()})
-              print('DOM_MEDIA', dom[:3])
-              print('RELAY_SCRIPTS', len(relay), 'NETWORK_MEDIA', len(network), 'REUSABLE', reusable[:3])
-              return reusable
+                  if future.done() or '/api/convert' not in resp.url or resp.request.method != 'POST': return
+                  async def read():
+                      try:
+                          data=await resp.json()
+                          if isinstance(data,dict) and (data.get('url') or data.get('medias')) or isinstance(data,list) and data:
+                              future.set_result(data)
+                          else: future.set_exception(RuntimeError('sss returned no media'))
+                      except Exception as e:
+                          if not future.done(): future.set_exception(e)
+                  asyncio.create_task(read())
+              page.on('response',on_response)
+              await page.goto('https://sssinstagram.com/reels-downloader',wait_until='domcontentloaded',timeout=30000)
+              inp=page.locator('input[type="text"], input[name="url"], input#main_page_text').first
+              await inp.wait_for(timeout=15000); await inp.fill(target)
+              await page.locator('button[type="submit"], button:has-text("Download")').first.click()
+              return await asyncio.wait_for(future,timeout=30000)
+
+          async def run_fvs(page):
+              loop=asyncio.get_running_loop(); future=loop.create_future()
+              def on_response(resp):
+                  if future.done() or 'videodropper.app/allinone' not in resp.url: return
+                  async def read():
+                      try:
+                          data=await resp.json()
+                          if isinstance(data,dict) and (data.get('video') or data.get('image') or data.get('medias') or data.get('url')):
+                              future.set_result(data)
+                          else: future.set_exception(RuntimeError('fastvideosave returned no media'))
+                      except Exception as e:
+                          if not future.done(): future.set_exception(e)
+                  asyncio.create_task(read())
+              page.on('response',on_response)
+              await page.goto('https://fastvideosave.net/',wait_until='domcontentloaded',timeout=30000)
+              await page.wait_for_timeout(1200)
+              inp=page.locator('input[type="text"], input[type="url"], input[name*="url" i], input[placeholder*="link" i], input[placeholder*="url" i]').first
+              await inp.wait_for(timeout=15000); await inp.fill(target)
+              await page.locator('button:has-text("Download"), button[type="submit"], button:has-text("Search"), .btn').first.click()
+              return await asyncio.wait_for(future,timeout=30000)
 
           async def main():
-              successes=[]
               async with async_playwright() as pw:
                   browser=await pw.chromium.launch(headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
-                  for ua_name,ua in uas:
-                      context=await browser.new_context(user_agent=ua,viewport={'width':390,'height':844},locale='en-US')
-                      for url in variants:
-                          page=await context.new_page()
-                          try:
-                              found=await inspect(page,url)
-                              if found: successes.extend((ua_name,url,u) for u in found)
-                          finally:
-                              await page.close()
-                      await context.close()
+                  results={}
+                  for name,fn in [('sssinstagram',run_sss),('fastvideosave',run_fvs)]:
+                      context=await browser.new_context(viewport={'width':1280,'height':900},locale='en-US')
+                      page=await context.new_page()
+                      try:
+                          data=await fn(page)
+                          results[name]=data
+                          print(name,'RAW',json.dumps(data)[:3000])
+                      except Exception as e:
+                          results[name]=None
+                          print(name,'ERROR',type(e).__name__,str(e))
+                      finally:
+                          await context.close()
                   await browser.close()
-              print('SUCCESS_COUNT',len(successes))
-              print('SUCCESS_SAMPLE',successes[:5])
-              if not successes:
-                  raise SystemExit(2)
+              video_urls=[]
+              def walk(v):
+                  if isinstance(v,dict):
+                      for k,x in v.items():
+                          if k in {'url','video'} and isinstance(x,str) and x.startswith('http') and ('.mp4' in x.lower() or 'video' in k.lower()): video_urls.append(x)
+                          walk(x)
+                  elif isinstance(v,list):
+                      for x in v: walk(x)
+              for data in results.values(): walk(data)
+              print('VIDEO_URL_COUNT',len(set(video_urls)))
+              print('VIDEO_URLS',list(dict.fromkeys(video_urls))[:5])
+              if not video_urls: raise SystemExit(2)
 
           asyncio.run(main())
           PY
