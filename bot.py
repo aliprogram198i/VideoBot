@@ -5400,11 +5400,16 @@ async def download_media(
             ):
                 part_size = os.path.getsize(part_file)
 
-                if part_size > MAX_TELEGRAM_AUDIO_BYTES:
-                    raise RuntimeError(
-                        "Audio part exceeds Telegram-safe size: "
-                        f"{part_size} bytes"
+                try:
+                    delivery_policy.validate_telegram_upload(
+                        part_file,
+                        media_type="audio",
                     )
+                except (FileNotFoundError, ValueError) as exc:
+                    raise RuntimeError(
+                        "Audio part rejected by DeliveryPolicy: "
+                        f"{type(exc).__name__}"
+                    ) from exc
 
                 print(
                     f"Part {part_index}/{total_parts}: "
@@ -5512,6 +5517,18 @@ async def download_media(
             )
 
             if video_size_bytes <= MAX_TELEGRAM_VIDEO_BYTES:
+                # Final Telegram upload gate is mandatory.
+                try:
+                    delivery_policy.validate_telegram_upload(
+                        media_file,
+                        media_type="video",
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    raise RuntimeError(
+                        "Video artifact rejected by DeliveryPolicy: "
+                        f"{type(exc).__name__}"
+                    ) from exc
+
                 # فيديو ضمن الحد: إرساله كما هو بدون أي تعديل.
                 with open(
                     media_file,
@@ -5550,11 +5567,16 @@ async def download_media(
                 ):
                     part_size = os.path.getsize(part_file)
 
-                    if part_size > MAX_TELEGRAM_VIDEO_BYTES:
-                        raise RuntimeError(
-                            "A generated video part still exceeds "
-                            f"Telegram limit: {part_file}"
+                    try:
+                        delivery_policy.validate_telegram_upload(
+                            part_file,
+                            media_type="video",
                         )
+                    except (FileNotFoundError, ValueError) as exc:
+                        raise RuntimeError(
+                            "Video part rejected by DeliveryPolicy: "
+                            f"{type(exc).__name__}"
+                        ) from exc
 
                     part_caption = (
                         f"📹 الجزء {part_index} من {total_parts}\n"
