@@ -74,6 +74,7 @@ print(f"🗄️ Database path: {DB_FILE}")
 
 DOWNLOAD_TIMEOUT = 900
 YOINKU_DOWNLOAD_TIMEOUT = 300
+GEMINI_TIMEOUT_SECONDS = 30
 PROCESS_SHUTDOWN_TIMEOUT = 10
 MAX_HTML_BYTES = 5 * 1024 * 1024
 MAX_VIDEO_DOWNLOAD_BYTES = 500 * 1024 * 1024
@@ -131,7 +132,17 @@ async def gemini_generate(prompt):
 
         return response.text or ""
 
-    return await asyncio.to_thread(generate)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(generate),
+            timeout=GEMINI_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Gemini request timed out after %ss",
+            GEMINI_TIMEOUT_SECONDS,
+        )
+        raise
 
 
 def redact_url(value):
@@ -4442,6 +4453,12 @@ async def download_media(
     attempt_number = 1
     attempt_started_at = time.monotonic()
 
+    print(
+        "🧭 Download attempt started | "
+        f"id={attempt_id[:12]} | platform={website} | "
+        f"media={'audio' if is_audio else 'video'}"
+    )
+
     # Always initialize before entering try: finally must be safe on every path.
 
 
@@ -4908,6 +4925,10 @@ async def download_media(
                         print("✅ FALLBACK DOWNLOAD SUCCESS")
 
                     print(f"File: {media_file}")
+                    print(
+                        "🧭 Download attempt fallback success | "
+                        f"id={attempt_id[:12]}"
+                    )
 
                     if yoinku_file:
                         print("===================================")
@@ -5283,6 +5304,7 @@ async def download_media(
 
             print()
             print("===== VIDEO READY =====")
+            print(f"Attempt ID: {attempt_id[:12]}")
             print(f"File: {media_file}")
             print(
                 f"Video size: "
