@@ -22,7 +22,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler
 
-from .admin_common import authorize, audit
+from .admin_common import authorize
 
 _MAX_TEXT = 3900
 _HOME = "admin_monitoring"
@@ -43,6 +43,19 @@ def _cutoff(hours: int = 24) -> str:
 
 def _authorized(update: Update, get_db, owner_id: int, permission: str = "monitoring.view") -> bool:
     return authorize(update, get_db, owner_id, permission)
+
+
+def _audit(get_db, admin_id: int, action: str, target_id: int | None = None) -> None:
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO admin_audit_logs "
+            "(admin_id, action, target_id, details, created_at) VALUES (?, ?, ?, ?, ?)",
+            (admin_id, action, target_id, None, _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def ensure_schema(get_db) -> None:
@@ -446,7 +459,7 @@ async def incidents_callback(update: Update, context, get_db, owner_id: int) -> 
     await query.answer()
     if not _authorized(update, get_db, owner_id):
         return
-    audit(get_db, owner_id, "view_error_incident_center")
+    _audit(get_db, owner_id, "view_error_incident_center")
     await query.edit_message_text(_render_incidents(get_db), parse_mode="HTML", reply_markup=_incident_keyboard())
     raise ApplicationHandlerStop
 
@@ -456,7 +469,7 @@ async def resolver_callback(update: Update, context, get_db, owner_id: int) -> N
     await query.answer()
     if not _authorized(update, get_db, owner_id):
         return
-    audit(get_db, owner_id, "view_platform_resolver_monitor")
+    _audit(get_db, owner_id, "view_platform_resolver_monitor")
     await query.edit_message_text(_render_resolvers(get_db), parse_mode="HTML", reply_markup=_resolver_keyboard())
     raise ApplicationHandlerStop
 
@@ -466,7 +479,7 @@ async def alerts_callback(update: Update, context, get_db, owner_id: int) -> Non
     await query.answer()
     if not _authorized(update, get_db, owner_id):
         return
-    audit(get_db, owner_id, "view_admin_alerts")
+    _audit(get_db, owner_id, "view_admin_alerts")
     text, keyboard = _render_alerts(get_db)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
     raise ApplicationHandlerStop
@@ -503,7 +516,7 @@ async def alert_action_callback(update: Update, context, get_db, owner_id: int) 
     finally:
         conn.close()
 
-    audit(get_db, owner_id, f"admin_alert_{action}", target_id=alert_id)
+    _audit(get_db, owner_id, f"admin_alert_{action}", target_id=alert_id)
     text, keyboard = _render_alerts(get_db)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
     raise ApplicationHandlerStop
