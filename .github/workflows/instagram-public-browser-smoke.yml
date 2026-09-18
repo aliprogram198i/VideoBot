@@ -8,7 +8,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,7 +17,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install playwright==1.62.0
           python -m playwright install --with-deps chromium
-      - name: Test exact Instagram reel with logged-out browser
+      - name: Test exact Instagram reel across public browser variants
         env:
           TARGET: https://www.instagram.com/reel/Dcqf3AXNgfL/?stkn=MXR6c2NkZGthN3N1OQ==
         run: |
@@ -28,69 +28,73 @@ jobs:
 
           target = os.environ['TARGET']
           shortcode = 'Dcqf3AXNgfL'
+          variants = [
+              target,
+              f'https://www.instagram.com/reel/{shortcode}/?l=1',
+              f'https://www.instagram.com/p/{shortcode}/',
+              f'https://www.instagram.com/reel/{shortcode}/embed/captioned/?hidecaption=true',
+              f'https://www.instagram.com/p/{shortcode}/embed/captioned/?hidecaption=true',
+          ]
+          uas = [
+              ('mobile', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36'),
+              ('desktop', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'),
+          ]
+
+          async def inspect(page, url):
+              network=[]
+              def on_response(resp):
+                  ct=(resp.headers.get('content-type') or '').lower(); u=resp.url
+                  if 'video' in ct or re.search(r'\\.mp4(?:$|[?])|/v/t',u,re.I): network.append((u,ct))
+              page.on('response', on_response)
+              nav_error=None
+              try:
+                  await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+              except Exception as e:
+                  nav_error=type(e).__name__
+              await page.wait_for_timeout(5000)
+              try: body=await page.locator('body').inner_text(timeout=5000)
+              except Exception: body=''
+              try: dom=await page.locator('video,source').evaluate_all("els => els.map(e => e.currentSrc || e.src || e.getAttribute('src') || '').filter(Boolean)")
+              except Exception: dom=[]
+              try: scripts=await page.locator('script').all_text_contents()
+              except Exception: scripts=[]
+              relay=[s for s in scripts if shortcode in s and ('video_versions' in s or 'xdt_api__v1__clips__home__connection_v2' in s)]
+              direct=[]
+              for s in relay:
+                  for m in re.findall(r'https?://[^\\s"<>]+',s):
+                      if '.mp4' in m: direct.append(m.rstrip('\\\\.,;]}'))
+              candidates=[]
+              for u in dom+direct+[u for u,_ in network]:
+                  if isinstance(u,str) and u.startswith('http') and u not in candidates: candidates.append(u)
+              reusable=[u for u in candidates if '.mp4' in u.lower() or any(x in (urlparse(u).hostname or '').lower() for x in ('scontent','fbcdn'))]
+              print('VARIANT', url)
+              print('NAV_ERROR', nav_error)
+              print('FINAL_URL', page.url)
+              print('TITLE', (await page.title())[:120])
+              print('BODY_MARKERS', {k:(v.lower() in body.lower()) for k,v in {'login':'login','challenge':'challenge','audience':'certain audiences','unavailable':'isn\'t available'}.items()})
+              print('DOM_MEDIA', dom[:3])
+              print('RELAY_SCRIPTS', len(relay), 'NETWORK_MEDIA', len(network), 'REUSABLE', reusable[:3])
+              return reusable
 
           async def main():
-              network = []
+              successes=[]
               async with async_playwright() as pw:
-                  browser = await pw.chromium.launch(headless=True, args=['--no-sandbox','--disable-dev-shm-usage'])
-                  context = await browser.new_context(
-                      user_agent='Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
-                      viewport={'width':390,'height':844},
-                      locale='en-US',
-                  )
-                  page = await context.new_page()
-                  def on_response(resp):
-                      ct = (resp.headers.get('content-type') or '').lower()
-                      u = resp.url
-                      if 'video' in ct or re.search(r'\\.mp4(?:$|[?])|video_versions|/v/t', u, re.I):
-                          network.append((u, ct))
-                  page.on('response', on_response)
-                  try:
-                      try:
-                          await page.goto(target, wait_until='domcontentloaded', timeout=30000)
-                      except Exception as e:
-                          print('NAVIGATION_ERROR', type(e).__name__)
-                      await page.wait_for_timeout(7000)
-                      final = page.url
-                      title = await page.title()
-                      body = await page.locator('body').inner_text(timeout=5000).catch if False else ''
-                      try:
-                          body = await page.locator('body').inner_text(timeout=5000)
-                      except Exception:
-                          body = ''
-                      try:
-                          dom = await page.locator('video, source').evaluate_all("els => els.map(e => e.currentSrc || e.src || e.getAttribute('src') || '').filter(Boolean)")
-                      except Exception:
-                          dom = []
-                      try:
-                          scripts = await page.locator('script').all_text_contents()
-                      except Exception:
-                          scripts = []
-                      relay = [s for s in scripts if shortcode in s and ('video_versions' in s or 'xdt_api__v1__clips__home__connection_v2' in s)]
-                      direct = []
-                      for s in relay:
-                          for m in re.findall(r'https?://[^\\s"<>]+', s):
-                              if '.mp4' in m or 'video_versions' in m:
-                                  direct.append(m.rstrip('\\\\.,;]}'))
-                      print('FINAL_URL', final)
-                      print('TITLE', title[:200])
-                      print('BODY_MARKERS', {k: (v.lower() in body.lower()) for k,v in {'login':'login','challenge':'challenge','not_available':'isn\'t available','audience':'certain audiences'}.items()})
-                      print('DOM_MEDIA', dom[:10])
-                      print('RELAY_SCRIPTS', len(relay))
-                      print('DIRECT_SCRIPT_HINTS', direct[:5])
-                      print('NETWORK_VIDEO_COUNT', len(network))
-                      print('NETWORK_VIDEO', network[:10])
-                      candidates = []
-                      for u in dom + direct + [u for u,_ in network]:
-                          if isinstance(u,str) and u.startswith('http') and u not in candidates:
-                              candidates.append(u)
-                      reusable = [u for u in candidates if not u.startswith('blob:') and ('.mp4' in u.lower() or 'scontent' in (urlparse(u).hostname or '').lower() or 'fbcdn' in (urlparse(u).hostname or '').lower())]
-                      print('REUSABLE_CANDIDATES', reusable[:10])
-                      if not reusable:
-                          raise SystemExit(2)
-                  finally:
+                  browser=await pw.chromium.launch(headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
+                  for ua_name,ua in uas:
+                      context=await browser.new_context(user_agent=ua,viewport={'width':390,'height':844},locale='en-US')
+                      for url in variants:
+                          page=await context.new_page()
+                          try:
+                              found=await inspect(page,url)
+                              if found: successes.extend((ua_name,url,u) for u in found)
+                          finally:
+                              await page.close()
                       await context.close()
-                      await browser.close()
+                  await browser.close()
+              print('SUCCESS_COUNT',len(successes))
+              print('SUCCESS_SAMPLE',successes[:5])
+              if not successes:
+                  raise SystemExit(2)
 
           asyncio.run(main())
           PY
