@@ -21,9 +21,9 @@ class FakeResponse:
         )()
 
     def read(self, size=-1):
-        if isinstance(self._payload, bytes):
-            return self._payload
-        return self._payload
+        payload = self._payload
+        self._payload = b""
+        return payload
 
     def close(self):
         pass
