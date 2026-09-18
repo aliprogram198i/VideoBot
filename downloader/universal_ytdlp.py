@@ -118,6 +118,9 @@ def extract_with_yt_dlp(
     except json.JSONDecodeError as exc:
         raise RuntimeError("yt-dlp returned invalid JSON metadata") from exc
 
+    if not isinstance(info, dict):
+        raise RuntimeError("yt-dlp returned unexpected metadata shape")
+
     formats = info.get("formats") or []
     if not isinstance(formats, list):
         formats = []
