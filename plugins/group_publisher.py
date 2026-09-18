@@ -318,4 +318,4 @@ def register_group_publisher(app: Any, get_db, admin_id: int | None = None) -> N
                                    lambda u, c: process_group_publisher_message(u, c, get_db)), group=-1)
     if admin_id is not None:
         app.add_handler(CallbackQueryHandler(lambda u, c: admin_group_publisher_callback(u, c, get_db, admin_id),
-                                              pattern=rf"^(?:{ADMIN_CALLBACK}|admin_group_toggle_-?\\d+|admin_group_remove_-?\\d+|admin_group_logs)$"))
+                                              pattern=rf"^(?:{ADMIN_CALLBACK}|admin_group_toggle_-?\d+|admin_group_remove_-?\d+|admin_group_logs)$"))
