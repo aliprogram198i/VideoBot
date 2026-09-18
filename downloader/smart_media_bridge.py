@@ -48,6 +48,30 @@ def _resolver_context(source_url, media_kind="unknown"):
     return platform, kind
 
 
+def _telegram_embed_urls(url):
+    """Build deterministic Telegram public/embed variants for one post."""
+    try:
+        from .telegram_identity import parse_telegram_post_url
+        identity = parse_telegram_post_url(url)
+    except Exception:
+        return []
+    if identity is None:
+        return []
+    channel = identity.channel
+    message_id = identity.message_id
+    base_urls = [
+        f"https://t.me/{channel}/{message_id}",
+        f"https://t.me/s/{channel}/{message_id}",
+    ]
+    variants = []
+    for base in base_urls:
+        for query in ("embed=1&mode=tme", "embed=1"):
+            candidate = f"{base}?{query}"
+            if candidate not in variants:
+                variants.append(candidate)
+    return variants
+
+
 def _protected_social_post(url):
     """Return True for public Telegram/Instagram post URLs protected by source identity gates."""
     try:
@@ -467,6 +491,44 @@ def install(bot_module) -> None:
                 url = args[0]
             if not url:
                 return smart_result
+
+            # Telegram public post pages can expose the actual media only through
+            # their documented embed rendering. Try those deterministic variants
+            # before failing closed; each variant still passes the exact post
+            # identity gate inside the original Smart Extraction implementation.
+            telegram_variants = _telegram_embed_urls(url)
+            if telegram_variants:
+                print(
+                    f"📨 Telegram Source Resolver: trying {len(telegram_variants)} public/embed variant(s)",
+                    flush=True,
+                )
+                for telegram_url in telegram_variants:
+                    try:
+                        variant_kwargs = dict(kwargs)
+                        if args:
+                            variant_args = list(args)
+                            variant_args[0] = telegram_url
+                            variant_kwargs.pop("url", None)
+                        else:
+                            variant_args = []
+                            variant_kwargs["url"] = telegram_url
+                        variant_result = original_smart(*variant_args, **variant_kwargs)
+                        if inspect.isawaitable(variant_result):
+                            variant_result = await variant_result
+                        if isinstance(variant_result, tuple) and variant_result and _is_local_file(variant_result[0], temp_dir):
+                            print(
+                                "✅ Telegram Source Resolver: exact-post media extracted",
+                                flush=True,
+                            )
+                            return variant_result
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        print(
+                            f"⚠️ Telegram Source Resolver variant failed: {type(exc).__name__}",
+                            flush=True,
+                        )
+
             if _protected_social_post(url):
                 print(
                     "🛡️ Smart Media Bridge: blocked generic direct-media handoff for protected social post identity",
