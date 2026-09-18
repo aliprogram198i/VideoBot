@@ -83,3 +83,16 @@ def test_multi_url_contract_deduplicates_and_bounds():
         "https://example.com/b",
         "https://example.com/c",
     ]
+
+
+def test_delivery_is_recorded_only_after_telegram_send_path():
+    from pathlib import Path
+
+    source = Path("bot.py").read_text(encoding="utf-8")
+    marker = "# حفظ التحميل"
+    positions = [i for i in range(len(source)) if source.startswith(marker, i)]
+    assert positions
+    ledger_pos = positions[-1]
+    window = source[max(0, ledger_pos - 18000):ledger_pos]
+    assert "await context.bot.send_video(" in window or "await context.bot.send_audio(" in window
+    assert source.count("save_download(") == 2
