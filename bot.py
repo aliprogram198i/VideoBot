@@ -4484,11 +4484,15 @@ async def download_media(
                 "mp4",
             ])
 
-        # Telegram public posts must be resolved through Telegram's exact single-post embed.
-        # Generic yt-dlp on the channel post URL can select an adjacent post while
-        # still exiting successfully (for example, download_8454.mp4 for 8453).
+        # Source-identity-sensitive posts must never be trusted as a final
+        # yt-dlp artifact. yt-dlp is allowed to inspect the source, but the
+        # resulting file must come from an identity-aware resolver path.
+        # Telegram additionally uses the exact single-post embed because a
+        # generic channel-post extraction can select a neighboring message.
         telegram_download_url = url
         telegram_identity = parse_telegram_post_url(url)
+        instagram_identity = parse_instagram_post_url(url)
+
         if telegram_identity is not None:
             parsed_telegram_url = urlparse(url)
             telegram_query = "embed=1&single=1"
@@ -4507,16 +4511,15 @@ async def download_media(
 
         command.append(telegram_download_url)
 
-        # Telegram primary downloads are intentionally discovery-only.
-        # Even exact embed URLs must not be trusted as final files: yt-dlp
-        # can still materialize a neighboring Telegram post while returning
-        # success. The exact-message Smart Extraction path performs the
-        # container-level provenance check before downloading.
-        if telegram_identity is not None:
+        # Both Telegram and Instagram primary yt-dlp paths are discovery-only.
+        # No final file from these source-identity-sensitive URLs may bypass
+        # the identity-aware Smart/Instagram resolver layer.
+        if telegram_identity is not None or instagram_identity is not None:
             command.append("--skip-download")
+            identity_name = "Telegram" if telegram_identity is not None else "Instagram"
             print(
-                "🛡️ Telegram Primary Download: discovery-only; "
-                "exact-message Smart Extraction will perform the download"
+                f"🛡️ {identity_name} Primary Download: discovery-only; "
+                "identity-aware resolver will perform the final download"
             )
 
         print()
