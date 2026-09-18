@@ -4577,6 +4577,18 @@ async def download_media(
 
         command.append(telegram_download_url)
 
+        # Telegram primary downloads are intentionally discovery-only.
+        # Even exact embed URLs must not be trusted as final files: yt-dlp
+        # can still materialize a neighboring Telegram post while returning
+        # success. The exact-message Smart Extraction path performs the
+        # container-level provenance check before downloading.
+        if telegram_identity is not None:
+            command.append("--skip-download")
+            print(
+                "🛡️ Telegram Primary Download: discovery-only; "
+                "exact-message Smart Extraction will perform the download"
+            )
+
         print()
         print("===== yt-dlp COMMAND =====")
         print("yt-dlp command prepared")
