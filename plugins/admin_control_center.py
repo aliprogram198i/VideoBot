@@ -37,6 +37,7 @@ def admin_keyboard():
          InlineKeyboardButton("🧠 الذكاء الاصطناعي", callback_data="admin_ai")],
         [InlineKeyboardButton("🧹 التخزين", callback_data="admin_storage"),
          InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
+        [InlineKeyboardButton("👥 إدارة المجموعات", callback_data="admin_groups")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
     ])
 
