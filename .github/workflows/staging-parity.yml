@@ -1,0 +1,41 @@
+name: Staging Parity Guard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify canonical runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Dockerfile
+          test -f entrypoint.py
+          grep -F 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]' Dockerfile
+          grep -F 'exec gosu videobot python -u /app/entrypoint.py' Dockerfile
+          grep -F 'COPY --chown=videobot:videobot data_layer.py .' Dockerfile
+          grep -F 'python:3.12-slim' Dockerfile
+          grep -F 'TMPDIR=/app/tmp' Dockerfile
+          grep -F 'VOLUME_DIR = Path("/app/data")' plugins/runtime_config.py
+
+      - name: Verify persistent storage protection
+        shell: python
+        run: |
+          from pathlib import Path
+          forbidden = ("rm -rf /app/data", "rmtree('/app/data')", 'rmtree("/app/data")', "unlink('/app/data')", 'unlink("/app/data")')
+          for path in Path(".").rglob("*"):
+              if ".git" in path.parts or ".github" in path.parts or not path.is_file():
+                  continue
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              for marker in forbidden:
+                  assert marker not in text, (path, marker)

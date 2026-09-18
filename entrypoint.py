@@ -10,6 +10,8 @@ import importlib
 import os
 import time
 
+from storage_lifecycle import cleanup_on_startup
+
 from telegram.ext import Application, CallbackQueryHandler, MessageHandler, filters
 
 LOCK_PATH = str(Path(__file__).resolve().parent / ".alibot-single-instance.lock")
@@ -52,6 +54,12 @@ def main() -> None:
     normalize_runtime_environment()
     lock_file = acquire_single_instance_lock()
     try:
+        cleanup = cleanup_on_startup()
+        print(
+            "🧹 Transient storage cleanup: removed_files=%d removed_dirs=%d skipped=%d"
+            % (cleanup["removed_files"], cleanup["removed_dirs"], cleanup["skipped"]),
+            flush=True,
+        )
         bot_module = importlib.import_module("bot")
         runtime_config = importlib.import_module("plugins.runtime_config")
         register_user_activity = importlib.import_module("plugins.user_activity").register_user_activity

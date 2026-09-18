@@ -43,10 +43,7 @@ from downloader.instagram_failure import (
     instagram_failure_message,
 )
 
-try:
-    from google import genai
-except ImportError:
-    genai = None
+from plugins import gemini_service
 
 
 # ============================================================
@@ -87,60 +84,32 @@ MAX_BROADCAST_LENGTH = 4000
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# Gemini AI
+# Gemini AI (optional / isolated)
 # ============================================================
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
+GEMINI_TIMEOUT_SECONDS = 30
+# Compatibility hook retained for existing admin tests/extensions. Real Gemini
+# initialization is lazy and lives in plugins.gemini_service.
 gemini_client = None
-
-if GEMINI_API_KEY and genai is not None:
-    try:
-        gemini_client = genai.Client(
-            api_key=GEMINI_API_KEY
-        )
-        print("🤖 Gemini AI: ENABLED")
-    except Exception as e:
-        gemini_client = None
-        logger.warning(
-            "Gemini initialization failed: %s",
-            type(e).__name__
-        )
-else:
-    print("🤖 Gemini AI: DISABLED")
+print("🤖 Gemini AI: OPTIONAL ADMIN SERVICE", flush=True)
 
 
 async def gemini_generate(prompt):
-    """
-    إرسال طلب إلى Gemini بدون تعطيل event loop الخاص بالبوت.
-    مفتاح API لا يظهر في السجلات.
-    """
-
     if gemini_client is None:
-        raise RuntimeError(
-            "Gemini AI is not configured"
-        )
+        return await gemini_service.generate(prompt)
 
-    def generate():
+    def _generate():
         response = gemini_client.models.generate_content(
             model="gemini-3.6-flash",
             contents=prompt,
         )
-
         return response.text or ""
 
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(generate),
-            timeout=GEMINI_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "Gemini request timed out after %ss",
-            GEMINI_TIMEOUT_SECONDS,
-        )
-        raise
-
+    return await asyncio.wait_for(
+        asyncio.to_thread(_generate),
+        timeout=GEMINI_TIMEOUT_SECONDS,
+    )
 
 def redact_url(value):
     """Return a log-safe URL without credentials, query values, or fragments."""

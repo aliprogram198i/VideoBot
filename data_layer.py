@@ -10,6 +10,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from download_events import DownloadEvent
+
 
 LOCAL_DB_FILE = "bot_stats.db"
 VOLUME_DIR = Path("/app/data")
@@ -34,7 +36,19 @@ def record_download(
     quality: str,
     created_at: str,
 ) -> None:
-    """Atomically record a delivered download and increment the user counter."""
+    """Atomically record a delivered download and increment the user counter.
+
+    The ledger accepts only the canonical successful-delivery event shape.
+    """
+    event = DownloadEvent(
+        user_id=user_id,
+        username=username,
+        url=url,
+        website=website,
+        media_type=media_type,
+        quality=quality,
+        created_at=created_at,
+    )
     conn = get_db()
     try:
         with conn:
