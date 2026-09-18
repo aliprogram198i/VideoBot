@@ -372,7 +372,7 @@ def extract_telegram_post_candidates(
         # suffix. Our generic parser intentionally requires a recognizable
         # media extension, so handle this exact-message case explicitly.
         video_src = re.search(
-            r"<video\\b[^>]*\\bsrc=['\"]([^'\"]+)['\"]",
+            r"<video\b[^>]*\bsrc=['\"]([^'\"]+)['\"]",
             block,
             flags=re.IGNORECASE,
         )
@@ -435,7 +435,7 @@ def extract_telegram_post_candidates(
             return candidates
 
         video_src = re.search(
-            r"<video\\b[^>]*\\bsrc=['\"]([^'\"]+)['\"]",
+            r"<video\b[^>]*\bsrc=['\"]([^'\"]+)['\"]",
             block,
             flags=re.IGNORECASE,
         )
