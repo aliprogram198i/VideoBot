@@ -261,7 +261,7 @@ async def group_publisher_callback(update: Update, context, get_db):
         await query.edit_message_text("❌ طلب غير صالح.")
 
 
-async def process_admin_group_message(update, context, get_db, admin_id: int) -> bool:
+async async def process_admin_group_message(update, context, get_db, admin_id: int) -> bool:
     if not update.effective_user or update.effective_user.id != admin_id or not update.message or not _is_private(update):
         return False
     if not context.user_data.get("admin_group_waiting_message"):
