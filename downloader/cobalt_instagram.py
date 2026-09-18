@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -58,6 +58,15 @@ def _read_json(response: Any, max_bytes: int = 512 * 1024) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Cobalt returned a non-object response")
     return data
+
+
+def _read_http_error(error: urllib.error.HTTPError) -> dict[str, Any]:
+    try:
+        raw = error.read(512 * 1024)
+        data = json.loads(raw.decode("utf-8", errors="replace"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _download_file(
@@ -124,7 +133,7 @@ def download_instagram_with_cobalt(
 
     payload = {
         "url": source_url,
-        "downloadMode": "mute",
+        "downloadMode": "auto",
         "videoQuality": "max",
         "disableMetadata": True,
         "alwaysProxy": True,
@@ -143,7 +152,26 @@ def download_instagram_with_cobalt(
     )
 
     try:
-        response = open_function(request, timeout=timeout, max_bytes=512 * 1024)
+        try:
+            response = open_function(request, timeout=timeout, max_bytes=512 * 1024)
+        except urllib.error.HTTPError as exc:
+            error_data = _read_http_error(exc)
+            diagnostics.update({
+                "status": "http_error",
+                "http_status": exc.code,
+            })
+            error = error_data.get("error")
+            if isinstance(error, dict):
+                diagnostics["error_code"] = error.get("code")
+                diagnostics["error_context"] = error.get("context")
+            if not diagnostics.get("error_code"):
+                diagnostics["reason"] = f"cobalt_http_{exc.code}"
+            print(
+                "⚠️ Instagram Cobalt Resolver: "
+                f"HTTP {exc.code} code={diagnostics.get('error_code', 'unknown')}"
+            )
+            return None, diagnostics
+
         try:
             data = _read_json(response)
         finally:
@@ -176,6 +204,11 @@ def download_instagram_with_cobalt(
         if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
             diagnostics["status"] = "failed"
             diagnostics.setdefault("reason", "no_media_url")
+            print(
+                "⚠️ Instagram Cobalt Resolver: "
+                f"status={status} code={diagnostics.get('error_code', 'none')} "
+                f"reason={diagnostics.get('reason', 'none')}"
+            )
             return None, diagnostics
 
         shortcode = urlparse(source_url).path.rstrip("/").split("/")[-1]
@@ -205,4 +238,8 @@ def download_instagram_with_cobalt(
             "exception_type": type(exc).__name__,
             "error_message": str(exc)[:1000],
         })
+        print(
+            "⚠️ Instagram Cobalt Resolver: "
+            f"exception={type(exc).__name__}"
+        )
         return None, diagnostics
