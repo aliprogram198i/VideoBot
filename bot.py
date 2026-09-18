@@ -4708,9 +4708,11 @@ async def download_media(
             # Smart Extraction fallback
             # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
             # ------------------------------------------------
-            # If Instagram itself reports an audience/access restriction,
-            # do not enter browser/static/Cobalt probing: those resolvers
-            # cannot make restricted content public and only add latency.
+            # An Instagram access/audience message from yt-dlp is not treated
+            # as proof that every public resolver is unable to read the post.
+            # Keep the deterministic Smart Extraction path available; its
+            # source-identity gate remains fail-closed and therefore cannot
+            # accept media from a neighboring/unrelated Instagram post.
             instagram_access_blocked = (
                 "instagram.com" in hostname
                 and any(
@@ -4726,7 +4728,7 @@ async def download_media(
                 )
             )
 
-            if is_youtube or instagram_access_blocked:
+            if is_youtube:
 
                 smart_file = None
 
@@ -4736,22 +4738,13 @@ async def download_media(
 
                     "valid_candidate_count": 0,
 
-                    "skipped": (
-                        "instagram_access_restricted"
-                        if instagram_access_blocked
-                        else "youtube_smart_extraction_not_applicable"
-                    ),
+                    "skipped": "youtube_smart_extraction_not_applicable",
 
                 }
 
-                if instagram_access_blocked:
-                    print(
-                        "ℹ️ Skipping generic Smart Extraction fallback for Instagram access restriction"
-                    )
-                else:
-                    print(
-                        "ℹ️ Skipping generic Smart Extraction fallback for YouTube"
-                    )
+                print(
+                    "ℹ️ Skipping generic Smart Extraction fallback for YouTube"
+                )
 
             else:
 
@@ -4788,10 +4781,11 @@ async def download_media(
                 # ------------------------------------------------
                 # Yoinku fallback
                 # يتم تجربته فقط إذا فشل Smart Extraction.
-                # Instagram access/audience restrictions are content-shaped
-                # failures; Yoinku cannot make restricted posts public and
-                # retrying it only adds latency. Keep Yoinku for other
-                # Instagram failures and all other platforms.
+                # Yoinku is intentionally not used as an unverified
+                # Instagram recovery path. Unlike Smart Extraction, its
+                # result is not accompanied by a source-page identity that
+                # this bot can verify before delivery. This keeps the
+                # wrong-media protection intact.
                 # ------------------------------------------------
 
                 if instagram_access_blocked:
