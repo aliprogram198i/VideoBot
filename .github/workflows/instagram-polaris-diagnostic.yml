@@ -1,0 +1,48 @@
+name: Instagram Polaris diagnostic
+on:
+  push:
+    branches: [test/instagram-polaris]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python - <<'PY'
+          import requests,re,json,base64
+          from urllib.parse import urlencode
+          code='Dcqf3AXNgfL'
+          alpha='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+          mid=0
+          for ch in code: mid=mid*64+alpha.index(ch)
+          s=requests.Session()
+          h={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36','Accept':'*/*','Accept-Language':'en-US,en;q=0.9','Accept-Encoding':'gzip','Origin':'https://www.instagram.com','Referer':'https://www.instagram.com/','X-IG-App-ID':'936619743392459','X-ASBD-ID':'198387','X-IG-WWW-Claim':'0'}
+          home=s.get('https://www.instagram.com/',headers=h,timeout=30)
+          print('HOME',home.status_code,len(home.text),'COOKIES',list(s.cookies.keys()))
+          for pat in [r'\["LSD",\[\],\{"token":"([^"]+)"',r'"LSD",\[\],\{"token":"([^"]+)"']:
+            m=re.search(pat,home.text)
+            if m: lsd=m.group(1); break
+          else: lsd=None
+          print('LSD',bool(lsd))
+          ruling='https://www.instagram.com/api/v1/web/get_ruling_for_content/?'+urlencode({'content_type':'MEDIA','target_id':str(mid)})
+          rr=s.get(ruling,headers={**h,'Referer':f'https://www.instagram.com/reel/{code}/'},timeout=30)
+          print('RULING',rr.status_code,rr.url,rr.text[:3000])
+          if rr.status_code!=200: raise SystemExit(2)
+          try: rj=rr.json()
+          except: rj={}
+          if rj.get('status')!='ok': raise SystemExit(3)
+          csrf=s.cookies.get('csrftoken','')
+          print('CSRF',bool(csrf))
+          if not csrf or not lsd: raise SystemExit(4)
+          doc='27130156389949648'
+          ph={**h,'X-FB-Friendly-Name':'PolarisLoggedOutDesktopWWWPostRootContentQuery','X-CSRFToken':csrf,'X-FB-LSD':lsd,'X-Requested-With':'XMLHttpRequest','Referer':f'https://www.instagram.com/reel/{code}/'}
+          data={'lsd':lsd,'fb_api_caller_class':'RelayModern','fb_api_req_friendly_name':'PolarisLoggedOutDesktopWWWPostRootContentQuery','server_timestamps':'true','variables':json.dumps({'media_id':str(mid)},separators=(',',':')),'doc_id':doc}
+          gr=s.post('https://www.instagram.com/api/graphql',headers=ph,data=data,timeout=30)
+          print('GRAPHQL',gr.status_code,gr.text[:12000])
+          try: gj=gr.json()
+          except: gj={}
+          media=((gj.get('data') or {}).get('xig_polaris_media') or {}).get('if_not_gated_logged_out') or {}
+          print('MEDIA_KEYS',list(media.keys()) if isinstance(media,dict) else type(media))
+          print('VIDEO_URL',media.get('video_url') if isinstance(media,dict) else None)
+          if not media: raise SystemExit(5)
+          PY
