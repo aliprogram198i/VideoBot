@@ -407,10 +407,26 @@ async def _resolve_async(url: str, *, validator, timeout_ms: int, settle_ms: int
 
 
 async def resolve(url: str, *, validator, timeout_ms: int = DEFAULT_TIMEOUT_MS, settle_ms: int = DEFAULT_SETTLE_MS, max_candidates: int = DEFAULT_MAX_CANDIDATES, max_pages: int = DEFAULT_MAX_PAGES) -> list[str]:
-    """Resolve browser media asynchronously so it can run inside the bot event loop."""
+    """Resolve browser media asynchronously so it can run inside the bot event loop.
+
+    Browser discovery is deliberately not a source-identity authority. Canonical
+    Telegram and Instagram posts therefore never enter this generic browser
+    resolver; their media must be discovered by a resolver that can prove the
+    exact post identity before download admission.
+    """
     if not _browser_enabled():
         return []
     try:
+        from downloader.instagram_identity import parse_instagram_post_url
+        from downloader.telegram_identity import parse_telegram_post_url
+
+        if parse_telegram_post_url(url) is not None:
+            LOG.info("🛡️ Browser Resolver: skipped Telegram source-identity-sensitive URL")
+            return []
+        if parse_instagram_post_url(url) is not None:
+            LOG.info("🛡️ Browser Resolver: skipped Instagram source-identity-sensitive URL")
+            return []
+
         if _is_krx18_host(url):
             # KRX18 is handled by the dedicated public-page resolver.
             # Do not fall back to generic browser exploration here: that path
