@@ -1,4 +1,4 @@
-name: Instagram exact-source diagnostics
+name: Instagram exact public resolver diagnostic
 
 on:
   push:
@@ -11,38 +11,43 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Probe Instagram public media endpoints
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install --with-deps chromium
+      - name: Probe DropZap public resolver
         env:
           TARGET: https://www.instagram.com/reel/Dcqf3AXNgfL/?stkn=MXR6c2NkZGthN3N1OQ==
         run: |
           python - <<'PY'
-          import base64,json,re,requests
-          from urllib.parse import urlparse
-          target='https://www.instagram.com/reel/Dcqf3AXNgfL/'
-          code='Dcqf3AXNgfL'
-          pk=str(int.from_bytes(base64.urlsafe_b64decode(code+'=='),'big'))
-          headers={
-            'User-Agent':'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
-            'Accept':'application/json,text/plain,*/*','Accept-Language':'en-US,en;q=0.9',
-            'Referer':target,'X-IG-App-ID':'936619743392459','X-Requested-With':'XMLHttpRequest'
-          }
-          urls=[
-            f'https://www.instagram.com/api/v1/media/{pk}/info/',
-            f'https://www.instagram.com/api/v1/media/{pk}/info/?hl=en',
-          ]
-          found=[]
-          for u in urls:
-            try:
-              r=requests.get(u,headers=headers,timeout=20,allow_redirects=True)
-              print('URL',u,'STATUS',r.status_code,'FINAL',r.url,'CT',r.headers.get('content-type'))
-              print('BODY',r.text[:5000])
-              try:
-                j=r.json()
-                blob=json.dumps(j)
-                if 'video_versions' in blob:
-                  found.append(j)
-              except Exception: pass
-            except Exception as e: print('ERROR',type(e).__name__,str(e))
-          print('VIDEO_VERSION_RESPONSES',len(found))
-          if not found: raise SystemExit(2)
+          import asyncio,os,re
+          from playwright.async_api import async_playwright
+          target=os.environ['TARGET']
+          async def main():
+            async with async_playwright() as pw:
+              b=await pw.chromium.launch(headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
+              c=await b.new_context(viewport={'width':1280,'height':900},locale='en-US')
+              p=await c.new_page()
+              hits=[]
+              def resp(r):
+                u=r.url
+                if any(x in u.lower() for x in ('api','instagram','download','media')):
+                  hits.append((u,r.status,r.headers.get('content-type','')))
+              p.on('response',resp)
+              await p.goto('https://www.dropzap.digital/instagram-downloader',wait_until='domcontentloaded',timeout=30000)
+              await p.wait_for_timeout(1500)
+              inp=p.locator('input[type="text"],input[type="url"],input[placeholder*="Instagram" i],textarea').first
+              await inp.wait_for(timeout=15000); await inp.fill(target)
+              await p.locator('button:has-text("Download"),button:has-text("Find"),button[type="submit"]').first.click()
+              await p.wait_for_timeout(10000)
+              html=await p.content()
+              links=await p.locator('a').evaluate_all("els=>els.map(e=>e.href).filter(Boolean)")
+              print('FINAL',p.url)
+              print('HITS',hits[-30:])
+              print('MP4_LINKS',[x for x in links if '.mp4' in x.lower()][:10])
+              print('HTML_MP4_COUNT',html.lower().count('.mp4'))
+              print('HTML_MARKERS',[(x,x.lower() in html.lower()) for x in ['Dcqf3AXNgfL','download video','error','private']])
+              if not any('.mp4' in x.lower() for x in links) and '.mp4' not in html.lower(): raise SystemExit(2)
+              await c.close(); await b.close()
+          asyncio.run(main())
           PY
