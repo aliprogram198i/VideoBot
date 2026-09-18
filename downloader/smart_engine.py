@@ -200,10 +200,6 @@ class SmartExtractionEngine:
             max_html_bytes=max_html_bytes,
             max_ranked_candidates=max_ranked_candidates,
         )
-        diagnostics.append(
-            "resolver_budget:timeout=%ss:validation=%ss:html=%d:candidates=%d"
-            % (timeout, validation_timeout, max_html_bytes, max_ranked_candidates)
-        )
 
         try:
             resolution = self.resolver.resolve(
@@ -230,6 +226,10 @@ class SmartExtractionEngine:
             )
             return self._record_telemetry(result, started_at)
 
+        diagnostics.append(
+            "resolver_budget:timeout=%ss:validation=%ss:html=%d:candidates=%d"
+            % (timeout, validation_timeout, max_html_bytes, max_ranked_candidates)
+        )
         if resolution.resolution_error is not None:
             diagnostics.append(f"resolution_failed:{resolution.resolution_error}")
 
