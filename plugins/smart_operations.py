@@ -14,6 +14,7 @@ from .smart_download_control import register_smart_download_control
 from .user_experience_v2 import register_user_experience_v2
 from .telegram_message_guard import install as install_telegram_message_guard
 from .link_investigator import install as install_link_investigator
+from .group_publisher import register_group_publisher
 
 CALLBACK = "admin_smart_operations"
 
@@ -200,11 +201,12 @@ def _has_smart_operations_handler(app):
 
 
 def register_smart_operations(app, get_db, admin_id):
-    """Register Smart Operations once, even when legacy bootstrap calls it too."""
+    """Register Smart Operations once, including the isolated group publisher layer."""
     install_telegram_message_guard()
     register_smart_download_control(app)
     install_link_investigator()
     register_user_experience_v2(app)
+    register_group_publisher(app, get_db)
     if _has_smart_operations_handler(app):
         return
     app.add_handler(CallbackQueryHandler(
