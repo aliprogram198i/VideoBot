@@ -1,7 +1,6 @@
 from pathlib import Path
 import os
 import asyncio
-import sqlite3
 import tempfile
 import shutil
 import html
@@ -31,6 +30,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
+from data_layer import get_db as _data_get_db, record_download as _record_download
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
     parse_telegram_post_url,
@@ -66,13 +66,7 @@ LOCAL_DB_FILE = "bot_stats.db"
 # قاعدة البيانات
 # ============================================================
 
-VOLUME_DIR = Path("/app/data")
-
-if VOLUME_DIR.is_dir():
-    DB_FILE = str(VOLUME_DIR / "bot_stats.db")
-else:
-    DB_FILE = LOCAL_DB_FILE
-
+DB_FILE = _data_get_db.__globals__["DB_FILE"]
 print(f"🗄️ Database path: {DB_FILE}")
 
 DOWNLOAD_TIMEOUT = 900
@@ -886,16 +880,9 @@ TEXTS = {
 # ============================================================
 
 def get_db():
-    conn = sqlite3.connect(
-        DB_FILE,
-        timeout=30
-    )
+    """Compatibility facade; connection ownership lives in data_layer."""
+    return _data_get_db()
 
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
-
-    return conn
 
 
 def column_exists(cur, table_name, column_name):
@@ -2058,46 +2045,17 @@ def detect_website(url):
 # حفظ التحميل
 # ============================================================
 
-def save_download(
-    user,
-    url,
-    website,
-    media_type,
-    quality
-):
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO downloads (
-            user_id,
-            username,
-            url,
-            website,
-            media_type,
-            quality,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
-        user.id,
-        user.username,
-        url,
-        website,
-        media_type,
-        quality,
-        datetime.now().isoformat(),
-    ))
-
-    cur.execute("""
-        UPDATE users
-        SET downloads = downloads + 1
-        WHERE user_id = ?
-    """, (user.id,))
-
-    conn.commit()
-    conn.close()
+def save_download(user, url, website, media_type, quality):
+    """Compatibility facade for the canonical atomic download ledger write."""
+    _record_download(
+        user_id=user.id,
+        username=user.username,
+        url=url,
+        website=website,
+        media_type=media_type,
+        quality=quality,
+        created_at=datetime.now().isoformat(),
+    )
 
 
 # ============================================================
