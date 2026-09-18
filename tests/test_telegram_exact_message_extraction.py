@@ -32,6 +32,7 @@ class TelegramExactMessageExtractionTests(unittest.TestCase):
             message_id=8453,
         )
         self.assertEqual([item.url for item in candidates], ["https://cdn.example/target.mp4"])
+        self.assertEqual(candidates[0].metadata["telegram_data_post"], "syrevarch/8453")
 
     def test_embed_player_uses_exact_post_href(self):
         page = '''
@@ -55,6 +56,7 @@ class TelegramExactMessageExtractionTests(unittest.TestCase):
             [item.url for item in candidates],
             ["https://cdn.example/target.mp4"],
         )
+        self.assertEqual(candidates[0].metadata["telegram_data_post"], "syrevarch/8453")
 
     def test_telegram_video_src_without_extension_is_accepted(self):
         page = '''
