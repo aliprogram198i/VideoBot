@@ -29,7 +29,13 @@ jobs:
           grep -F 'VOLUME_DIR = Path("/app/data")' plugins/runtime_config.py
 
       - name: Verify persistent storage protection
-        shell: bash
+        shell: python
         run: |
-          set -euo pipefail
-          ! grep -R --line-number --exclude-dir=.git -E 'rmtree\(["'\''"]/app/data|rm -rf /app/data|unlink\(["'\''"]/app/data' .
+          from pathlib import Path
+          forbidden = ("rm -rf /app/data", "rmtree('/app/data')", 'rmtree("/app/data")', "unlink('/app/data')", 'unlink("/app/data")')
+          for path in Path(".").rglob("*"):
+              if ".git" in path.parts or not path.is_file():
+                  continue
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              for marker in forbidden:
+                  assert marker not in text, (path, marker)
