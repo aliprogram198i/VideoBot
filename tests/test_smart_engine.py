@@ -223,19 +223,37 @@ class SmartEngineTests(unittest.TestCase):
             result.diagnostics[0].startswith("resolution_failed:")
         )
 
-
     def test_source_identity_gate_rejects_generic_telegram_candidate(self):
         root = "https://t.me/example/8453"
-        engine = self.make_engine({root: '<video src="https://cdn.example/wrong.mp4"></video>'})
+        neighboring = "https://t.me/example/8454"
+        media = "https://cdn.example/wrong.mp4"
+        engine = self.make_engine(
+            {
+                root: f'<iframe src="{neighboring}"></iframe>',
+                neighboring: f'<video src="{media}"></video>',
+            }
+        )
+
         result = engine.extract(root)
+
         self.assertIsNone(result.best_media)
-        self.assertTrue(any(item.startswith("source_identity_gate:telegram:") for item in result.diagnostics))
+        self.assertTrue(
+            any(
+                item.startswith("source_identity_gate:telegram:")
+                for item in result.diagnostics
+            )
+        )
 
     def test_source_identity_gate_rejects_neighboring_instagram_candidate(self):
         root = "https://www.instagram.com/reel/Dcqf3AXNgfL/"
         neighboring = "https://www.instagram.com/reel/OTHER123/"
         media = "https://cdn.example/other.mp4"
-        engine = self.make_engine({root: f'<iframe src="{neighboring}"></iframe>', neighboring: f'<video src="{media}"></video>'})
+        engine = self.make_engine(
+            {
+                root: f'<iframe src="{neighboring}"></iframe>',
+                neighboring: f'<video src="{media}"></video>',
+            }
+        )
         result = engine.extract(root)
         self.assertIsNone(result.best_media)
         self.assertTrue(any(item.startswith("source_identity_gate:instagram:") for item in result.diagnostics))
