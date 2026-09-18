@@ -23,6 +23,8 @@ from .embed_resolver import EmbedResolver
 from .smart_learning import SmartTelemetryStore, get_telemetry_store
 from .instagram_identity import candidate_matches_instagram_source, parse_instagram_post_url
 from .telegram_identity import candidate_matches_telegram_source, parse_telegram_post_url
+from .resolver_budget import ResolverBudget
+from .resolver_contracts import ResolverResult
 
 
 DEFAULT_PRIMARY_VALIDATION_CANDIDATES = 24
@@ -67,6 +69,7 @@ class SmartExtractionEngine:
         self.validator = validator
         self.ranker = ranker
         self.telemetry_store = telemetry_store
+        self.budget = ResolverBudget.from_environment()
 
     def _record_telemetry(self, result: ExtractionResult, started_at: float) -> ExtractionResult:
         store = self.telemetry_store
@@ -190,6 +193,17 @@ class SmartExtractionEngine:
 
         started_at = time.perf_counter()
         diagnostics: list[str] = []
+        budget = self.budget
+        timeout, validation_timeout, max_html_bytes, max_ranked_candidates = budget.apply(
+            timeout=timeout,
+            validation_timeout=validation_timeout,
+            max_html_bytes=max_html_bytes,
+            max_ranked_candidates=max_ranked_candidates,
+        )
+        diagnostics.append(
+            "resolver_budget:timeout=%ss:validation=%ss:html=%d:candidates=%d"
+            % (timeout, validation_timeout, max_html_bytes, max_ranked_candidates)
+        )
 
         try:
             resolution = self.resolver.resolve(
@@ -218,6 +232,15 @@ class SmartExtractionEngine:
 
         if resolution.resolution_error is not None:
             diagnostics.append(f"resolution_failed:{resolution.resolution_error}")
+
+        resolver_contract = ResolverResult.from_output(
+            "embed_resolver",
+            resolution.candidates,
+            elapsed_ms=(time.perf_counter() - started_at) * 1000.0,
+            failure_reason=str(resolution.resolution_error) if resolution.resolution_error else None,
+        )
+        if resolver_contract.status == "empty":
+            diagnostics.append("resolver_result:empty")
 
         candidates = list(resolution.candidates)
         primary = candidates[:DEFAULT_PRIMARY_VALIDATION_CANDIDATES]
