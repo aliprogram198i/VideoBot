@@ -40,6 +40,7 @@ class TelegramIdentityTests(unittest.TestCase):
             kind="progressive",
             source_page="https://t.me/s/example/8453",
             discovered_by="video",
+            metadata={"telegram_data_post": "example/8453"},
         )
         neighboring = MediaCandidate(
             url="https://cdn.example/other.mp4",
@@ -56,6 +57,22 @@ class TelegramIdentityTests(unittest.TestCase):
 
         self.assertTrue(candidate_matches_telegram_source(same, source))
         self.assertFalse(candidate_matches_telegram_source(neighboring, source))
+
+        missing_provenance = MediaCandidate(
+            url="https://cdn.example/unverified.mp4",
+            kind="progressive",
+            source_page="https://t.me/example/8453",
+            discovered_by="video",
+        )
+        wrong_provenance = MediaCandidate(
+            url="https://cdn.example/wrong.mp4",
+            kind="progressive",
+            source_page="https://t.me/example/8453",
+            discovered_by="video",
+            metadata={"telegram_data_post": "example/8454"},
+        )
+        self.assertFalse(candidate_matches_telegram_source(missing_provenance, source))
+        self.assertFalse(candidate_matches_telegram_source(wrong_provenance, source))
         self.assertFalse(candidate_matches_telegram_source(foreign, source))
 
 

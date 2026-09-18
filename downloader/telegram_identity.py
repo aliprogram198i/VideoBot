@@ -108,7 +108,15 @@ def candidate_matches_telegram_source(
 
     source_page = getattr(candidate, "source_page", None)
     candidate_identity = parse_telegram_post_url(source_page)
-    if candidate_identity is None:
+    if candidate_identity is None or candidate_identity.key != source_identity.key:
         return False
 
-    return candidate_identity.key == source_identity.key
+    # For Telegram HTML extraction, source_page identifies the requested
+    # page but does not prove which message container produced the media URL.
+    # Require explicit provenance from the exact data-post/player container.
+    metadata = getattr(candidate, "metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+    provenance = str(metadata.get("telegram_data_post", "")).strip().lstrip("/").lower()
+    expected = f"{source_identity.channel}/{source_identity.message_id}".lower()
+    return provenance == expected
