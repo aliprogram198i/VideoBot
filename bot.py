@@ -4698,6 +4698,31 @@ async def download_media(
                             )
 
 
+            # Instagram direct Relay/HTML recovery. This reads the public
+            # page payload used by Instagram's web client. It remains isolated
+            # and fail-closed on exact shortcode identity.
+            relay_file = None
+            relay_diagnostics = {}
+            if not smart_file and instagram_source is not None:
+                from downloader.instagram_relay_html import download_instagram_with_relay
+
+                relay_file, relay_diagnostics = await asyncio.to_thread(
+                    download_instagram_with_relay,
+                    url,
+                    temp_dir,
+                    request_factory=Request,
+                    open_function=safe_urlopen,
+                    max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
+                )
+                if relay_file:
+                    smart_file = relay_file
+                    smart_diagnostics = {
+                        **smart_diagnostics,
+                        "resolver": "instagram_relay_html",
+                        "instagram_relay_html": relay_diagnostics,
+                    }
+                    print("🎯 Instagram Direct Relay HTML Resolver: SUCCESS")
+
             # Instagram direct public GraphQL recovery. This resolver is
             # intentionally independent of Cobalt and uses Instagram's current
             # public web GraphQL path without cookies or credentials. It runs
