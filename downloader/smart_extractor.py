@@ -306,6 +306,70 @@ def extract_candidates(
     return candidates[:max_candidates]
 
 
+
+def extract_telegram_post_candidates(
+    page: str,
+    page_url: str,
+    *,
+    channel: str,
+    message_id: int,
+    depth: int = 0,
+    max_candidates: int = 100,
+) -> list[MediaCandidate]:
+    """Extract media only from the exact Telegram message container.
+
+    Telegram channel pages can contain multiple message containers. A generic
+    HTML scan can therefore pick the video from the next/previous post while
+    the page URL still identifies the requested post. We first isolate the
+    .tgme_widget_message whose data-post is exactly channel/message_id, then
+    run the normal media parser only on that container.
+    """
+    if not isinstance(page, str):
+        raise TypeError("page must be a string")
+    if not _is_http_url(page_url):
+        raise ValueError("page_url must be an absolute HTTP(S) URL")
+    if not isinstance(channel, str) or not channel or not isinstance(message_id, int):
+        return []
+
+    decoded = _decode_text(page)
+    wrapper_matches = list(
+        re.finditer(
+            r'<div\b[^>]*class=["\'][^"\']*\btgme_widget_message_wrap\b[^"\']*["\'][^>]*>',
+            decoded,
+            flags=re.IGNORECASE,
+        )
+    )
+    if not wrapper_matches:
+        return []
+
+    target = f"{channel}/{message_id}".lower()
+    for index, match in enumerate(wrapper_matches):
+        end = wrapper_matches[index + 1].start() if index + 1 < len(wrapper_matches) else len(decoded)
+        block = decoded[match.start():end]
+
+        post_match = re.search(
+            r'\bdata-post=["\']([^"\']+)["\']',
+            block,
+            flags=re.IGNORECASE,
+        )
+        if not post_match:
+            continue
+        post_value = post_match.group(1).strip().lstrip("/")
+        if post_value.lower() != target:
+            continue
+
+        # Keep only this exact message's HTML. The normal extractor can now
+        # safely inspect video/source attributes without crossing into an
+        # adjacent Telegram post.
+        return extract_candidates(
+            block,
+            page_url,
+            depth=depth,
+            max_candidates=max_candidates,
+        )
+
+    return []
+
 def extract_candidate_urls(
     page: str,
     page_url: str,
