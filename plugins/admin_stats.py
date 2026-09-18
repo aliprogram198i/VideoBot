@@ -9,6 +9,8 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
+from data_layer import download_counts
+
 
 def _authorized(update: Update, owner_id: int) -> bool:
     return bool(update.effective_user and update.effective_user.id == owner_id)
@@ -24,9 +26,10 @@ def _stats(get_db, days: int | None = None) -> dict[str, Any]:
             cutoff = (datetime.now() - timedelta(days=days)).isoformat()
             download_where = " WHERE created_at >= ?"
             params = (cutoff,)
-        downloads = conn.execute(f"SELECT COUNT(*) AS count FROM downloads{download_where}", params).fetchone()["count"]
-        videos = conn.execute(f"SELECT COUNT(*) AS count FROM downloads{download_where} AND media_type = 'video'" if download_where else "SELECT COUNT(*) AS count FROM downloads WHERE media_type = 'video'", params if download_where else ()).fetchone()["count"]
-        audio = conn.execute(f"SELECT COUNT(*) AS count FROM downloads{download_where} AND media_type = 'audio'" if download_where else "SELECT COUNT(*) AS count FROM downloads WHERE media_type = 'audio'", params if download_where else ()).fetchone()["count"]
+        ledger = download_counts(days=days)
+        downloads = ledger["downloads"]
+        videos = ledger["videos"]
+        audio = ledger["audio"]
         phones = conn.execute("SELECT COUNT(*) AS count FROM users WHERE phone IS NOT NULL AND phone != ''").fetchone()["count"]
         locations = conn.execute("SELECT COUNT(*) AS count FROM users WHERE latitude IS NOT NULL AND longitude IS NOT NULL").fetchone()["count"]
         websites = conn.execute(f"SELECT website, COUNT(*) AS count FROM downloads{download_where} GROUP BY website ORDER BY count DESC LIMIT 10", params).fetchall()
