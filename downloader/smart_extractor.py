@@ -339,9 +339,6 @@ def extract_telegram_post_candidates(
             flags=re.IGNORECASE,
         )
     )
-    if not wrapper_matches:
-        return []
-
     target = f"{channel}/{message_id}".lower()
 
     def _post_value_matches(value: str) -> bool:
