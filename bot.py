@@ -8,6 +8,7 @@ import re
 import ipaddress
 import logging
 import socket
+import sys
 import json
 import time
 import uuid
@@ -30,6 +31,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
+from plugins.smart_search_pro import register_smart_search_pro
 from data_layer import get_db as _data_get_db, record_download as _record_download
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
@@ -8284,6 +8286,13 @@ def main():
             admin_text_router
         )
     )
+
+    # ========================================================
+    # Smart Search Pro — canonical non-URL text entry point
+    # Must run before the legacy generic text handler.
+    # ========================================================
+
+    register_smart_search_pro(app, sys.modules[__name__])
 
     # ========================================================
     # رسائل باقي المستخدمين
