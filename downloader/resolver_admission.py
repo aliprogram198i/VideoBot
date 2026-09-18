@@ -6,9 +6,7 @@ the file is allowed to continue toward Telegram delivery.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from urllib.parse import urlparse
 
 from downloader.instagram_identity import parse_instagram_post_url
 
@@ -71,15 +69,18 @@ def admit_local_media(
         }:
             result["reason"] = "instagram_untrusted_resolver"
             return None, result
-        if details.get("source_identity_verified") is not True:
-            result["reason"] = "instagram_identity_proof_missing"
+        proof = details.get("identity_proof")
+        if (
+            details.get("source_identity_verified") is not True
+            or not isinstance(proof, dict)
+            or proof.get("type") != "instagram_shortcode"
+            or proof.get("key") != parsed_instagram.key
+        ):
+            result["reason"] = "instagram_identity_proof_missing_or_mismatch"
             return None, result
 
         result["source_identity"] = parsed_instagram.key
-        result["identity_proof"] = details.get("identity_proof") or {
-            "type": "instagram_shortcode",
-            "key": parsed_instagram.key,
-        }
+        result["identity_proof"] = proof
 
     result.update({"admitted": True, "reason": "source_identity_and_file_verified"})
     return str(path), result
