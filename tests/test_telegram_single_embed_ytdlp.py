@@ -27,7 +27,7 @@ class TelegramSingleEmbedYtdlpTests(unittest.TestCase):
             def fetch(self, *args, **kwargs):
                 raise AssertionError("fetcher should not be called")
 
-        resolver = EmbedResolver(DummyFetcher())
+        resolver = EmbedResolver(PageFetcher(lambda *args, **kwargs: DummyFetcher().fetch(*args, **kwargs)))
         candidates = []
         seen = set()
         resolver._add_universal_ytdlp_candidates(
