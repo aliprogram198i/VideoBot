@@ -125,8 +125,9 @@ MESSAGES = {
             "جرّب رابطاً آخر أو أعد المحاولة لاحقاً."
         ),
         "unknown": (
-            "❌ تعذر تحميل هذا الرابط حالياً.\n\n"
-            "قد يكون المحتوى غير متاح، أو يحتاج إلى تسجيل دخول، أو حدث خطأ مؤقت."
+            "❌ تعذر تحميل هذا الرابط.\n\n"
+            "قد يكون الرابط غير متاح حالياً، أو أن المنصة "
+            "تحتاج إلى تسجيل دخول، أو أن الفيديو غير مدعوم."
         ),
     },
     "en": {
@@ -159,10 +160,7 @@ MESSAGES = {
             "⚠️ Instagram media could not be extracted from this link right now.\n\n"
             "Try another link or try again later."
         ),
-        "unknown": (
-            "❌ This link could not be downloaded right now.\n\n"
-            "The content may be unavailable, require login, or be affected by a temporary error."
-        ),
+        "unknown": "❌ Unable to download this link.",
     },
     "tr": {
         "audience_restricted": (
@@ -183,7 +181,7 @@ MESSAGES = {
         "unavailable": "❌ Bu Instagram içeriği şu anda kullanılamıyor veya artık mevcut değil.\n\nBağlantıyı kontrol edip tekrar deneyin.",
         "access_unavailable": "⚠️ Instagram medyasına mevcut bot oturumundan erişilemedi.\n\nBaşka bir herkese açık bağlantı deneyin veya daha sonra tekrar deneyin.",
         "extractor_error": "⚠️ Bu Instagram bağlantısından medya şu anda çıkarılamadı.\n\nBaşka bir bağlantı deneyin veya daha sonra tekrar deneyin.",
-        "unknown": "❌ Bu bağlantı şu anda indirilemedi.\n\nİçerik kullanılamıyor, giriş gerektiriyor veya geçici bir hata oluşmuş olabilir.",
+        "unknown": "❌ Bu bağlantı indirilemedi.",
     },
     "de": {
         "audience_restricted": (
@@ -201,7 +199,7 @@ MESSAGES = {
         "unavailable": "❌ Dieser Instagram-Inhalt ist offenbar nicht verfügbar oder existiert nicht mehr.\n\nÜberprüfe den Link und versuche es erneut.",
         "access_unavailable": "⚠️ Auf die Instagram-Medien konnte über die aktuelle Bot-Sitzung nicht zugegriffen werden.\n\nVersuche einen anderen öffentlichen Link oder später erneut.",
         "extractor_error": "⚠️ Die Instagram-Medien konnten aus diesem Link derzeit nicht extrahiert werden.\n\nVersuche einen anderen Link oder später erneut.",
-        "unknown": "❌ Dieser Link konnte derzeit nicht heruntergeladen werden.\n\nDer Inhalt ist möglicherweise nicht verfügbar, erfordert eine Anmeldung oder es liegt ein vorübergehender Fehler vor.",
+        "unknown": "❌ Dieser Link konnte nicht heruntergeladen werden.",
     },
 }
 
