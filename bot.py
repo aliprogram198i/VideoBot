@@ -42,7 +42,7 @@ from downloader.instagram_identity import (
 from downloader.instagram_failure import (
     instagram_failure_message,
 )
-from downloader.resolver_admission import admit_local_media
+from downloader.resolver_admission import admit_local_media, admit_media_artifact
 
 from plugins import gemini_service
 
@@ -2546,6 +2546,11 @@ async def download_with_smart_extraction(
                 "source": telegram_source.key,
                 "accepted_source_page": candidate.source_page,
             }
+            diagnostics["source_identity_verified"] = True
+            diagnostics["identity_proof"] = {
+                "type": "telegram_post",
+                "key": telegram_source.key,
+            }
         elif instagram_source is not None:
             matching_results = [
                 item
@@ -2576,6 +2581,11 @@ async def download_with_smart_extraction(
                 "matched_candidates": len(matching_results),
                 "source": instagram_source.key,
                 "accepted_source_page": candidate.source_page,
+            }
+            diagnostics["source_identity_verified"] = True
+            diagnostics["identity_proof"] = {
+                "type": "instagram_shortcode",
+                "key": instagram_source.key,
             }
         else:
             candidate = result.best_media.candidate
