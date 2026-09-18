@@ -12,12 +12,15 @@ import asyncio
 import difflib
 import hashlib
 import html
+import logging
 import re
 import time
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+
+logger = logging.getLogger(__name__)
 
 from downloader.smart_search import SearchResult, search as base_search
 from plugins.smart_download_control import show_control_for_url
