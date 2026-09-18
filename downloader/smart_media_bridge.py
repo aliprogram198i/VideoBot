@@ -86,10 +86,15 @@ def _protected_social_post(url):
         host = (urlparse(str(url)).hostname or "").lower().rstrip(".")
         if host in {"t.me", "telegram.me"} or host.endswith(".t.me") or host.endswith(".telegram.me"):
             from .telegram_identity import parse_telegram_post_url
-            return parse_telegram_post_url(url) is not None
+            # Protected hosts remain protected even when the URL is not a
+            # parseable public post. This prevents generic resolver fallback.
+            parse_telegram_post_url(url)
+            return True
         if host == "instagram.com" or host.endswith(".instagram.com"):
             from .instagram_identity import parse_instagram_post_url
-            return parse_instagram_post_url(url) is not None
+            # Same fail-closed policy for Instagram protected hosts.
+            parse_instagram_post_url(url)
+            return True
     except Exception:
         # A source-identity check must fail closed for these protected hosts.
         return True
