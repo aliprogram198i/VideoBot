@@ -4768,6 +4768,32 @@ async def download_media(
                             )
 
 
+            # Instagram has a dedicated private Cobalt resolver in the
+            # same Railway project. It is attempted only after the identity-
+            # aware Smart Extraction path fails, and only for canonical
+            # Instagram posts/reels. This avoids generic resolver drift.
+            cobalt_file = None
+            cobalt_diagnostics = {}
+            if not smart_file and instagram_source is not None:
+                from downloader.cobalt_instagram import download_instagram_with_cobalt
+
+                cobalt_file, cobalt_diagnostics = await asyncio.to_thread(
+                    download_instagram_with_cobalt,
+                    url,
+                    temp_dir,
+                    request_factory=Request,
+                    open_function=safe_urlopen,
+                    max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
+                )
+                if cobalt_file:
+                    smart_file = cobalt_file
+                    smart_diagnostics = {
+                        **smart_diagnostics,
+                        "resolver": "cobalt_instagram",
+                        "cobalt": cobalt_diagnostics,
+                    }
+                    print("🎯 Instagram Cobalt Resolver: SUCCESS")
+
             if smart_file:
                 media_file = smart_file
                 fallback_file = None
