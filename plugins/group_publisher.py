@@ -273,23 +273,35 @@ async def handle_my_chat_member(update, context, get_db):
 
 
 async def admin_group_publisher_callback(update: Update, context, get_db, admin_id: int):
-    query = update.callback_query
-    await query.answer()
-    if not query.from_user or query.from_user.id != admin_id or not _is_private(update):
-        return
-    rows = _list_groups(get_db)
-    if not rows:
-        text = "👥 <b>إدارة مجموعات AliBot</b>\n\nلا توجد مجموعات مرتبطة حاليًا."
-    else:
-        lines = [f"👥 <b>المجموعات المرتبطة: {len(rows)}</b>\n"]
-        for row in rows[:50]:
-            lines.append(f"• {html.escape(str(row['title'] or 'مجموعة'))} — <code>{row['chat_id']}</code>")
-        if len(rows) > 50:
-            lines.append(f"\n... و{len(rows)-50} أخرى")
-        text = "\n".join(lines)
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 تحديث", callback_data=ADMIN_CALLBACK)],
-                                     [InlineKeyboardButton("🔙 Smart Operations", callback_data="admin_smart_operations")]])
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+    q=update.callback_query; await q.answer()
+    if not q.from_user or q.from_user.id!=admin_id or not _is_private(update): return
+    ensure_schema(get_db); data=q.data or ""
+    if data=="admin_group_logs":
+        conn=get_db()
+        try: rows=conn.execute("SELECT chat_id,actor_type,message_preview,status,created_at FROM group_publish_logs ORDER BY id DESC LIMIT 30").fetchall()
+        finally: conn.close()
+        lines=["📜 <b>سجل عمليات النشر</b>","━━━━━━━━━━━━━━━━━━"]
+        for r in rows: lines.append(f"{'✅' if r['status']=='success' else '❌'} {r['created_at'][:19]} | {r['chat_id']} | {r['actor_type']} | {html.escape(r['message_preview'][:70])}")
+        await q.edit_message_text("\n".join(lines),parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات",callback_data=ADMIN_CALLBACK)]])); return
+    if data.startswith("admin_group_toggle_"):
+        cid=int(data[len("admin_group_toggle_"):]); row=_get_group(get_db,cid)
+        if row: _set_group_enabled(get_db,cid,not bool(row["enabled"]))
+        await q.edit_message_text("✅ تم تغيير حالة النشر.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات",callback_data=ADMIN_CALLBACK)]])); return
+    if data.startswith("admin_group_remove_"):
+        cid=int(data[len("admin_group_remove_"):]); _delete_group(get_db,cid)
+        await q.edit_message_text("✅ تمت إزالة المجموعة.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إدارة المجموعات",callback_data=ADMIN_CALLBACK)]])); return
+    rows=_list_groups(get_db)
+    lines=[f"👥 <b>إدارة المجموعات — {len(rows)}</b>","━━━━━━━━━━━━━━━━━━"]
+    for r in rows[:30]:
+        state="🟢" if int(r["enabled"]) and r["status"]=="active" else "🔴"
+        lines.append(f"{state} <b>{html.escape(str(r['title'] or 'مجموعة'))}</b> | 👤 {html.escape(str(r['owner_username'] or r['owner_user_id']))} | 📢 {r['publish_count']} | 🕒 {str(r['last_publish_at'] or 'لم ينشر بعد')[:19]}")
+    buttons=[[InlineKeyboardButton("🔄 تحديث",callback_data=ADMIN_CALLBACK)]]
+    for r in rows[:20]:
+        cid=int(r["chat_id"])
+        buttons.append([InlineKeyboardButton(("⛔ تعطيل " if int(r["enabled"]) else "✅ تفعيل ")+str(r["title"] or "مجموعة")[:18],callback_data=f"admin_group_toggle_{cid}"),InlineKeyboardButton("🗑️ إزالة",callback_data=f"admin_group_remove_{cid}")])
+    buttons.append([InlineKeyboardButton("📜 سجل النشر",callback_data="admin_group_logs")])
+    buttons.append([InlineKeyboardButton("🔙 Smart Operations",callback_data="admin_smart_operations")])
+    await q.edit_message_text("\n".join(lines) if rows else "👥 <b>إدارة المجموعات</b>\n\nلا توجد مجموعات مرتبطة.",parse_mode="HTML",reply_markup=InlineKeyboardMarkup(buttons))
 
 
 def register_group_publisher(app: Any, get_db, admin_id: int | None = None) -> None:
@@ -306,4 +318,4 @@ def register_group_publisher(app: Any, get_db, admin_id: int | None = None) -> N
                                    lambda u, c: process_group_publisher_message(u, c, get_db), group=-1))
     if admin_id is not None:
         app.add_handler(CallbackQueryHandler(lambda u, c: admin_group_publisher_callback(u, c, get_db, admin_id),
-                                              pattern=rf"^{ADMIN_CALLBACK}$"))
+                                              pattern=rf"^(?:{ADMIN_CALLBACK}|admin_group_toggle_-?\\d+|admin_group_remove_-?\\d+|admin_group_logs)$"))
