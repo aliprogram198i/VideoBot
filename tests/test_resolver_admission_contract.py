@@ -18,7 +18,7 @@ class ResolverAdmissionContractTests(unittest.TestCase):
                 diagnostics={},
             )
             self.assertIsNone(path)
-            self.assertEqual(result["reason"], "instagram_identity_proof_missing")
+            self.assertEqual(result["reason"], "instagram_identity_proof_missing_or_mismatch")
 
     def test_instagram_accepts_matching_attestation(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -68,6 +68,25 @@ class ResolverAdmissionContractTests(unittest.TestCase):
             self.assertIsNone(path)
             self.assertEqual(result["reason"], "media_outside_temp_dir")
 
+    def test_instagram_rejects_mismatched_proof(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media = Path(temp_dir) / "video.mp4"
+            media.write_bytes(b"media")
+            path, result = admit_local_media(
+                "https://www.instagram.com/reel/ABC123/",
+                str(media),
+                temp_dir=temp_dir,
+                resolver="instagram_graphql",
+                diagnostics={
+                    "source_identity_verified": True,
+                    "identity_proof": {
+                        "type": "instagram_shortcode",
+                        "key": "WRONG123",
+                    },
+                },
+            )
+            self.assertIsNone(path)
+            self.assertEqual(result["reason"], "instagram_identity_proof_missing_or_mismatch")
 
 if __name__ == "__main__":
     unittest.main()
