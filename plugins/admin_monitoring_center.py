@@ -62,6 +62,8 @@ def ensure_schema(get_db) -> None:
     if not callable(get_db):
         return
     conn = get_db()
+    if conn is None:
+        return
     try:
         conn.execute(
             """
