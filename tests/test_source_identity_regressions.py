@@ -33,6 +33,9 @@ def test_instagram_wrong_neighbor_reel_is_rejected():
 
 def test_instagram_exact_reel_identity_is_accepted():
     requested = parse_instagram_post_url("https://www.instagram.com/reel/Dcqf3AXNgfL/")
-    candidate = SimpleNamespace(source_page="https://www.instagram.com/reel/Dcqf3AXNgfL/?stkn=example")
+    candidate = SimpleNamespace(
+        source_page="https://www.instagram.com/reel/Dcqf3AXNgfL/?stkn=example",
+        metadata={"instagram_shortcode": "Dcqf3AXNgfL"},
+    )
     assert requested is not None
     assert candidate_matches_instagram_source(candidate, requested)
