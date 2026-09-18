@@ -154,8 +154,9 @@ def _extract_urls(text: str) -> list[str]:
 
 def _download_record_count(bot_module: Any, user_id: int, url: str) -> int:
     """Read the existing download ledger without changing its schema."""
-    conn = bot_module.get_db()
+    conn = None
     try:
+        conn = bot_module.get_db()
         row = conn.execute(
             "SELECT COUNT(*) AS count FROM downloads WHERE user_id = ? AND url = ?",
             (user_id, url),
@@ -164,7 +165,11 @@ def _download_record_count(bot_module: Any, user_id: int, url: str) -> int:
     except Exception:
         return 0
     finally:
-        conn.close()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _batch_summary(language: str, total: int, succeeded: list[int], failed: list[int]) -> str:
