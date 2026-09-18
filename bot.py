@@ -4698,10 +4698,35 @@ async def download_media(
                             )
 
 
+            # Instagram direct public GraphQL recovery. This resolver is
+            # intentionally independent of Cobalt and uses Instagram's current
+            # public web GraphQL path without cookies or credentials. It runs
+            # before Cobalt, while the exact source identity check remains
+            # fail-closed inside the resolver.
+            graphql_file = None
+            graphql_diagnostics = {}
+            if not smart_file and instagram_source is not None:
+                from downloader.instagram_graphql import download_instagram_with_graphql
+
+                graphql_file, graphql_diagnostics = await asyncio.to_thread(
+                    download_instagram_with_graphql,
+                    url,
+                    temp_dir,
+                    request_factory=Request,
+                    open_function=safe_urlopen,
+                    max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
+                )
+                if graphql_file:
+                    smart_file = graphql_file
+                    smart_diagnostics = {
+                        **smart_diagnostics,
+                        "resolver": "instagram_graphql",
+                        "instagram_graphql": graphql_diagnostics,
+                    }
+                    print("🎯 Instagram Direct GraphQL Resolver: SUCCESS")
+
             # Instagram has a dedicated private Cobalt resolver in the
-            # same Railway project. It is attempted only after the identity-
-            # aware Smart Extraction path fails, and only for canonical
-            # Instagram posts/reels. This avoids generic resolver drift.
+            # same Railway project. It remains the next isolated fallback.
             cobalt_file = None
             cobalt_diagnostics = {}
             if not smart_file and instagram_source is not None:
