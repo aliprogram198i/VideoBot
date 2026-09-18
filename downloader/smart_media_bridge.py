@@ -48,6 +48,22 @@ def _resolver_context(source_url, media_kind="unknown"):
     return platform, kind
 
 
+def _protected_social_post(url):
+    """Return True for public Telegram/Instagram post URLs protected by source identity gates."""
+    try:
+        host = (urlparse(str(url)).hostname or "").lower().rstrip(".")
+        if host in {"t.me", "telegram.me"} or host.endswith(".t.me") or host.endswith(".telegram.me"):
+            from .telegram_identity import parse_telegram_post_url
+            return parse_telegram_post_url(url) is not None
+        if host == "instagram.com" or host.endswith(".instagram.com"):
+            from .instagram_identity import parse_instagram_post_url
+            return parse_instagram_post_url(url) is not None
+    except Exception:
+        # A source-identity check must fail closed for these protected hosts.
+        return True
+    return False
+
+
 def _quality_from_value(value):
     if not isinstance(value, str):
         return None
@@ -379,6 +395,12 @@ def install(bot_module) -> None:
                         candidate_urls.append(candidate)
             if not temp_dir or not candidate_urls:
                 return result
+            if _protected_social_post(source_url):
+                print(
+                    "🛡️ Browser Download Handoff: blocked generic handoff for protected social post identity",
+                    flush=True,
+                )
+                return result
             print(f"🌐 Browser Download Handoff: normal direct download produced no file; processing {len(candidate_urls)} candidate(s)", flush=True)
             max_bytes = getattr(bot_module, "MAX_AUDIO_DOWNLOAD_BYTES" if is_audio else "MAX_VIDEO_DOWNLOAD_BYTES", 500 * 1024 * 1024)
             if not is_audio:
@@ -444,6 +466,12 @@ def install(bot_module) -> None:
             if url is None and args:
                 url = args[0]
             if not url:
+                return smart_result
+            if _protected_social_post(url):
+                print(
+                    "🛡️ Smart Media Bridge: blocked generic direct-media handoff for protected social post identity",
+                    flush=True,
+                )
                 return smart_result
             print("🌐 Smart Media Bridge: handing failed Smart Extraction to direct-media chain", flush=True)
             fallback_kwargs = {"url": url, "temp_dir": temp_dir, "output_template": kwargs.get("output_template"), "format_option": kwargs.get("format_option"), "is_audio": kwargs.get("is_audio", False), "attempt_id": kwargs.get("attempt_id"), "attempt_number": kwargs.get("attempt_number")}
