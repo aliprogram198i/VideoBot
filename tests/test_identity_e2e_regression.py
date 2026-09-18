@@ -100,6 +100,42 @@ class SourceIdentityE2ERegressionTests(unittest.TestCase):
         self.assertEqual(result.valid_candidate_count, 0)
         self.assertTrue(any("source_identity_gate:instagram:rejected=1" == item for item in result.diagnostics))
 
+    def test_instagram_same_source_without_provenance_is_rejected(self):
+        source = "https://www.instagram.com/reel/ABC123/"
+        ambiguous = self.candidate(
+            "https://cdn.example/possible.mp4",
+            source,
+        )
+        engine, resolution = self.make_engine([ambiguous])
+
+        with patch.object(engine.resolver, "resolve", return_value=resolution):
+            result = engine.extract(source)
+
+        self.assertIsNone(result.best_media)
+        self.assertEqual(result.valid_candidate_count, 0)
+        self.assertTrue(
+            any(
+                "source_identity_gate:instagram:rejected=1" == item
+                for item in result.diagnostics
+            )
+        )
+
+    def test_instagram_exact_provenance_is_accepted(self):
+        source = "https://www.instagram.com/reel/ABC123/"
+        exact = self.candidate(
+            "https://cdn.example/exact.mp4",
+            source,
+            {"instagram_shortcode": "ABC123"},
+        )
+        engine, resolution = self.make_engine([exact])
+
+        with patch.object(engine.resolver, "resolve", return_value=resolution):
+            result = engine.extract(source)
+
+        self.assertIsNotNone(result.best_media)
+        self.assertEqual(result.best_media.candidate.url, exact.url)
+        self.assertEqual(result.valid_candidate_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -88,13 +88,27 @@ def candidate_matches_instagram_source(
     candidate: Any,
     source_identity: InstagramPostIdentity,
 ) -> bool:
-    """Accept a candidate only when its source page has the same shortcode."""
+    """Accept only candidates with explicit exact-post Instagram provenance.
+
+    A matching source_page alone is not sufficient: generic HTML/embed/browser
+    discovery can attach a neighboring media URL to the requested page URL.
+    The candidate must carry explicit shortcode provenance from the resolver
+    that discovered it.
+    """
     if source_identity is None:
         return False
 
     source_page = getattr(candidate, "source_page", None)
     candidate_identity = parse_instagram_post_url(source_page)
-    if candidate_identity is None:
+    if candidate_identity is None or candidate_identity.key != source_identity.key:
         return False
 
-    return candidate_identity.key == source_identity.key
+    metadata = getattr(candidate, "metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+
+    provenance = str(
+        metadata.get("instagram_shortcode", "")
+    ).strip()
+
+    return provenance == source_identity.key
