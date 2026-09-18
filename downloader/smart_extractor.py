@@ -339,10 +339,13 @@ def extract_telegram_post_candidates(
             flags=re.IGNORECASE,
         )
     )
-    if not wrapper_matches:
-        return []
-
     target = f"{channel}/{message_id}".lower()
+
+    def _post_value_matches(value: str) -> bool:
+        return value.strip().lstrip("/").lower() == target
+
+    # Public channel pages expose an exact message wrapper. Isolate that
+    # wrapper before running the generic media parser.
     for index, match in enumerate(wrapper_matches):
         end = wrapper_matches[index + 1].start() if index + 1 < len(wrapper_matches) else len(decoded)
         block = decoded[match.start():end]
@@ -352,21 +355,63 @@ def extract_telegram_post_candidates(
             block,
             flags=re.IGNORECASE,
         )
-        if not post_match:
-            continue
-        post_value = post_match.group(1).strip().lstrip("/")
-        if post_value.lower() != target:
+        if not post_match or not _post_value_matches(post_match.group(1)):
             continue
 
-        # Keep only this exact message's HTML. The normal extractor can now
-        # safely inspect video/source attributes without crossing into an
-        # adjacent Telegram post.
-        return extract_candidates(
+        candidates = extract_candidates(
             block,
             page_url,
             depth=depth,
             max_candidates=max_candidates,
         )
+        if candidates:
+            return candidates
+
+    # Telegram embed pages may omit the outer wrapper but expose the exact
+    # post identity on the video-player anchor href. Select only the player
+    # whose href points to the requested channel/message.
+    player_matches = re.finditer(
+        r'<a\b[^>]*class=["\'][^"\']*\btgme_widget_message_video_player\b[^"\']*["\'][^>]*>',
+        decoded,
+        flags=re.IGNORECASE,
+    )
+    for player_match in player_matches:
+        tag = player_match.group(0)
+        href_match = re.search(
+            r'\bhref=["\']([^"\']+)["\']',
+            tag,
+            flags=re.IGNORECASE,
+        )
+        if not href_match:
+            continue
+
+        parsed = urlparse(href_match.group(1))
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if len(path_parts) < 2:
+            continue
+
+        href_channel = path_parts[-2]
+        href_message = path_parts[-1]
+        if (
+            href_channel.lower() != channel.lower()
+            or not href_message.isdigit()
+            or int(href_message) != message_id
+        ):
+            continue
+
+        end_tag = decoded.find("</a>", player_match.end())
+        if end_tag == -1:
+            continue
+
+        block = decoded[player_match.start():end_tag + 4]
+        candidates = extract_candidates(
+            block,
+            page_url,
+            depth=depth,
+            max_candidates=max_candidates,
+        )
+        if candidates:
+            return candidates
 
     return []
 
