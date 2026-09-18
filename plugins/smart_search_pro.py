@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import html
 import re
 import time
@@ -28,6 +29,8 @@ MAX_QUERY_LENGTH = 160
 CACHE_TTL_SECONDS = 120
 MAX_CACHE_ITEMS = 128
 LOW_SCORE_THRESHOLD = 42.0
+SEARCH_TOTAL_TIMEOUT_SECONDS = 40
+RESULT_STATE_TTL_SECONDS = CACHE_TTL_SECONDS
 TELEGRAM_BUTTON_MAX_CHARS = 64
 MARQUEE_INTERVAL_SECONDS = 2.2
 MARQUEE_PADDING = "   •   "
@@ -38,8 +41,13 @@ _CACHE_LOCK = asyncio.Lock()
 
 def _normalize(value: str) -> str:
     value = value.casefold()
+    value = value.replace("ـ", "")
     value = re.sub(r"[\u064B-\u065F\u0670]", "", value)
-    value = value.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه"}))
+    value = value.translate(str.maketrans({
+        "أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه",
+        "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+        "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+    }))
     value = re.sub(r"[^\w\u0600-\u06ff\s]", " ", value, flags=re.UNICODE)
     return re.sub(r"\s+", " ", value).strip()
 
@@ -56,6 +64,18 @@ def _query_variants(query: str) -> list[str]:
         if value and value not in variants:
             variants.append(value)
     return variants[:2]
+
+
+def _youtube_video_id(url: str) -> str:
+    match = re.search(r"(?:v=|youtu\\.be/|youtube\\.com/(?:shorts|embed)/)([A-Za-z0-9_-]{6,20})", url, re.IGNORECASE)
+    return match.group(1).casefold() if match else ""
+
+
+def _canonical_result_key(result: SearchResult) -> str:
+    video_id = _youtube_video_id(result.url)
+    if video_id:
+        return f"youtube:{video_id}"
+    return result.url.rstrip("/").casefold()
 
 
 def _title_score(query: str, result: SearchResult) -> float:
@@ -76,29 +96,49 @@ def _title_score(query: str, result: SearchResult) -> float:
     return score
 
 
+def _channel_score(query: str, result: SearchResult) -> float:
+    q_tokens = set(_tokens(query))
+    channel_tokens = set(_tokens(result.channel))
+    if not q_tokens or not channel_tokens:
+        return 0.0
+    overlap = len(q_tokens & channel_tokens) / len(q_tokens)
+    return min(overlap * 12.0, 12.0)
+
+
+def _duration_sanity_score(result: SearchResult) -> float:
+    if result.duration is None:
+        return 0.0
+    if result.duration <= 0:
+        return -10.0
+    if result.duration > 6 * 60 * 60:
+        return -5.0
+    return 0.0
+
+
 def _dedupe_and_rank(query: str, candidates: list[SearchResult]) -> list[SearchResult]:
-    by_url: dict[str, SearchResult] = {}
-    by_title: dict[str, SearchResult] = {}
+    by_identity: dict[str, SearchResult] = {}
     for result in candidates:
-        key_url = result.url.rstrip("/").casefold()
-        key_title = _normalize(result.title)
-        if not key_url or not key_title:
+        key = _canonical_result_key(result)
+        title = _normalize(result.title)
+        if not key or not title:
             continue
-        candidate_score = max(result.score, 0.0) + _title_score(query, result)
-        current = by_url.get(key_url)
+        candidate_score = (
+            max(result.score, 0.0)
+            + _title_score(query, result)
+            + _channel_score(query, result)
+            + _duration_sanity_score(result)
+        )
+        current = by_identity.get(key)
         if current is None or candidate_score > current.score:
-            by_url[key_url] = SearchResult(result.index, result.title, result.url, result.channel, result.duration, result.views, candidate_score)
-    for result in by_url.values():
-        key_title = _normalize(result.title)
-        current = by_title.get(key_title)
-        if current is None or result.score > current.score:
-            by_title[key_title] = result
-    ranked = sorted(by_title.values(), key=lambda item: (-item.score, item.title.casefold(), item.url))
+            by_identity[key] = SearchResult(
+                result.index, result.title, result.url, result.channel,
+                result.duration, result.views, candidate_score,
+            )
+    ranked = sorted(by_identity.values(), key=lambda item: (-item.score, item.title.casefold(), item.url))
     return [
         SearchResult(i, item.title, item.url, item.channel, item.duration, item.views, item.score)
         for i, item in enumerate(ranked[:5])
     ]
-
 
 def _cache_key(query: str) -> str:
     return _normalize(query)[:MAX_QUERY_LENGTH]
@@ -254,20 +294,21 @@ async def search_pro(query: str) -> list[SearchResult]:
 
     variants = _query_variants(query)
     candidates: list[SearchResult] = []
-    first = await base_search(variants[0])
-    candidates.extend(first)
-
-    # A second bounded search is used only when the first pass is weak.
-    first_ranked = _dedupe_and_rank(query, first)
-    if len(first_ranked) < 5 or (first_ranked and first_ranked[0].score < LOW_SCORE_THRESHOLD):
-        if len(variants) > 1 and variants[1] != variants[0]:
-            second = await base_search(variants[1])
-            candidates.extend(second)
+    try:
+        async with asyncio.timeout(SEARCH_TOTAL_TIMEOUT_SECONDS):
+            first = await base_search(variants[0])
+            candidates.extend(first)
+            first_ranked = _dedupe_and_rank(query, first)
+            if len(first_ranked) < 5 or (first_ranked and first_ranked[0].score < LOW_SCORE_THRESHOLD):
+                if len(variants) > 1 and variants[1] != variants[0]:
+                    second = await base_search(variants[1])
+                    candidates.extend(second)
+    except TimeoutError:
+        pass
 
     results = _dedupe_and_rank(query, candidates)
     await _cache_put(key, results)
     return results
-
 
 def _is_admin_workflow(context: ContextTypes.DEFAULT_TYPE, bot_module: Any, user_id: int) -> bool:
     if user_id != bot_module.ADMIN_ID:
@@ -297,14 +338,32 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         raise ApplicationHandlerStop
 
     await _stop_marquee(context)
+    current_task = asyncio.current_task()
+    previous_task = context.user_data.get("smart_search_task")
+    if previous_task and previous_task is not current_task and not previous_task.done():
+        previous_task.cancel()
+    context.user_data["smart_search_task"] = current_task
+    query_hash = hashlib.sha256(_normalize(text).encode("utf-8")).hexdigest()[:12]
+    logger.info("smart_search_started query_hash=%s", query_hash)
     status = await update.message.reply_text("🔎 جاري البحث الذكي الاحترافي...\n\n⚙️ يتم تحليل وترتيب النتائج خوارزميًا.")
-    results = await search_pro(text)
+    try:
+        results = await search_pro(text)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("smart_search_failed query_hash=%s", query_hash)
+        results = []
     if not results:
+        logger.info("smart_search_completed query_hash=%s result_count=0", query_hash)
         await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
+        if context.user_data.get("smart_search_task") is current_task:
+            context.user_data.pop("smart_search_task", None)
         raise ApplicationHandlerStop
 
+    logger.info("smart_search_completed query_hash=%s result_count=%d", query_hash, len(results))
     context.user_data["smart_search_query"] = text
     context.user_data["smart_search_results"] = [{"url": r.url, "title": r.title} for r in results]
+    context.user_data["smart_search_results_expires_at"] = time.monotonic() + RESULT_STATE_TTL_SECONDS
     await status.edit_text(
         _results_message(text, results),
         parse_mode="HTML",
@@ -325,12 +384,17 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     if not match:
         return
     await _stop_marquee(context)
+    expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
     results = context.user_data.get("smart_search_results") or []
     index = int(match.group(1))
-    if index < 0 or index >= len(results):
+    if not results or time.monotonic() > expires_at or index < 0 or index >= len(results):
+        context.user_data.pop("smart_search_results", None)
+        context.user_data.pop("smart_search_query", None)
+        context.user_data.pop("smart_search_results_expires_at", None)
         await query.edit_message_text("❌ انتهت صلاحية نتائج البحث. أعد البحث من جديد.")
         return
     selected = results[index]
+    logger.info("smart_search_result_selected index=%d url_hash=%s", index, hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12])
     try:
         bot_module.validate_public_http_url(selected["url"])
     except Exception:
@@ -358,6 +422,7 @@ async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _stop_marquee(context)
     context.user_data.pop("smart_search_results", None)
     context.user_data.pop("smart_search_query", None)
+    context.user_data.pop("smart_search_results_expires_at", None)
 
     if query.data == "smart_pro_cancel":
         await query.edit_message_text("❌ تم إلغاء البحث الذكي.")
@@ -366,7 +431,8 @@ async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.", parse_mode="HTML")
 
 
-def register_smart_search_pro(app: Any, bot_module: Any) -> None:
+def register_smart_search_pro(app: Any, bot_module: Any | None = None) -> None:
+    bot_module = bot_module or __import__("bot")
     """Register Pro search ahead of legacy catch-all text handlers."""
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: _search_handler(u, c, bot_module)),
