@@ -21,6 +21,8 @@ from .candidate_ranker import CandidateRanker
 from .candidate_validator import CandidateValidator, ValidationResult
 from .embed_resolver import EmbedResolver
 from .smart_learning import SmartTelemetryStore, get_telemetry_store
+from .instagram_identity import candidate_matches_instagram_source, parse_instagram_post_url
+from .telegram_identity import candidate_matches_telegram_source, parse_telegram_post_url
 
 
 DEFAULT_PRIMARY_VALIDATION_CANDIDATES = 24
@@ -90,6 +92,35 @@ class SmartExtractionEngine:
             )
         except Exception:
             return result
+
+    @staticmethod
+    def _apply_source_identity_gate(source_url: str, results: list[ValidationResult], diagnostics: list[str]) -> list[ValidationResult]:
+        """Reject valid media candidates that cannot be tied to the exact source."""
+        telegram_source = parse_telegram_post_url(source_url)
+        instagram_source = parse_instagram_post_url(source_url)
+        if telegram_source is None and instagram_source is None:
+            return results
+        accepted: list[ValidationResult] = []
+        rejected = 0
+        for result in results:
+            if not result.valid or result.candidate.kind == "iframe":
+                accepted.append(result)
+                continue
+            if telegram_source is not None:
+                matches = candidate_matches_telegram_source(result.candidate, telegram_source)
+                platform = "telegram"
+            else:
+                matches = candidate_matches_instagram_source(result.candidate, instagram_source)
+                platform = "instagram"
+            if not matches:
+                rejected += 1
+                diagnostics.append(f"source_identity_rejected:{platform}:{result.candidate.discovered_by}")
+                continue
+            accepted.append(result)
+        if rejected:
+            platform = "telegram" if telegram_source is not None else "instagram"
+            diagnostics.append(f"source_identity_gate:{platform}:rejected={rejected}")
+        return accepted
 
     def _validate_batch(
         self,
@@ -197,6 +228,7 @@ class SmartExtractionEngine:
             validation_timeout=validation_timeout,
             diagnostics=diagnostics,
         )
+        validation_results = self._apply_source_identity_gate(source_url, validation_results, diagnostics)
 
         # Rank the first stage before deciding whether more network probes are
         # necessary. Obvious secondary/ad candidates are therefore not enough
@@ -220,6 +252,7 @@ class SmartExtractionEngine:
                     diagnostics=diagnostics,
                 )
             )
+            validation_results = self._apply_source_identity_gate(source_url, validation_results, diagnostics)
             ranked = self.ranker.rank(
                 validation_results,
                 max_results=max_ranked_candidates,
