@@ -64,8 +64,16 @@ def _telegram_embed_urls(url):
         f"https://t.me/s/{channel}/{message_id}",
     ]
     variants = []
+    # Telegram's own web extractor uses embed=1&single=1.  The
+    # single flag is important: it constrains the returned HTML to the
+    # requested message instead of a surrounding channel timeline.
     for base in base_urls:
-        for query in ("embed=1&mode=tme", "embed=1"):
+        for query in (
+            "embed=1&single=1",
+            "embed=1&single=1&mode=tme",
+            "embed=1&mode=tme",
+            "embed=1",
+        ):
             candidate = f"{base}?{query}"
             if candidate not in variants:
                 variants.append(candidate)
