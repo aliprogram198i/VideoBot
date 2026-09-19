@@ -14,7 +14,10 @@ class DownloadEvent:
     media_type: str
     quality: str
     username: str | None = None
+    job_id: str | None = None
     attempt_id: str | None = None
+    resolver: str | None = None
+    state: str = "succeeded"
     attempt_number: int | None = None
     delivery_status: str = "delivered"
     delivered_parts: int = 1
@@ -29,6 +32,10 @@ class DownloadEvent:
             raise ValueError("media_type must be video or audio")
         if self.delivery_status not in {"delivered"}:
             raise ValueError("ledger events must represent successful delivery")
+        if self.job_id is not None and not str(self.job_id).strip():
+            raise ValueError("job_id must be non-empty when provided")
+        if self.state not in {"succeeded"}:
+            raise ValueError("ledger events must represent successful completion")
         if int(self.delivered_parts) <= 0:
             raise ValueError("delivered_parts must be positive")
 
