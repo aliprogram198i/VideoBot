@@ -415,15 +415,45 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         await query.edit_message_text("❌ تعذر التحقق من نتيجة البحث.")
         return
 
-    # Smart Search now hands the selected URL to the canonical Smart Download
-    # Control instead of maintaining a second download-choice UX.
-    context.user_data.pop("smart_search_results", None)
-    context.user_data.pop("smart_search_query", None)
+    # Smart Search hands the selected URL to the canonical Smart Download
+    # Control instead of maintaining a second download-choice UX. Keep the
+    # selection state until the handoff succeeds so a transient exception does
+    # not strand the user with the previous generic "unexpected error" response.
     await query.edit_message_text(
         f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
         parse_mode="HTML",
     )
-    await show_control_for_url(query.message, context, selected["url"], user)
+    try:
+        handled = await show_control_for_url(query.message, context, selected["url"], user)
+    except Exception:
+        logger.exception(
+            "smart_search_handoff_failed index=%d url_hash=%s",
+            index,
+            hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12],
+        )
+        await query.edit_message_text(
+            "❌ تعذر فتح لوحة التحميل لهذه النتيجة حالياً.\n\n"
+            "يمكنك الضغط على النتيجة مرة أخرى للمحاولة.",
+            parse_mode="HTML",
+            reply_markup=_results_keyboard(
+                [
+                    SearchResult(i, item["title"], item["url"], "", None, None, 0.0)
+                    for i, item in enumerate(results)
+                ]
+            ),
+        )
+        return
+    if not handled:
+        logger.warning(
+            "smart_search_handoff_not_handled index=%d url_hash=%s",
+            index,
+            hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12],
+        )
+        return
+
+    context.user_data.pop("smart_search_results", None)
+    context.user_data.pop("smart_search_query", None)
+    context.user_data.pop("smart_search_results_expires_at", None)
     raise ApplicationHandlerStop
 
 
