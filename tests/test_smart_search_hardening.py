@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from downloader.smart_search import SearchResult
@@ -8,11 +9,15 @@ from plugins.smart_search_pro import (
     _normalize,
     _dedupe_and_rank,
     search_pro,
+    _pick_handler,
 )
 
 
 def result(title, url, channel="", duration=120, score=10.0):
     return SearchResult(0, title, url, channel, duration, 0, score)
+
+def result_factory(title, url):
+    return SearchResult(0, title, url, "", 120, 0, 10.0)
 
 
 class SmartSearchHardeningTests(unittest.TestCase):
@@ -41,6 +46,36 @@ class SmartSearchHardeningTests(unittest.TestCase):
         self.assertEqual(len(ranked), 2)
         self.assertEqual(_canonical_result_key(first), _canonical_result_key(equivalent))
 
+    def test_pick_handoff_failure_is_recoverable_and_preserves_state(self):
+        async def run():
+            selected = result_factory("Selected", "https://www.youtube.com/watch?v=Pick123")
+            query = SimpleNamespace(
+                data="smart_pro_pick_0",
+                from_user=SimpleNamespace(id=7),
+                message=SimpleNamespace(),
+                answer=AsyncMock(),
+                edit_message_text=AsyncMock(),
+            )
+            context = SimpleNamespace(user_data={
+                "smart_search_results": [{"url": selected.url, "title": selected.title}],
+                "smart_search_query": "Selected",
+                "smart_search_results_expires_at": 9999999999.0,
+            })
+            bot_module = SimpleNamespace(validate_public_http_url=lambda url: None)
+            update = SimpleNamespace(callback_query=query, effective_user=query.from_user)
+            with patch(
+                "plugins.smart_search_pro.show_control_for_url",
+                new=AsyncMock(side_effect=RuntimeError("handoff failed")),
+            ):
+                await _pick_handler(update, context, bot_module)
+            return query, context
+
+        query, context = asyncio.run(run())
+        self.assertIn("smart_search_results", context.user_data)
+        self.assertEqual(query.answer.await_count, 1)
+        query.edit_message_text.assert_awaited()
+        final_call = query.edit_message_text.await_args_list[-1]
+        self.assertIn("إعادة المحاولة", str(final_call.kwargs.get("reply_markup")))
     def test_channel_relevance_is_secondary_to_title_relevance(self):
         exact = result(
             "Ali Song Official",
