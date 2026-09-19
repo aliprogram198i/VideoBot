@@ -25,6 +25,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && chmod -R a+rX /opt/pw-browsers \
     && printf '%s\n' '--plugin-dirs /opt/yt-dlp-plugins' > /etc/yt-dlp.conf
 COPY --chown=videobot:videobot bot.py .
+COPY --chown=videobot:videobot intent_router.py .
+COPY --chown=videobot:videobot download_lifecycle.py .
 COPY --chown=videobot:videobot data_layer.py .
 COPY --chown=videobot:videobot download_events.py .
 COPY --chown=videobot:videobot storage_lifecycle.py .
@@ -36,7 +38,7 @@ COPY --chown=videobot:videobot security ./security
 COPY --chown=videobot:videobot plugins ./plugins
 COPY --chown=videobot:videobot telegram_layer ./telegram_layer
 RUN test -s /opt/yt-dlp-plugins/yt_dlp_plugins/extractor/threads.py \
-    && python -m py_compile bot.py data_layer.py download_events.py storage_lifecycle.py entrypoint.py stats_entrypoint.py downloader/error_reporter.py downloader/instagram_graphql.py downloader/instagram_relay_html.py downloader/smart_search.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py downloader/smart_learning_foundation.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer_v2.py plugins/admin_group_control.py plugins/admin_operations_center.py plugins/admin_fallback_intelligence.py plugins/admin_backup_recovery.py plugins/admin_security_center.py plugins/admin_smart_analytics.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/user_features.py plugins/yoinku_compat.py plugins/whatsapp_audio.py telegram_layer/media_retry.py
+    && python -m py_compile bot.py data_layer.py download_events.py download_lifecycle.py storage_lifecycle.py intent_router.py entrypoint.py stats_entrypoint.py downloader/resolver_contract.py downloader/error_reporter.py downloader/instagram_graphql.py downloader/instagram_relay_html.py downloader/smart_search.py downloader/smart_media_resolver.py downloader/browser_media_resolver.py downloader/browser_download_handoff.py downloader/shahid4u_resolver.py downloader/smart_learning_foundation.py jobs/download_manager.py security/download_guard.py security/rate_limit.py plugins/manager.py plugins/core_runtime.py plugins/admin_common.py plugins/admin_control_center.py plugins/admin_layer_v2.py plugins/admin_group_control.py plugins/admin_operations_center.py plugins/admin_fallback_intelligence.py plugins/admin_backup_recovery.py plugins/admin_security_center.py plugins/admin_smart_analytics.py plugins/admin_user_history.py plugins/admin_global_history.py plugins/smart_operations.py plugins/recovered_features.py plugins/smart_search_pro.py plugins/user_features.py plugins/yoinku_compat.py plugins/whatsapp_audio.py telegram_layer/media_retry.py
 RUN mkdir -p /app/data /app/tmp && chown -R videobot:videobot /app && chmod 777 /app/data /app/tmp
 RUN printf '%s\n' '#!/bin/sh' 'set -eu' 'chmod 777 /app/data /app/tmp' 'exec gosu videobot python -u /app/entrypoint.py' > /usr/local/bin/docker-entrypoint.sh \
     && chmod 0755 /usr/local/bin/docker-entrypoint.sh
