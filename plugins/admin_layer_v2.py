@@ -45,7 +45,7 @@ from .admin_user_history import clear_prompt_callback, clear_confirm_callback
 from .admin_user_intelligence import register_admin_user_intelligence
 from .admin_role_management import register_admin_role_management
 from .admin_group_control import register_group_control
-from .admin_discussion_publisher import register_discussion_publisher
+from .admin_discussion_user import register_discussion_user_manager
 
 
 async def _admin_entry(update, context, admin_id: int) -> None:
@@ -144,7 +144,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     _register_core_callback(app, admin_roles_callback, r"^admin_roles$", get_db, admin_id)
     register_admin_role_management(app, get_db, admin_id)
     register_group_control(app, get_db, admin_id)
-    register_discussion_publisher(app, get_db, admin_id)
+    register_discussion_user_manager(app, get_db, admin_id)
     register_admin_operations_center(app, get_db, admin_id)
     register_admin_fallback_intelligence(app, admin_id)
     register_admin_backup_recovery(app, admin_id, get_db)
