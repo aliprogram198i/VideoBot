@@ -4368,6 +4368,9 @@ async def download_media(
     temp_dir = tempfile.mkdtemp(prefix=f"alibot_{job_id[:12]}_")
 
     # All recovery attempts share one correlation id.
+    # Keep delivery counters initialized before every media-type branch so
+    # shared lifecycle reporting cannot reference an unbound value.
+    total_parts = 1
     attempt_number = 1
     attempt_started_at = time.monotonic()
 
