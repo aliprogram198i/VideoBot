@@ -13,3 +13,4 @@ yt-dlp-ejs==0.8.0
 yt-dlp-threads==0.1.0
 # Optional JS/browser extraction fallback for public JavaScript-driven players.
 playwright==1.62.0
+\n# MTProto user account for explicitly configured Telegram discussions.\ntelethon==1.45.0\n
