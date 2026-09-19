@@ -83,6 +83,49 @@ def _read_json(response: Any) -> dict[str, Any]:
     return data
 
 
+def _response_cookie_headers(response: Any) -> list[str]:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return []
+    try:
+        values = headers.get_all("Set-Cookie") or []
+    except AttributeError:
+        value = headers.get("Set-Cookie")
+        values = [value] if value else []
+    return [str(value) for value in values if value]
+
+
+def _cookie_header_from_set_cookie(values: list[str]) -> str:
+    cookies: list[str] = []
+    for value in values:
+        pair = value.split(";", 1)[0].strip()
+        if "=" in pair:
+            cookies.append(pair)
+    return "; ".join(dict.fromkeys(cookies))
+
+
+def _csrf_token_from_cookies(cookie_header: str) -> str | None:
+    for pair in cookie_header.split(";"):
+        name, sep, value = pair.strip().partition("=")
+        if sep and name.strip().lower() == "csrftoken":
+            return value.strip() or None
+    return None
+
+
+def _response_error_reason(data: dict[str, Any]) -> str | None:
+    errors = data.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+    first = errors[0]
+    if not isinstance(first, dict):
+        return "graphql_error"
+    code = first.get("code")
+    message = str(first.get("message") or "graphql_error").strip()
+    if code is not None:
+        return f"{message}:{code}"
+    return message
+
+
 def _extract_item(data: dict[str, Any], shortcode: str) -> tuple[dict[str, Any] | None, str | None]:
     web_info = (
         (data.get("data") or {})
@@ -209,17 +252,54 @@ def download_instagram_with_graphql(
         return None, diagnostics
 
     _, shortcode = parsed
-    request = request_factory(
-        _graphql_url(),
-        data=_request_payload(shortcode),
+    graphql_url = _graphql_url()
+    page_request = request_factory(
+        source_url,
         headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/140.0 Safari/537.36",
-            "Accept": "*/*",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": f"https://www.instagram.com/p/{shortcode}/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
+    )
+
+    cookie_header = ""
+    csrf_token = None
+    try:
+        page_response = open_function(
+            page_request,
+            timeout=timeout,
+            max_bytes=256 * 1024,
+        )
+        try:
+            cookie_header = _cookie_header_from_set_cookie(
+                _response_cookie_headers(page_response)
+            )
+            csrf_token = _csrf_token_from_cookies(cookie_header)
+        finally:
+            page_response.close()
+    except Exception as exc:
+        diagnostics["bootstrap_exception"] = type(exc).__name__
+
+    diagnostics["csrf_bootstrap"] = bool(csrf_token)
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+        "Accept": "*/*",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-IG-App-ID": "936619743392459",
+        "Referer": source_url,
+    }
+    if csrf_token:
+        headers["X-CSRFToken"] = csrf_token
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+
+    request = request_factory(
+        graphql_url,
+        data=_request_payload(shortcode),
+        headers=headers,
         method="POST",
     )
 
@@ -242,6 +322,10 @@ def download_instagram_with_graphql(
             data = _read_json(response)
         finally:
             response.close()
+
+        error_reason = _response_error_reason(data)
+        if error_reason:
+            diagnostics["graphql_error"] = error_reason
 
         item, reason = _extract_item(data, shortcode)
         if item is None:
