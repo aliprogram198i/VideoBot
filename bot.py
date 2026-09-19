@@ -5,7 +5,6 @@ import tempfile
 import shutil
 import html
 import re
-import ipaddress
 import logging
 import socket
 import sys
@@ -14,7 +13,7 @@ import time
 import uuid
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse, urljoin
-from urllib.request import HTTPError, HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPError, Request
 
 from telegram import (
     Update,
@@ -45,6 +44,7 @@ from downloader.instagram_failure import (
     instagram_failure_message,
 )
 from downloader.resolver_admission import admit_local_media, admit_media_artifact
+from downloader.url_security import redact_url, validate_public_http_url, safe_urlopen, read_limited
 
 from plugins import gemini_service
 
@@ -113,75 +113,6 @@ async def gemini_generate(prompt):
         asyncio.to_thread(_generate),
         timeout=GEMINI_TIMEOUT_SECONDS,
     )
-
-def redact_url(value):
-    """Return a log-safe URL without credentials, query values, or fragments."""
-    try:
-        parsed = urlparse(value)
-        host = parsed.hostname or ""
-        return urlunparse((parsed.scheme, host, parsed.path, "", "<redacted>" if parsed.query else "", ""))
-    except Exception:
-        return "<invalid-url>"
-
-
-def validate_public_http_url(value, resolver=socket.getaddrinfo):
-    """Reject URLs that could target local or otherwise non-public services."""
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Only absolute HTTP(S) URLs are allowed")
-    if parsed.username or parsed.password:
-        raise ValueError("URLs with embedded credentials are not allowed")
-    hostname = parsed.hostname.rstrip(".").lower()
-    if hostname == "localhost" or hostname.endswith(".localhost"):
-        raise ValueError("Local hosts are not allowed")
-    try:
-        addresses = resolver(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-    except (OSError, ValueError) as exc:
-        raise ValueError("Host could not be resolved") from exc
-    if not addresses:
-        raise ValueError("Host could not be resolved")
-    for address in addresses:
-        ip = ipaddress.ip_address(address[4][0])
-        if not ip.is_global:
-            raise ValueError("Non-public network addresses are not allowed")
-    return parsed
-
-
-class SafeRedirectHandler(HTTPRedirectHandler):
-    """Validate every redirect destination before urllib follows it."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        validate_public_http_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-def safe_urlopen(request, *, timeout, max_bytes, expected_content_types=None):
-    """Open an external URL with SSRF and response-size protections."""
-    target = request.full_url if isinstance(request, Request) else request
-    validate_public_http_url(target)
-    response = build_opener(SafeRedirectHandler()).open(request, timeout=timeout)
-    content_length = response.headers.get("Content-Length")
-    if content_length and int(content_length) > max_bytes:
-        response.close()
-        raise ValueError("Response exceeds configured size limit")
-    content_type = response.headers.get_content_type()
-    if expected_content_types and content_type not in expected_content_types:
-        response.close()
-        raise ValueError("Unexpected response content type")
-    return response
-
-
-def read_limited(response, max_bytes):
-    chunks = []
-    total = 0
-    while True:
-        chunk = response.read(64 * 1024)
-        if not chunk:
-            return b"".join(chunks)
-        total += len(chunk)
-        if total > max_bytes:
-            raise ValueError("Response exceeds configured size limit")
-        chunks.append(chunk)
-
 
 def build_smart_extraction_stack():
     """Build the deterministic smart-extraction stack using bot security primitives."""
