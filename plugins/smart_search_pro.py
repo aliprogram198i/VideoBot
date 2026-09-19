@@ -70,7 +70,7 @@ def _query_variants(query: str) -> list[str]:
 
 
 def _youtube_video_id(url: str) -> str:
-    match = re.search(r"(?:v=|youtu\\.be/|youtube\\.com/(?:shorts|embed)/)([A-Za-z0-9_-]{6,20})", url, re.IGNORECASE)
+    match = re.search(r"(?:v=|youtu\.be/|youtube\.com/(?:shorts|embed)/)([A-Za-z0-9_-]{6,20})", url, re.IGNORECASE)
     return match.group(1).casefold() if match else ""
 
 
