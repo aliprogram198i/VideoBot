@@ -16,6 +16,8 @@ import time
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from intent_router import is_smart_search_intent
+
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from downloader.smart_search import SearchResult, search as base_search
@@ -276,28 +278,33 @@ def _is_admin_workflow(context: ContextTypes.DEFAULT_TYPE, bot_module: Any, user
 
 
 async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_module: Any) -> None:
-    if not update.message or not update.effective_user:
+    if not is_smart_search_intent(update, context, admin_id=bot_module.ADMIN_ID):
         return
+
     text = (update.message.text or "").strip()
-    if not text or text.startswith("/") or URL_RE.match(text):
-        return
     user = update.effective_user
-    if _is_admin_workflow(context, bot_module, user.id):
-        return
     bot_module.register_user(user)
+
     if bot_module.is_banned(user.id):
         await update.message.reply_text(bot_module.TEXTS["ar"]["banned"])
         raise ApplicationHandlerStop
+
     language = bot_module.get_language(user.id) or "ar"
     if not bot_module.get_language(user.id):
-        await update.message.reply_text(bot_module.TEXTS["ar"]["choose_language"], reply_markup=bot_module.language_keyboard())
+        await update.message.reply_text(
+            bot_module.TEXTS["ar"]["choose_language"],
+            reply_markup=bot_module.language_keyboard(),
+        )
         raise ApplicationHandlerStop
+
     if len(text) < 2 or len(text) > MAX_QUERY_LENGTH:
         await update.message.reply_text("❌ اكتب عبارة بحث بين حرفين و160 حرفًا.")
         raise ApplicationHandlerStop
 
     await _stop_marquee(context)
-    status = await update.message.reply_text("🔎 جاري البحث الذكي الاحترافي...\n\n⚙️ يتم تحليل وترتيب النتائج خوارزميًا.")
+    status = await update.message.reply_text(
+        "🔎 جاري البحث الذكي الاحترافي...\n\n⚙️ يتم تحليل وترتيب النتائج خوارزميًا."
+    )
     results = await search_pro(text)
     if not results:
         await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
