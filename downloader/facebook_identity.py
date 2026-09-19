@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
 
-_REEL_ID_RE = re.compile(r"^\\d{5,30}$")
+_REEL_ID_RE = re.compile(r"^\d{5,30}$")
 _FACEBOOK_HOSTS = {"facebook.com", "www.facebook.com", "m.facebook.com", "fb.watch"}
 
 
