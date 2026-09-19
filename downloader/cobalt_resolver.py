@@ -32,6 +32,38 @@ def _base_url() -> str:
     return ""
 
 
+def _facebook_variants(url: str) -> list[str]:
+    """Return deterministic Facebook Reel URL variants for Cobalt.
+
+    Facebook's /reel/ route can be rejected while the equivalent watch?v=
+    route is accepted by downstream extractors. The numeric ID is preserved;
+    no search or unrelated URL is introduced.
+    """
+    try:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+            return [url]
+
+        parts = [part for part in parsed.path.split("/") if part]
+        reel_id = parts[1] if len(parts) == 2 and parts[0].lower() == "reel" else ""
+        if not reel_id and parsed.path.rstrip("/").lower() == "/watch":
+            reel_id = (parse_qs(parsed.query).get("v") or [""])[0]
+
+        if not reel_id.isdigit():
+            return [url]
+
+        return list(dict.fromkeys([
+            url,
+            f"https://www.facebook.com/watch/?v={reel_id}",
+            f"https://m.facebook.com/watch/?v={reel_id}&_rdr",
+        ]))
+    except Exception:
+        return [url]
+
+
 def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -65,29 +97,61 @@ def resolve(url: str) -> list[str]:
         "disableMetadata": True,
     }
 
-    try:
-        data = _post(f"{base}/", payload)
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-        print(f"⚠️ Cobalt Resolver request failed: {type(exc).__name__}", flush=True)
-        return []
-    except Exception as exc:
-        print(f"⚠️ Cobalt Resolver unexpected failure: {type(exc).__name__}", flush=True)
-        return []
+    for variant in _facebook_variants(url):
+        variant_payload = dict(payload)
+        variant_payload["url"] = variant
 
-    status = str(data.get("status", ""))
-    candidate = data.get("url")
-    if status in {"redirect", "tunnel"} and isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
-        return [candidate]
+        try:
+            data = _post(f"{base}/", variant_payload)
+        except urllib.error.HTTPError as exc:
+            # Cobalt returns structured JSON error codes on HTTP 400. Keep the
+            # exact upstream code visible so failures are diagnosable.
+            try:
+                raw_error = exc.read(4096).decode("utf-8", "replace")
+            except Exception:
+                raw_error = ""
+            print(
+                f"⚠️ Cobalt Resolver HTTP {exc.code} for {variant}: "
+                f"{raw_error[:500]}",
+                flush=True,
+            )
+            continue
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            print(
+                f"⚠️ Cobalt Resolver request failed for {variant}: {type(exc).__name__}",
+                flush=True,
+            )
+            continue
+        except Exception as exc:
+            print(
+                f"⚠️ Cobalt Resolver unexpected failure for {variant}: {type(exc).__name__}",
+                flush=True,
+            )
+            continue
 
-    if status == "picker":
-        # Picker items are intentionally not guessed: selecting an item needs
-        # explicit bot/UI semantics and should not silently choose a stream.
-        print("ℹ️ Cobalt Resolver returned picker; no automatic choice made", flush=True)
-    elif status == "error":
-        error = data.get("error")
-        if isinstance(error, dict):
-            print(f"ℹ️ Cobalt Resolver rejected URL: {error.get('code', 'unknown')}", flush=True)
-        else:
-            print("ℹ️ Cobalt Resolver rejected URL", flush=True)
+        status = str(data.get("status", ""))
+        candidate = data.get("url")
+
+        if status in {"redirect", "tunnel"} and isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+            print(f"✅ Cobalt Resolver: resolved via {variant}", flush=True)
+            return [candidate]
+
+        if status == "picker":
+            # Picker items are intentionally not guessed: selecting an item needs
+            # explicit bot/UI semantics and should not silently choose a stream.
+            print(
+                f"ℹ️ Cobalt Resolver returned picker for {variant}; no automatic choice made",
+                flush=True,
+            )
+        elif status == "error":
+            error = data.get("error")
+            if isinstance(error, dict):
+                print(
+                    f"ℹ️ Cobalt Resolver rejected {variant}: "
+                    f"{error.get('code', 'unknown')}",
+                    flush=True,
+                )
+            else:
+                print(f"ℹ️ Cobalt Resolver rejected {variant}", flush=True)
 
     return []
