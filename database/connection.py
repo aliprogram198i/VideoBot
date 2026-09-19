@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from data_layer import DB_FILE as CANONICAL_DB_FILE, get_db as canonical_get_db
+
 
 class Database:
     """Explicit SQLite connection factory for application services."""
@@ -20,6 +22,12 @@ class Database:
         self.path = Path(path)
 
     def connect(self) -> sqlite3.Connection:
+        # Canonical application DB path delegates to data_layer. Other explicit
+        # paths remain supported for tests/tools without changing their behavior.
+        if str(self.path) == str(Path(CANONICAL_DB_FILE)):
+            connection = canonical_get_db()
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
         self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
