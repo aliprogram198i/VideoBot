@@ -47,6 +47,7 @@ from downloader.resolver_admission import admit_local_media, admit_media_artifac
 from downloader.url_security import redact_url, validate_public_http_url, safe_urlopen, read_limited
 from downloader.process_utils import final_output_from_yt_dlp, communicate_with_cleanup
 from core.error_sanitizer import (\n    sanitize_error_for_storage,\n    sanitize_error_value as _sanitize_error_value,\n    sanitize_error_details as _sanitize_error_details,\n    details_to_json as _details_to_json,\n)
+from downloader.source_detection import detect_website
 
 from plugins import gemini_service
 
@@ -1672,37 +1673,6 @@ def delete_user(user_id):
 # تحديد المنصة
 # ============================================================
 
-def detect_website(url):
-
-    host = urlparse(url).netloc.lower()
-
-    host = host.replace(
-        "www.",
-        ""
-    )
-
-    if "youtube.com" in host or "youtu.be" in host:
-        return "YouTube"
-
-    if "instagram.com" in host:
-        return "Instagram"
-
-    if "tiktok.com" in host:
-        return "TikTok"
-
-    if "facebook.com" in host or "fb.watch" in host:
-        return "Facebook"
-
-    if host in {"t.me", "telegram.me"}:
-        return "Telegram"
-
-    if "twitter.com" in host or "x.com" in host:
-        return "X / Twitter"
-
-    if "reddit.com" in host:
-        return "Reddit"
-
-    return host or "Other"
 
 
 # ============================================================
