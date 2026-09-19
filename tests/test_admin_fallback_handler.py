@@ -24,6 +24,8 @@ def _pattern(handler):
 def test_fallback_intelligence_has_one_canonical_owner(monkeypatch):
     monkeypatch.setattr(admin_layer_v2, "init_admin_control_center", lambda get_db, owner_id: None)
     monkeypatch.setattr(admin_layer_v2, "register_download_log_enrichment", lambda bot_module: None)
+    import plugins.smart_operations as smart_operations
+    monkeypatch.setattr(smart_operations, "register_group_publisher", lambda *args, **kwargs: None)
     app = FakeApp()
 
     class Bot:
