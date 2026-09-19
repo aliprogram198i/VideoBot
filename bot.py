@@ -43,6 +43,7 @@ from downloader.instagram_identity import (
 from downloader.instagram_failure import (
     instagram_failure_message,
 )
+from downloader.resolver_contract import enforce_source_identity
 
 from plugins import gemini_service
 
@@ -2507,78 +2508,37 @@ async def download_with_smart_extraction(
             )
             return None, diagnostics
 
-        # A technically valid media URL is not enough for a social post.
-        # Generic browser/embed resolution can discover a valid file from a
-        # neighboring or unrelated page. For Telegram and Instagram public
-        # posts, require the candidate's source page to carry the exact post
-        # identity before accepting it. Both gates are intentionally fail-closed.
-        telegram_source = parse_telegram_post_url(url)
-        instagram_source = parse_instagram_post_url(url)
+        # A technically valid media URL is not enough for a protected social post.
+        # The canonical identity gate is fail-closed for Telegram/Instagram.
+        candidate, identity_gate = enforce_source_identity(
+            url,
+            result.ranked_candidates,
+            result.best_media.candidate,
+            telegram_parser=parse_telegram_post_url,
+            telegram_matcher=candidate_matches_telegram_source,
+            instagram_parser=parse_instagram_post_url,
+            instagram_matcher=candidate_matches_instagram_source,
+        )
 
-        if telegram_source is not None:
-            matching_results = [
-                item
-                for item in result.ranked_candidates
-                if item.valid
-                and item.candidate.kind != "iframe"
-                and candidate_matches_telegram_source(
-                    item.candidate,
-                    telegram_source,
-                )
-            ]
-            if not matching_results:
-                diagnostics["error_message"] = (
-                    "Telegram source identity could not be verified; "
-                    "generic fallback candidate rejected."
-                )
-                diagnostics["telegram_identity_gate"] = {
-                    "required": True,
-                    "matched_candidates": 0,
-                    "source": telegram_source.key,
-                }
-                return None, diagnostics
+        gate_payload = {
+            "required": identity_gate.required,
+            "matched_candidates": identity_gate.matched_candidates,
+            "source": identity_gate.source_key,
+            "accepted_source_page": identity_gate.accepted_source_page,
+            "reason": identity_gate.reason,
+        }
 
-            result_best = matching_results[0]
-            candidate = result_best.candidate
-            diagnostics["telegram_identity_gate"] = {
-                "required": True,
-                "matched_candidates": len(matching_results),
-                "source": telegram_source.key,
-                "accepted_source_page": candidate.source_page,
-            }
-        elif instagram_source is not None:
-            matching_results = [
-                item
-                for item in result.ranked_candidates
-                if item.valid
-                and item.candidate.kind != "iframe"
-                and candidate_matches_instagram_source(
-                    item.candidate,
-                    instagram_source,
-                )
-            ]
-            if not matching_results:
-                diagnostics["error_message"] = (
-                    "Instagram source identity could not be verified; "
-                    "generic fallback candidate rejected."
-                )
-                diagnostics["instagram_identity_gate"] = {
-                    "required": True,
-                    "matched_candidates": 0,
-                    "source": instagram_source.key,
-                }
-                return None, diagnostics
+        if identity_gate.required:
+            platform_key = "telegram" if identity_gate.source_key and "/" in identity_gate.source_key else "instagram"
+            diagnostics[f"{platform_key}_identity_gate"] = gate_payload
 
-            result_best = matching_results[0]
-            candidate = result_best.candidate
-            diagnostics["instagram_identity_gate"] = {
-                "required": True,
-                "matched_candidates": len(matching_results),
-                "source": instagram_source.key,
-                "accepted_source_page": candidate.source_page,
-            }
-        else:
-            candidate = result.best_media.candidate
+        if candidate is None:
+            diagnostics["error_message"] = (
+                "Protected source identity could not be verified; "
+                "generic fallback candidate rejected."
+            )
+            return None, diagnostics
+
 
         diagnostics["candidates"] = [
             {
