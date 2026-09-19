@@ -30,6 +30,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
+from download_lifecycle import DownloadLifecycle, DownloadState
 from data_layer import get_db as _data_get_db, record_download as _record_download
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
@@ -4374,12 +4375,26 @@ async def download_media(
         )
     )
 
-    temp_dir = tempfile.mkdtemp(prefix="videobot_")
-
-    # معرّف موحّد لمحاولة التحميل بالكامل.
-    # كل مراحل المحاولة (yt-dlp / fallback / Yoinku / final)
-    # يجب أن تستخدم نفس attempt_id حتى يستطيع Gemini تجميعها كحادثة واحدة.
+    # Correlation IDs are created once for the complete user download job.
+    job_id = context.user_data.get("download_job_id") or uuid.uuid4().hex
     attempt_id = uuid.uuid4().hex
+    context.user_data["download_job_id"] = job_id
+    context.user_data["download_attempt_id"] = attempt_id
+    context.user_data.pop("download_succeeded", None)
+    lifecycle = DownloadLifecycle(
+        user_id=int(user.id),
+        source_url=url,
+        platform=website,
+        media_type="audio" if is_audio else "video",
+        job_id=job_id,
+        attempt_id=attempt_id,
+    )
+    lifecycle.transition(DownloadState.REQUESTED, quality=quality_name)
+    lifecycle.transition(DownloadState.VALIDATING)
+
+    temp_dir = tempfile.mkdtemp(prefix=f"alibot_{job_id[:12]}_")
+
+    # All recovery attempts share one correlation id.
     attempt_number = 1
     attempt_started_at = time.monotonic()
 
@@ -4528,6 +4543,9 @@ async def download_media(
         # ----------------------------------------------------
         # تشغيل yt-dlp
         # ----------------------------------------------------
+
+        lifecycle.transition(DownloadState.RESOLVING, resolver="yt-dlp")
+        lifecycle.transition(DownloadState.DOWNLOADING, resolver="yt-dlp")
 
         process = (
             await asyncio.create_subprocess_exec(
@@ -5442,6 +5460,8 @@ async def download_media(
         # حفظ التحميل
         # ----------------------------------------------------
 
+        lifecycle.transition(DownloadState.POSTPROCESSING)
+        lifecycle.transition(DownloadState.DELIVERING, delivered_parts=total_parts if not is_audio else 1)
         save_download(
             user=user,
             url=url,
@@ -5453,6 +5473,8 @@ async def download_media(
             ),
             quality=quality_name,
         )
+        context.user_data["download_succeeded"] = True
+        lifecycle.transition(DownloadState.SUCCEEDED, delivered_parts=total_parts if not is_audio else 1)
 
         # ----------------------------------------------------
         # حذف رسالة الأزرار
@@ -5467,6 +5489,7 @@ async def download_media(
             pass
 
     except asyncio.TimeoutError:
+        lifecycle.transition(DownloadState.FAILED, error_type="TimeoutError")
         timeout_duration_ms = int(
             (time.monotonic() - attempt_started_at) * 1000
         )
@@ -5509,6 +5532,7 @@ async def download_media(
             pass
 
     except Exception as e:
+        lifecycle.transition(DownloadState.FAILED, error_type=type(e).__name__)
         import traceback as _traceback
 
         error_traceback = _traceback.format_exc()
@@ -5563,7 +5587,12 @@ async def download_media(
             pass
 
     finally:
-                shutil.rmtree(
+        if lifecycle.state not in {DownloadState.SUCCEEDED, DownloadState.FAILED}:
+            if asyncio.current_task() is not None and asyncio.current_task().cancelling():
+                lifecycle.transition(DownloadState.CANCELLED)
+            else:
+                lifecycle.transition(DownloadState.FAILED, error_type="incomplete_terminal_state")
+        shutil.rmtree(
             temp_dir,
             ignore_errors=True
         )
