@@ -215,7 +215,7 @@ def install(bot_module) -> None:
             count = len(result) if isinstance(result, (list, tuple)) else int(bool(result))
             contract = ResolverResult(
                 resolver=name,
-                source_url=str(source_url or ""),
+                source_url=str(source_url or "unknown://resolver"),
                 candidates=tuple(result) if isinstance(result, (list, tuple)) else ((result,) if result else ()),
                 confidence=1.0 if result else 0.0,
                 evidence=("resolver_returned_candidates" if result else "resolver_returned_no_candidates",),
