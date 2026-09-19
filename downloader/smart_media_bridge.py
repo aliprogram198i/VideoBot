@@ -229,7 +229,7 @@ def install(bot_module) -> None:
     original_fallback = getattr(bot_module, "download_with_fallback", None)
     if not callable(original) or getattr(original, "_smart_search_bridge", False):
         return
-    resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
+    resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])\n    facebook_resolver = __import__("downloader.facebook_media_resolver", fromlist=["resolve", "is_facebook_reel_url"])
     shahid4u_resolver = __import__("downloader.shahid4u_resolver", fromlist=["resolve"])
     krx18_resolver = __import__("downloader.krx18_resolver", fromlist=["resolve_media", "is_krx18_url"])
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
@@ -355,6 +355,36 @@ def install(bot_module) -> None:
                 return krx_candidates
             print("🛡️ KRX18 Dedicated Resolver: no verified public media; fail-closed", flush=True)
             return []
+
+        if facebook_resolver.is_facebook_reel_url(url):
+            print("🎯 Facebook Media Candidate Resolver: exact Reel path", flush=True)
+            try:
+                facebook_candidates = await _run_resolver(
+                    "facebook_media",
+                    facebook_resolver.resolve,
+                    url,
+                    validator=bot_module.validate_public_http_url,
+                    request_factory=bot_module.Request,
+                    open_function=bot_module.safe_urlopen,
+                    read_function=bot_module.read_limited,
+                    timeout=20.0,
+                    max_html_bytes=5 * 1024 * 1024,
+                    source_url=url,
+                    media_kind="progressive",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"⚠️ Facebook Media Candidate Resolver failed: {type(exc).__name__}", flush=True)
+                facebook_candidates = []
+            if facebook_candidates:
+                _queue_candidates(url, facebook_candidates)
+                for item in facebook_candidates[:3]:
+                    candidate = item.get("url") if isinstance(item, dict) else item
+                    print(f"✅ Facebook source={url} candidate={str(candidate).split('?', 1)[0]}", flush=True)
+                print(f"🎯 Facebook Media Candidate Resolver: {len(facebook_candidates)} exact candidate(s)", flush=True)
+                return facebook_candidates
+            print("🛡️ Facebook Media Candidate Resolver: no exact media candidate; continuing existing fallbacks", flush=True)
 
         try:
             resolve_candidates = getattr(shahid4u_resolver, "resolve_candidates", None)
