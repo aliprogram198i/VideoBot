@@ -35,6 +35,9 @@ def record_download(
     media_type: str,
     quality: str,
     created_at: str,
+    job_id: str | None = None,
+    attempt_id: str | None = None,
+    resolver: str | None = None,
 ) -> None:
     """Atomically record a delivered download and increment the user counter.
 
@@ -48,6 +51,9 @@ def record_download(
         media_type=media_type,
         quality=quality,
         created_at=created_at,
+        job_id=job_id,
+        attempt_id=attempt_id,
+        resolver=resolver,
     )
     conn = get_db()
     try:
