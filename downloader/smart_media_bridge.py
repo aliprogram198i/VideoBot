@@ -80,6 +80,43 @@ def _telegram_embed_urls(url):
     return variants
 
 
+def _facebook_embed_urls(url):
+    """Build deterministic Facebook embed variants for public video/reel URLs."""
+    if not isinstance(url, str) or not url.strip():
+        return []
+
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+        return []
+
+    parts = [part for part in parsed.path.split('/') if part]
+    if len(parts) == 2 and parts[0].lower() in {"reel", "videos"}:
+        video_id = parts[1]
+    elif parsed.path.rstrip("/").lower() == "/watch":
+        from urllib.parse import parse_qs
+        video_id = (parse_qs(parsed.query).get("v") or [""])[0]
+    else:
+        video_id = ""
+
+    if not video_id or not re.fullmatch(r"\d{5,30}", video_id):
+        return []
+
+    from urllib.parse import quote
+    encoded_source = quote(url.strip(), safe='')
+    variants = [
+        (
+            "https://www.facebook.com/plugins/video.php"
+            f"?href={encoded_source}&show_text=false&width=560"
+        ),
+        (
+            "https://www.facebook.com/plugins/video.php"
+            f"?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{video_id}"
+            "&show_text=false&width=560"
+        ),
+    ]
+    return list(dict.fromkeys(variants))
+
 def _protected_social_post(url):
     """Return True for public Telegram/Instagram post URLs protected by source identity gates."""
     try:
@@ -541,6 +578,40 @@ def install(bot_module) -> None:
                             f"⚠️ Telegram Source Resolver variant failed: {type(exc).__name__}",
                             flush=True,
                         )
+
+            # Facebook Reels currently fail in the upstream yt-dlp extractor with
+            # "Cannot parse data" on public Reel URLs. Use the official Facebook
+            # video plugin as a deterministic source-page variant before generic
+            # fallbacks. The embed href remains the exact user-supplied URL.
+            facebook_variants = _facebook_embed_urls(url)
+            if facebook_variants:
+                print(
+                    f"📘 Facebook Source Resolver: trying {len(facebook_variants)} official embed variant(s)",
+                    flush=True,
+                )
+                for facebook_url in facebook_variants:
+                    try:
+                        variant_kwargs = dict(kwargs)
+                        if args:
+                            variant_args = list(args)
+                            variant_args[0] = facebook_url
+                            variant_kwargs.pop("url", None)
+                        else:
+                            variant_args = []
+                            variant_kwargs["url"] = facebook_url
+                        variant_result = original_smart(*variant_args, **variant_kwargs)
+                        if inspect.isawaitable(variant_result):
+                            variant_result = await variant_result
+                        if isinstance(variant_result, tuple) and variant_result and _is_local_file(variant_result[0], temp_dir):
+                            print(
+                                "✅ Facebook Source Resolver: official embed media extracted",
+                                flush=True,
+                            )
+                            return variant_result
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        print(f"⚠️ Facebook Source Resolver variant failed: {type(exc).__name__}", flush=True)
 
             if _protected_social_post(url):
                 print(
