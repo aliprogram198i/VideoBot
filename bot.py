@@ -4393,6 +4393,10 @@ async def download_media(
     # كل مراحل المحاولة (yt-dlp / fallback / Yoinku / final)
     # يجب أن تستخدم نفس attempt_id حتى يستطيع Gemini تجميعها كحادثة واحدة.
     attempt_id = uuid.uuid4().hex
+
+    # Shared delivery/lifecycle reporting uses total_parts after the
+    # media-type branches. Keep the default safe for unsplit media.
+    total_parts = 1
     attempt_number = 1
     attempt_started_at = time.monotonic()
 
@@ -4659,6 +4663,17 @@ async def download_media(
             # Keep the deterministic Smart Extraction path available; its
             # source-identity gate remains fail-closed and therefore cannot
             # accept media from a neighboring/unrelated Instagram post.
+
+            # Shared recovery/reporting code consumes these values after the
+            # platform-specific branches. Initialize them before branching so
+            # YouTube and other skip paths can never reference an unbound value.
+            smart_file = None
+            smart_diagnostics = {
+                "candidate_count": 0,
+                "valid_candidate_count": 0,
+                "skipped": "not_attempted",
+            }
+
             instagram_access_blocked = (
                 "instagram.com" in hostname
                 and any(
