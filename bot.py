@@ -4415,6 +4415,22 @@ async def download_media(
     last_error_message = None
     yoinku_attempted = False
 
+    # All resolver diagnostics are consumed by shared success/failure
+    # reporting after the platform-specific branches. Initialize every
+    # container before yt-dlp so a successful primary download cannot leave
+    # a diagnostic variable unbound.
+    smart_file = None
+    smart_diagnostics = {
+        "candidate_count": 0,
+        "valid_candidate_count": 0,
+        "skipped": "not_attempted",
+    }
+    relay_diagnostics = {}
+    graphql_diagnostics = {}
+    cobalt_diagnostics = {}
+    fallback_diagnostics = {}
+    yoinku_diagnostics = {}
+
     try:
 
         output_template = os.path.join(
