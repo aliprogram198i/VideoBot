@@ -38,7 +38,7 @@ def admin_keyboard():
         [InlineKeyboardButton("🧹 التخزين", callback_data="admin_storage"),
          InlineKeyboardButton("🧾 سجل التدقيق", callback_data="admin_audit")],
         [InlineKeyboardButton("👥 إدارة المجموعات", callback_data="admin_groups")],
-        [InlineKeyboardButton("📢 نشر في المناقشات", callback_data="admin_discussion_publisher")],
+        [InlineKeyboardButton("📢 مناقشات Telegram", callback_data="admin_mtproto_menu")],
         [InlineKeyboardButton("🛡️ الأدوار والصلاحيات", callback_data="admin_roles")],
     ])
 
