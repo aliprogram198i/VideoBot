@@ -19,7 +19,17 @@ DEFAULT_TIMEOUT = float(os.getenv("ALIBOT_COBALT_TIMEOUT", "20"))
 
 
 def _base_url() -> str:
-    return os.getenv("ALIBOT_COBALT_URL", "").strip().rstrip("/")
+    configured = os.getenv("ALIBOT_COBALT_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+
+    # Staging has no spare Railway resource for a duplicate Cobalt service.
+    # Keep this fallback staging-only so Production never acquires an implicit
+    # cross-environment dependency.
+    if os.getenv("RAILWAY_ENVIRONMENT_NAME", "").strip().lower() == "staging":
+        return "https://cobalt-resolver-production.up.railway.app"
+
+    return ""
 
 
 def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
