@@ -42,7 +42,7 @@ def _db(path):
     return get_db
 
 
-def test_command_center_has_six_domains_and_more():
+def test_command_center_has_all_current_domains_and_more():
     rows = command_center_keyboard().inline_keyboard
     callbacks = [button.callback_data for row in rows for button in row]
     assert callbacks == [
@@ -50,6 +50,8 @@ def test_command_center_has_six_domains_and_more():
         "admin_records",
         "admin_ops_dashboard",
         "admin_health",
+        "admin_smart_operations",
+        "admin_group_publisher",
         "admin_broadcast",
         "admin_roles",
         "admin_more",
