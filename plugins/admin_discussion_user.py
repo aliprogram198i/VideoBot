@@ -484,14 +484,14 @@ async def _input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, man
             result = await manager.submit_code(value)
             if result == "password":
                 context.user_data["mtproto_state"] = "password"
-                await message.reply_text("🔑 الحساب محمي بخطوتين. أرسل كلمة مرور 2FA هنا.")
+                await chat.send_message("🔑 الحساب محمي بخطوتين. أرسل كلمة مرور 2FA هنا.")
             else:
                 context.user_data.pop("mtproto_state", None)
-                await message.reply_text("✅ تم ربط حساب المستخدم بنجاح.", reply_markup=_menu(manager))
+                await chat.send_message("✅ تم ربط حساب المستخدم بنجاح.", reply_markup=_menu(manager))
         elif state == "password":
             await manager.submit_password(value)
             context.user_data.pop("mtproto_state", None)
-            await message.reply_text("✅ تم ربط حساب المستخدم بنجاح.", reply_markup=_menu(manager))
+            await chat.send_message("✅ تم ربط حساب المستخدم بنجاح.", reply_markup=_menu(manager))
         elif state == "discussion_url":
             result = await manager.join_discussion(value)
             context.user_data.pop("mtproto_state", None)
@@ -499,7 +499,7 @@ async def _input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, man
             title = getattr(entity, "title", None) or getattr(entity, "username", None) or str(getattr(entity, "id", ""))
             status = result["status"]
             text = "✅ تم الانضمام إلى المناقشة." if status == "joined" else "🟡 تم إرسال طلب الانضمام، وينتظر موافقة مشرف المجموعة."
-            await message.reply_text(f"{text}\n\n💬 <b>{html.escape(str(title))}</b>", parse_mode="HTML", reply_markup=_menu(manager))
+            await chat.send_message(f"{text}\n\n💬 <b>{html.escape(str(title))}</b>", parse_mode="HTML", reply_markup=_menu(manager))
     except Exception as exc:
         if state in {"phone", "code", "password"}:
             context.user_data.pop("mtproto_state", None)
