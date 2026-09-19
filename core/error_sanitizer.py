@@ -123,8 +123,15 @@ def sanitize_error_details(details):
 
 
 def details_to_json(details):
-    return json.dumps(
-        sanitize_error_details(details),
-        ensure_ascii=False,
-        default=str,
-    )
+    if not details:
+        return None
+    try:
+        safe_details = sanitize_error_details(details)
+        return json.dumps(
+            safe_details,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )[:12000]
+    except Exception:
+        return None
