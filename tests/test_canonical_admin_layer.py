@@ -38,6 +38,8 @@ def _isolate_admin_runtime_initializers(monkeypatch):
         "register_download_log_enrichment",
         lambda bot_module: None,
     )
+    import plugins.smart_operations as smart_operations
+    monkeypatch.setattr(smart_operations, "register_group_publisher", lambda *args, **kwargs: None)
 
 
 def _build_app(monkeypatch):
