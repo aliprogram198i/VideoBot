@@ -2016,7 +2016,17 @@ def detect_website(url):
 # حفظ التحميل
 # ============================================================
 
-def save_download(user, url, website, media_type, quality):
+def save_download(
+    user,
+    url,
+    website,
+    media_type,
+    quality,
+    *,
+    job_id=None,
+    attempt_id=None,
+    resolver=None,
+):
     """Compatibility facade for the canonical atomic download ledger write."""
     _record_download(
         user_id=user.id,
@@ -2026,6 +2036,9 @@ def save_download(user, url, website, media_type, quality):
         media_type=media_type,
         quality=quality,
         created_at=datetime.now().isoformat(),
+        job_id=job_id,
+        attempt_id=attempt_id,
+        resolver=resolver,
     )
 
 
@@ -5432,6 +5445,9 @@ async def download_media(
                 else "video"
             ),
             quality=quality_name,
+            job_id=job_id,
+            attempt_id=attempt_id,
+            resolver="adaptive_download_orchestrator",
         )
         context.user_data["download_succeeded"] = True
         lifecycle.transition(DownloadState.SUCCEEDED, delivered_parts=total_parts if not is_audio else 1)
