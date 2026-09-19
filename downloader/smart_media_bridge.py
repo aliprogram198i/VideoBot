@@ -229,7 +229,8 @@ def install(bot_module) -> None:
     original_fallback = getattr(bot_module, "download_with_fallback", None)
     if not callable(original) or getattr(original, "_smart_search_bridge", False):
         return
-    resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])\n    facebook_resolver = __import__("downloader.facebook_media_resolver", fromlist=["resolve", "is_facebook_reel_url"])
+    resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
+    facebook_resolver = __import__("downloader.facebook_media_resolver", fromlist=["resolve", "is_facebook_reel_url"])
     shahid4u_resolver = __import__("downloader.shahid4u_resolver", fromlist=["resolve"])
     krx18_resolver = __import__("downloader.krx18_resolver", fromlist=["resolve_media", "is_krx18_url"])
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
