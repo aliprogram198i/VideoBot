@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -111,6 +111,7 @@ class DiscussionUserManager:
         )
         self._client = None
         self._phone = None
+        self._last_test_at = None
 
     @staticmethod
     def _read_api_id() -> int | None:
@@ -135,6 +136,11 @@ class DiscussionUserManager:
                 self.api_hash,
                 flood_sleep_threshold=60,
             )
+        if self.session_path.exists():
+            try:
+                os.chmod(self.session_path, 0o600)
+            except OSError:
+                pass
         return self._client
 
     async def connect(self):
@@ -258,8 +264,8 @@ class DiscussionUserManager:
             raise RuntimeError("حساب المستخدم غير مرتبط.")
         entity = await client.get_entity(row["chat_id"] or row["url"])
         permissions = await client.get_permissions(entity)
-        can_send = not getattr(permissions, "is_banned", False)
-        self._mark_verified(row_id, "ready" if can_send else "write_forbidden", None)
+        can_send = not getattr(permissions, "is_banned", False) and not getattr(permissions, "has_left", False)
+        self._mark_verified(row_id, "joined" if can_send else "write_forbidden", None)
         return {"entity": entity, "can_send": can_send}
 
     async def send_test(self, row_id: int) -> int:
@@ -271,13 +277,19 @@ class DiscussionUserManager:
             raise RuntimeError("حساب المستخدم غير مرتبط.")
         entity = await client.get_entity(row["chat_id"] or row["url"])
         permissions = await client.get_permissions(entity)
-        if getattr(permissions, "is_banned", False):
+        if getattr(permissions, "is_banned", False) or getattr(permissions, "has_left", False):
             raise RuntimeError("الحساب ممنوع من الكتابة في هذه المناقشة.")
+        now = datetime.now(timezone.utc)
+        if self._last_test_at is not None:
+            elapsed = (now - self._last_test_at).total_seconds()
+            if elapsed < 30:
+                raise RuntimeError(f"انتظر {30 - int(elapsed)} ثانية قبل اختبار نشر آخر.")
         sent = await client.send_message(
             entity,
             "🧪 AliBot — اختبار نشر من حساب المستخدم المرتبط.\n\n"
             "إذا ظهرت هذه الرسالة هنا، فمسار MTProto يعمل بشكل صحيح.",
         )
+        self._last_test_at = now
         self._mark_verified(row_id, "ready", None)
         return int(sent.id)
 
@@ -462,11 +474,12 @@ async def _input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, man
         await message.delete()
     except Exception:
         pass
+    chat = update.effective_chat
     try:
         if state == "phone":
             await manager.request_code(value)
             context.user_data["mtproto_state"] = "code"
-            await message.reply_text("📨 أرسلت Telegram رمز تسجيل الدخول. أرسله هنا الآن. سيتم حذف رسالتك فورًا.")
+            await chat.send_message("📨 أرسلت Telegram رمز تسجيل الدخول. أرسله هنا الآن. سيتم حذف رسالتك فورًا.")
         elif state == "code":
             result = await manager.submit_code(value)
             if result == "password":
@@ -491,7 +504,8 @@ async def _input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, man
         if state in {"phone", "code", "password"}:
             context.user_data.pop("mtproto_state", None)
         audit(get_db, owner_id, "mtproto_operation_failed", None, type(exc).__name__)
-        await message.reply_text(f"❌ {html.escape(_safe_error(exc))}")
+        await chat.send_message(f"❌ {html.escape(_safe_error(exc))}")
+    raise ApplicationHandlerStop
 
 
 async def _add_callback(update, context, manager, get_db, owner_id):
