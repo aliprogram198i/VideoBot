@@ -33,3 +33,49 @@ def test_facebook_candidate_provenance_must_match_reel_id():
     )
     assert candidate_matches_facebook_reel(matching, identity)
     assert not candidate_matches_facebook_reel(unrelated, identity)
+
+
+class _Response:
+    def __init__(self, html, url):
+        self.html = html
+        self.url = url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_resolver_returns_only_exact_reel_media_candidate():
+    from downloader.facebook_media_resolver import resolve
+
+    html = '<video src="https://video.xx.fbcdn.net/exact.mp4?token=abc"></video>'
+    calls = []
+
+    def validator(url):
+        calls.append(("validate", url))
+
+    def request_factory(url, **kwargs):
+        calls.append(("request", url))
+        return url
+
+    def open_function(request, **kwargs):
+        return _Response(html, request)
+
+    def read_function(response, **kwargs):
+        return response.html
+
+    result = resolve(
+        REEL_URL,
+        validator=validator,
+        request_factory=request_factory,
+        open_function=open_function,
+        read_function=read_function,
+        timeout=5,
+    )
+    assert result
+    assert result[0]["url"].startswith("https://video.xx.fbcdn.net/exact.mp4")
+    assert result[0]["metadata"]["facebook_reel_id"] == "2115871489331970"
+    assert result[0]["metadata"]["facebook_resolver"] == "facebook_media_resolver_v1"
+    assert calls[0] == ("validate", REEL_URL)
