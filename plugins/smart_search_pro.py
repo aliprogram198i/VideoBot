@@ -435,12 +435,10 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
             "❌ تعذر فتح لوحة التحميل لهذه النتيجة حالياً.\n\n"
             "يمكنك الضغط على النتيجة مرة أخرى للمحاولة.",
             parse_mode="HTML",
-            reply_markup=_results_keyboard(
-                [
-                    SearchResult(i, item["title"], item["url"], "", None, None, 0.0)
-                    for i, item in enumerate(results)
-                ]
-            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 إعادة المحاولة", callback_data=f"smart_pro_pick_{index}")],
+                [InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel")],
+            ]),
         )
         return
     if not handled:
