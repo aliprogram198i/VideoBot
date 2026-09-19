@@ -11,8 +11,9 @@ import os
 import time
 
 from storage_lifecycle import cleanup_on_startup
+from intent_router import is_smart_search_intent
 
-from telegram.ext import Application, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, ApplicationHandlerStop, CallbackQueryHandler, MessageHandler, filters
 
 LOCK_PATH = str(Path(__file__).resolve().parent / ".alibot-single-instance.lock")
 STARTUP_GRACE_SECONDS = 15
@@ -112,25 +113,26 @@ def main() -> None:
         registered = False
 
         async def admin_text_router(update, context):
-            """Route admin text by active workflow before generic text search.
-
-            The rich broadcast and library handlers share group -4. Their
-            broad text filters mean the first matching handler can consume the
-            update without stopping propagation. This router makes the active
-            admin workflow explicit while preserving the existing smart-search
-            behavior for ordinary admin text.
-            """
+            """Route admin text through one canonical workflow gate."""
             if not update.message or not update.effective_user:
                 return
             if update.effective_user.id != bot_module.ADMIN_ID:
                 return
+
             if context.user_data.get("rich_broadcast_waiting"):
                 await register_rich_broadcast_capture(update, context)
-                return
+                raise ApplicationHandlerStop
+
             if context.user_data.get("library_searching"):
                 await register_library_search_message(update, context)
-                return
-            await register_smart_search_handler(update, context, bot_module)
+                raise ApplicationHandlerStop
+
+            # Never let generic admin text reach Smart Search unless the
+            # canonical router explicitly classifies it as searchable text.
+            if is_smart_search_intent(update, context, admin_id=bot_module.ADMIN_ID):
+                await register_smart_search_handler(update, context, bot_module)
+                raise ApplicationHandlerStop
+
 
         def run_polling_with_layers(self, *args, **kwargs):
             nonlocal registered
