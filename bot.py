@@ -4634,6 +4634,18 @@ async def download_media(
             # Keep the deterministic Smart Extraction path available; its
             # source-identity gate remains fail-closed and therefore cannot
             # accept media from a neighboring/unrelated Instagram post.
+            # Initialize fallback state before any platform-specific branch.
+            # YouTube intentionally skips generic Smart Extraction, but the
+            # diagnostics object is still consumed by downstream recovery/
+            # failure reporting. Keeping it initialized here prevents a
+            # platform-dependent UnboundLocalError after yt-dlp completes.
+            smart_file = None
+            smart_diagnostics = {
+                "candidate_count": 0,
+                "valid_candidate_count": 0,
+                "skipped": "not_attempted",
+            }
+
             instagram_access_blocked = (
                 "instagram.com" in hostname
                 and any(
