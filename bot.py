@@ -46,7 +46,12 @@ from downloader.instagram_failure import (
 from downloader.resolver_admission import admit_local_media, admit_media_artifact
 from downloader.url_security import redact_url, validate_public_http_url, safe_urlopen, read_limited
 from downloader.process_utils import final_output_from_yt_dlp, communicate_with_cleanup
-from core.error_sanitizer import (\n    sanitize_error_for_storage,\n    sanitize_error_value as _sanitize_error_value,\n    sanitize_error_details as _sanitize_error_details,\n    details_to_json as _details_to_json,\n)
+from core.error_sanitizer import (
+    sanitize_error_for_storage,
+    sanitize_error_value as _sanitize_error_value,
+    sanitize_error_details as _sanitize_error_details,
+    details_to_json as _details_to_json,
+)
 from downloader.source_detection import detect_website
 
 from plugins import gemini_service
