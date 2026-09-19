@@ -9,6 +9,8 @@ import re
 import time
 from urllib.parse import urlparse
 
+from .resolver_contract import ResolverResult
+
 SHAHID4U_MAX_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
 GENERIC_MAX_VIDEO_HANDOFF_BYTES = 2 * 1024 * 1024 * 1024
 MOVIE_MIN_VIDEO_BYTES = 5 * 1024 * 1024
@@ -211,9 +213,23 @@ def install(bot_module) -> None:
             if inspect.isawaitable(result):
                 result = await result
             count = len(result) if isinstance(result, (list, tuple)) else int(bool(result))
-            telemetry.record(name, success=bool(result), candidate_count=count,
-                             elapsed_ms=(time.monotonic() - started) * 1000,
-                             platform=platform, media_kind=kind)
+            contract = ResolverResult(
+                resolver=name,
+                source_url=str(source_url or ""),
+                candidates=tuple(result) if isinstance(result, (list, tuple)) else ((result,) if result else ()),
+                confidence=1.0 if result else 0.0,
+                evidence=("resolver_returned_candidates" if result else "resolver_returned_no_candidates",),
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                terminal=False,
+            )
+            telemetry.record(
+                contract.resolver,
+                success=bool(contract.candidates),
+                candidate_count=len(contract.candidates),
+                elapsed_ms=contract.elapsed_ms,
+                platform=platform,
+                media_kind=kind,
+            )
             return result
         except asyncio.CancelledError:
             raise
