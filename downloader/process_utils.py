@@ -48,7 +48,7 @@ def final_output_from_yt_dlp(stdout_text, temp_dir, extensions):
     return None
 
 
-async def communicate_with_cleanup(process, timeout, shutdown_timeout):
+async def communicate_with_cleanup(process, timeout, shutdown_timeout=10):
     """Wait for a child process and reliably reap it on timeout/cancellation."""
     try:
         return await asyncio.wait_for(process.communicate(), timeout=timeout)
