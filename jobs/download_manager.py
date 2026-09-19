@@ -103,10 +103,17 @@ class DownloadJobManager:
         try:
             future = await self._enqueue(priority=priority, timeout=queue_timeout)
             try:
-                await asyncio.wait_for(future, self._queue_timeout if queue_timeout is None else queue_timeout)
+                await asyncio.wait_for(
+                    future,
+                    self._queue_timeout if queue_timeout is None else queue_timeout,
+                )
             except asyncio.TimeoutError as exc:
-                future.cancel()
-                raise DownloadBusyError("download queue wait timed out") from exc
+                if future.done() and not future.cancelled():
+                    global_acquired = True
+                else:
+                    future.cancel()
+                if not global_acquired:
+                    raise DownloadBusyError("download queue wait timed out") from exc
             global_acquired = True
             yield
         except asyncio.CancelledError:
