@@ -9,7 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .facebook_identity import (\n    FacebookReelIdentity,\n    candidate_matches_facebook_reel,\n    parse_facebook_reel_url,\n)\nfrom .instagram_identity import (
+from .facebook_identity import (
+    FacebookReelIdentity,
+    candidate_matches_facebook_reel,
+    parse_facebook_reel_url,
+)
+from .instagram_identity import (
     InstagramPostIdentity,
     candidate_matches_instagram_source,
     parse_instagram_post_url,
@@ -52,6 +57,14 @@ def resolve_source_identity(source_url: str) -> SourceIdentity | None:
             native=instagram,
         )
 
+    facebook = parse_facebook_reel_url(source_url)
+    if facebook is not None:
+        return SourceIdentity(
+            platform="facebook",
+            value=facebook.reel_id,
+            native=facebook,
+        )
+
     return None
 
 
@@ -73,6 +86,11 @@ def candidate_matches_source(
     ):
         return candidate_matches_instagram_source(candidate, source_identity.native)
 
+    if source_identity.platform == "facebook" and isinstance(
+        source_identity.native, FacebookReelIdentity
+    ):
+        return candidate_matches_facebook_reel(candidate, source_identity.native)
+
     return False
 
 
@@ -87,44 +105,5 @@ class CandidateIdentityGate:
         if self.source_identity is None:
             return True
         if getattr(candidate, "kind", None) == "iframe":
-            return True
+            return False
         return candidate_matches_source(candidate, self.source_identity)
-
-    def filter_results(self, results: list[Any], diagnostics: list[str]) -> list[Any]:
-        """Filter validated results and record deterministic rejection reasons."""
-        if self.source_identity is None:
-            return results
-
-        accepted: list[Any] = []
-        rejected = 0
-        for result in results:
-            if not getattr(result, "valid", False):
-                accepted.append(result)
-                continue
-            candidate = getattr(result, "candidate", None)
-            if self.accepts(candidate):
-                accepted.append(result)
-                continue
-            rejected += 1
-            diagnostics.append(
-                "source_identity_rejected:%s:%s"
-                % (
-                    self.source_identity.platform,
-                    getattr(candidate, "discovered_by", "unknown"),
-                )
-            )
-
-        if rejected:
-            diagnostics.append(
-                "source_identity_gate:%s:rejected=%d"
-                % (self.source_identity.platform, rejected)
-            )
-        return accepted
-
-
-__all__ = [
-    "CandidateIdentityGate",
-    "SourceIdentity",
-    "candidate_matches_source",
-    "resolve_source_identity",
-]
