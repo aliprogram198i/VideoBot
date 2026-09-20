@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from downloader.smart_extractor import MediaCandidate
 from downloader.source_identity import (
@@ -49,6 +50,36 @@ class SourceIdentityGateTests(unittest.TestCase):
             metadata={"telegram_data_post": "channel/123"},
         )
         self.assertTrue(gate.accepts(candidate))
+
+    def test_filter_results_rejects_valid_mismatched_candidate(self):
+        gate = CandidateIdentityGate("https://www.facebook.com/reel/2115871489331970/")
+        good = MediaCandidate(
+            url="https://cdn.example.net/good.mp4",
+            kind="progressive",
+            source_page="https://www.facebook.com/reel/2115871489331970/",
+            discovered_by="video",
+        )
+        bad = MediaCandidate(
+            url="https://cdn.example.net/bad.mp4",
+            kind="progressive",
+            source_page="https://www.facebook.com/reel/9999999999999999/",
+            discovered_by="video",
+        )
+        results = [
+            SimpleNamespace(candidate=good, valid=True),
+            SimpleNamespace(candidate=bad, valid=True),
+        ]
+        diagnostics = []
+        filtered = gate.filter_results(results, diagnostics)
+        self.assertEqual([item.candidate for item in filtered], [good])
+        self.assertTrue(any(item.startswith("source_identity_gate:") for item in diagnostics))
+
+    def test_filter_results_preserves_invalid_validation_results(self):
+        gate = CandidateIdentityGate("https://www.facebook.com/reel/2115871489331970/")
+        invalid = SimpleNamespace(candidate=object(), valid=False)
+        diagnostics = []
+        self.assertEqual(gate.filter_results([invalid], diagnostics), [invalid])
+        self.assertEqual(diagnostics, [])
 
     def test_iframe_remains_compatible(self):
         gate = CandidateIdentityGate("https://t.me/channel/123")
