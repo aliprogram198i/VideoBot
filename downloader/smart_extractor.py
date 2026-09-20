@@ -406,6 +406,59 @@ def extract_telegram_post_candidates(
                     },
                 )]
 
+    # Some Telegram embed responses omit the standard message wrapper
+    # while still exposing the exact post identity on a data-post attribute.
+    # Isolate that exact data-post block before falling back to player markup;
+    # this keeps neighboring posts outside the extraction boundary.
+    data_post_matches = list(
+        re.finditer(
+            r'<[^>]*\\bdata-post=["\\']([^"\\']+)["\\'][^>]*>',
+            decoded,
+            flags=re.IGNORECASE,
+        )
+    )
+    for index, match in enumerate(data_post_matches):
+        if not _post_value_matches(match.group(1)):
+            continue
+        end = data_post_matches[index + 1].start() if index + 1 < len(data_post_matches) else len(decoded)
+        block = decoded[match.start():end]
+        candidates = extract_candidates(
+            block,
+            page_url,
+            depth=depth,
+            max_candidates=max_candidates,
+        )
+        if candidates:
+            return [
+                MediaCandidate(
+                    url=item.url,
+                    kind=item.kind,
+                    source_page=item.source_page,
+                    discovered_by=item.discovered_by,
+                    depth=item.depth,
+                    score=item.score,
+                    metadata={**item.metadata, "telegram_data_post": f"{channel}/{message_id}"},
+                )
+                for item in candidates
+            ]
+        video_src = re.search(
+            r"<video\\b[^>]*\\bsrc=['\\\"]([^'\\\"]+)['\\\"]",
+            block,
+            flags=re.IGNORECASE,
+        )
+        if video_src:
+            normalized = _normalize_candidate_url(video_src.group(1), page_url)
+            if normalized:
+                return [MediaCandidate(
+                    url=normalized,
+                    kind="progressive",
+                    source_page=page_url,
+                    discovered_by="video",
+                    depth=depth,
+                    score=_score("progressive", "video"),
+                    metadata={"telegram_data_post": f"{channel}/{message_id}"},
+                )]
+
     # Telegram embed pages may omit the outer wrapper but expose the exact
     # post identity on the video-player anchor href. Select only the player
     # whose href points to the requested channel/message.
