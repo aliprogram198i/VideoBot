@@ -107,3 +107,37 @@ class CandidateIdentityGate:
         if getattr(candidate, "kind", None) == "iframe":
             return False
         return candidate_matches_source(candidate, self.source_identity)
+
+    def filter_results(self, results: list[Any], diagnostics: list[str] | None = None) -> list[Any]:
+        """Filter validated candidates through the exact source-identity gate.
+
+        Invalid technical validation results are preserved for diagnostics. Only
+        technically valid candidates that fail an enabled source-identity gate
+        are removed from the result set. Unsupported platforms retain the
+        legacy behavior and pass through unchanged.
+        """
+        if not isinstance(results, list):
+            results = list(results or [])
+        if self.source_identity is None:
+            return results
+
+        filtered: list[Any] = []
+        rejected = 0
+        for result in results:
+            if not getattr(result, "valid", False):
+                filtered.append(result)
+                continue
+            candidate = getattr(result, "candidate", None)
+            if self.accepts(candidate):
+                filtered.append(result)
+                continue
+            rejected += 1
+            if diagnostics is not None:
+                diagnostics.append(
+                    f"source_identity_rejected:{self.source_identity.platform}:{self.source_identity.value}"
+                )
+        if diagnostics is not None and rejected:
+            diagnostics.append(
+                f"source_identity_gate:rejected={rejected}:platform={self.source_identity.platform}"
+            )
+        return filtered
