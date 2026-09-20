@@ -412,7 +412,7 @@ def extract_telegram_post_candidates(
     # this keeps neighboring posts outside the extraction boundary.
     data_post_matches = list(
         re.finditer(
-            r'<[^>]*\\bdata-post=["\\']([^"\\']+)["\\'][^>]*>',
+            r"<[^>]*\\bdata-post=['\"]([^'\"]+)['\"][^>]*>",
             decoded,
             flags=re.IGNORECASE,
         )
