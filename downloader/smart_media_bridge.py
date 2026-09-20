@@ -231,6 +231,7 @@ def install(bot_module) -> None:
         return
     resolver = __import__("downloader.smart_media_resolver", fromlist=["resolve"])
     facebook_resolver = __import__("downloader.facebook_media_resolver", fromlist=["resolve", "is_facebook_reel_url"])
+    facebook_external_resolver = __import__("downloader.facebook_external_resolver", fromlist=["resolve"])
     shahid4u_resolver = __import__("downloader.shahid4u_resolver", fromlist=["resolve"])
     krx18_resolver = __import__("downloader.krx18_resolver", fromlist=["resolve_media", "is_krx18_url"])
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
@@ -386,6 +387,37 @@ def install(bot_module) -> None:
                 print(f"🎯 Facebook Media Candidate Resolver: {len(facebook_candidates)} exact candidate(s)", flush=True)
                 return facebook_candidates
             print("🛡️ Facebook Media Candidate Resolver: no exact media candidate; continuing existing fallbacks", flush=True)
+
+            # FastSaverAPI is an explicit provider fallback for public Facebook
+            # Reels. It returns a signed fbcdn.net URL; the resolver itself
+            # enforces an exact source-URL identity match before returning it.
+            try:
+                facebook_external_candidates = await _run_resolver(
+                    "facebook_external",
+                    facebook_external_resolver.resolve,
+                    url,
+                    timeout=30.0,
+                    source_url=url,
+                    media_kind="progressive",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(
+                    f"⚠️ Facebook FastSaverAPI Resolver failed: {type(exc).__name__}",
+                    flush=True,
+                )
+                facebook_external_candidates = []
+            if facebook_external_candidates:
+                print(
+                    f"🎯 Facebook FastSaverAPI Resolver: {len(facebook_external_candidates)} exact candidate(s)",
+                    flush=True,
+                )
+                return facebook_external_candidates
+            print(
+                "🛡️ Facebook FastSaverAPI Resolver: no exact candidate; continuing existing fallbacks",
+                flush=True,
+            )
 
         try:
             resolve_candidates = getattr(shahid4u_resolver, "resolve_candidates", None)
