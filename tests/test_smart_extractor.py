@@ -1,6 +1,6 @@
 import unittest
 
-from downloader.smart_extractor import extract_candidates
+from downloader.smart_extractor import extract_candidates, extract_telegram_post_candidates
 
 
 class SmartExtractorTests(unittest.TestCase):
@@ -94,6 +94,36 @@ class SmartExtractorTests(unittest.TestCase):
         self.assertEqual(
             media_urls.count("https://example.com/video/movie.mp4"),
             1,
+        )
+
+
+    def test_telegram_data_post_fallback_extracts_only_exact_message(self):
+        page = """
+        <div data-post="syrevarch/8452"><video src="https://cdn.example/previous"></video></div>
+        <section data-post="syrevarch/8453"><video src="https://cdn.example/target"></video></section>
+        <div data-post="syrevarch/8454"><video src="https://cdn.example/next"></video></div>
+        """
+        candidates = extract_telegram_post_candidates(
+            page,
+            "https://t.me/syrevarch/8453?embed=1&single=1",
+            channel="syrevarch",
+            message_id=8453,
+        )
+        self.assertEqual([item.url for item in candidates], ["https://cdn.example/target"])
+        self.assertEqual(candidates[0].metadata["telegram_data_post"], "syrevarch/8453")
+
+    def test_telegram_data_post_fallback_rejects_neighboring_message(self):
+        page = """
+        <section data-post="syrevarch/8454"><video src="https://cdn.example/next"></video></section>
+        """
+        self.assertEqual(
+            extract_telegram_post_candidates(
+                page,
+                "https://t.me/syrevarch/8453?embed=1",
+                channel="syrevarch",
+                message_id=8453,
+            ),
+            [],
         )
 
     def test_rejects_non_http_page_url(self):
