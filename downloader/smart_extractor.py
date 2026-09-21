@@ -412,7 +412,7 @@ def extract_telegram_post_candidates(
     # this keeps neighboring posts outside the extraction boundary.
     data_post_matches = list(
         re.finditer(
-            r"<[^>]*\\bdata-post=['\"]([^'\"]+)['\"][^>]*>",
+            r"<[^>]*\bdata-post=['\"]([^'\"]+)['\"][^>]*>",
             decoded,
             flags=re.IGNORECASE,
         )
@@ -442,7 +442,7 @@ def extract_telegram_post_candidates(
                 for item in candidates
             ]
         video_src = re.search(
-            r"<video\\b[^>]*\\bsrc=['\\\"]([^'\\\"]+)['\\\"]",
+            r"<video\b[^>]*\bsrc=['\"]([^'\"]+)['\"]",
             block,
             flags=re.IGNORECASE,
         )
