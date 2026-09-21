@@ -136,7 +136,6 @@ def main() -> None:
             nonlocal registered
             if not registered:
                 register_user_activity(self, bot_module)
-                register_smart_search_pro(self, bot_module)
                 register_user_features(self, bot_module)
                 register_user_location(self, bot_module)
                 register_features(self, bot_module, bot_module.ADMIN_ID)
