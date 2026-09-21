@@ -31,7 +31,6 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
 from plugins.smart_search_pro import register_smart_search_pro
-from telegram_layer.groups import SMART_SEARCH_GROUP
 from data_layer import get_db as _data_get_db, record_download as _record_download
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
@@ -8014,7 +8013,7 @@ def main():
     # Must run before the legacy generic text handler.
     # ========================================================
 
-    register_smart_search_pro(app, sys.modules[__name__], group=SMART_SEARCH_GROUP)
+    register_smart_search_pro(app, sys.modules[__name__])
 
     # ========================================================
     # رسائل باقي المستخدمين
