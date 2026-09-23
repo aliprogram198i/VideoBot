@@ -59,6 +59,17 @@ class InstagramGraphQLRecoveryTests(unittest.TestCase):
             ["csrftoken=abc; Path=/"],
         )
 
+    def test_image_selection_uses_exact_item(self):
+        from downloader.instagram_graphql import _select_image
+        url, diagnostics = _select_image({
+            "code": "Dcs0funuV-t",
+            "image_versions2": {
+                "candidates": [{"url": "https://scontent.cdninstagram.com/image.jpg"}]
+            },
+        })
+        self.assertEqual(url, "https://scontent.cdninstagram.com/image.jpg")
+        self.assertEqual(diagnostics["selection"], "image_versions2")
+
 
 if __name__ == "__main__":
     unittest.main()
