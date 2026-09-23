@@ -3,12 +3,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_download_callback_initializes_smart_diagnostics_before_platform_branch():
+def test_download_callback_preserves_instagram_image_artifact_before_shared_recovery():
     source = (ROOT / "bot.py").read_text(encoding="utf-8")
-    marker = 'smart_file = None\n            smart_diagnostics = {'
-    branch = 'instagram_access_blocked = ('
-    assert marker in source
-    assert source.index(marker) < source.index(branch)
+    resolver = 'from downloader.instagram_image import download_instagram_image'
+    shared_branch = 'instagram_access_blocked = ('
+    reset = 'smart_file = None\n            smart_diagnostics = {'
+    assert resolver in source
+    assert source.index(resolver) < source.index(shared_branch)
+    assert reset not in source[source.index(shared_branch):]
 
 
 def test_youtube_skip_path_has_explicit_smart_diagnostics():
