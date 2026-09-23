@@ -48,11 +48,11 @@ def test_extracts_exact_instagram_og_image():
     assert candidates == ["https://scontent.cdninstagram.com/example.jpg"]
 
 
-def test_rejects_video_markers_in_image_resolver(tmp_path):
+def test_rejects_video_markers_tied_to_exact_source_in_image_resolver(tmp_path):
     page = (
         '<meta property="og:image" '
         'content="https://scontent.cdninstagram.com/cover.jpg">'
-        '{"video_url":"https://scontent.cdninstagram.com/video.mp4"}'
+        '{"code":"Dcs0funuV-t","video_url":"https://scontent.cdninstagram.com/video.mp4"}'
     )
 
     def request_factory(*args, **kwargs):
