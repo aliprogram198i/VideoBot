@@ -236,6 +236,24 @@ def download_instagram_image(
             response.close()
 
         page = html.unescape(page)
+
+        # Never turn a video/reel cover into a fake "image download".
+        # Mixed carousels are intentionally left to the existing video chain.
+        lower_page = page.lower()
+        video_markers = (
+            '"video_versions"',
+            '"video_url"',
+            '"is_video":true',
+            '"__typename":"graphvideo"',
+            'property="og:video"',
+        )
+        if any(marker in lower_page for marker in video_markers):
+            diagnostics.update({
+                "status": "skipped",
+                "reason": "video_or_mixed_instagram_post",
+            })
+            return None, diagnostics
+
         candidates = _extract_html_image_urls(page, source_url)
         for candidate in _extract_json_image_urls(page, source_url):
             if candidate not in candidates:
