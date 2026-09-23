@@ -3918,6 +3918,7 @@ async def download_media(
         return
 
     is_audio = False
+    is_image = False
     audio_quality = None
 
     # --------------------------------------------------------
@@ -4282,7 +4283,7 @@ async def download_media(
                 username=query.from_user.username if query.from_user else None,
                 url=url,
                 website=website,
-                media_type="audio" if is_audio else "video",
+                media_type="image" if is_image else ("audio" if is_audio else "video"),
                 stage=last_error_stage,
                 error_type=last_error_type,
                 error_message=last_error_message,
@@ -4412,12 +4413,60 @@ async def download_media(
                             )
 
 
+            # Instagram photo recovery is intentionally separate from the video
+            # pipeline. yt-dlp is a video/audio downloader and currently raises
+            # "No video formats found" for image-only Instagram posts. The image
+            # resolver only accepts media tied to the exact requested shortcode.
+            image_file = None
+            image_diagnostics = {}
+            if not smart_file and instagram_source is not None:
+                from downloader.instagram_image import download_instagram_image
+
+                image_file, image_diagnostics = await asyncio.to_thread(
+                    download_instagram_image,
+                    url,
+                    temp_dir,
+                    request_factory=Request,
+                    open_function=safe_urlopen,
+                    max_bytes=50 * 1024 * 1024,
+                )
+                if image_file:
+                    admitted_file, admission = admit_media_artifact(
+                        url,
+                        image_file,
+                        temp_dir=temp_dir,
+                        resolver="instagram_image",
+                        diagnostics=image_diagnostics,
+                        media_type="image",
+                    )
+                    if admitted_file:
+                        smart_file = admitted_file
+                        is_image = True
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_image",
+                            "instagram_image": image_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print("🖼️ Instagram Image Resolver: SUCCESS")
+                    else:
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_image",
+                            "instagram_image": image_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print(
+                            "🛡️ Instagram Image Resolver: admission rejected "
+                            f"({admission.get('reason')})"
+                        )
+
             # Instagram direct Relay/HTML recovery. This reads the public
             # page payload used by Instagram's web client. It remains isolated
             # and fail-closed on exact shortcode identity.
             relay_file = None
             relay_diagnostics = {}
-            if not smart_file and instagram_source is not None:
+            if not smart_file and not is_image and instagram_source is not None:
                 from downloader.instagram_relay_html import download_instagram_with_relay
 
                 relay_file, relay_diagnostics = await asyncio.to_thread(
@@ -4461,7 +4510,7 @@ async def download_media(
             # fail-closed inside the resolver.
             graphql_file = None
             graphql_diagnostics = {}
-            if not smart_file and instagram_source is not None:
+            if not smart_file and not is_image and instagram_source is not None:
                 from downloader.instagram_graphql import download_instagram_with_graphql
 
                 graphql_file, graphql_diagnostics = await asyncio.to_thread(
@@ -4502,7 +4551,7 @@ async def download_media(
             # same Railway project. It remains the next isolated fallback.
             cobalt_file = None
             cobalt_diagnostics = {}
-            if not smart_file and instagram_source is not None:
+            if not smart_file and not is_image and instagram_source is not None:
                 from downloader.cobalt_instagram import download_instagram_with_cobalt
 
                 cobalt_file, cobalt_diagnostics = await asyncio.to_thread(
@@ -4996,6 +5045,7 @@ async def download_media(
             relay_diagnostics,
             graphql_diagnostics,
             cobalt_diagnostics,
+            image_diagnostics,
             fallback_diagnostics,
             yoinku_diagnostics,
         ):
@@ -5006,6 +5056,7 @@ async def download_media(
             "instagram_relay_html",
             "instagram_graphql",
             "cobalt",
+            "instagram_image",
         ):
             _nested = artifact_diagnostics.get(_nested_key)
             if isinstance(_nested, dict):
@@ -5057,11 +5108,55 @@ async def download_media(
             return
 
         # ----------------------------------------------------
+        # إرسال صورة Instagram كصورة أصلية.
+        # sendPhoto يسمح حتى 10 MB؛ الصور الأكبر تُرسل كملف للحفاظ
+        # على البايتات الأصلية ضمن حد الملفات العام.
         # ----------------------------------------------------
+        if is_image:
+            await query.edit_message_text(
+                TEXTS[language]["uploading"]
+            )
+
+            image_size_bytes = os.path.getsize(media_file)
+            image_caption = {
+                "ar": "🖼️ تم تحميل الصورة بنجاح!",
+                "en": "🖼️ Image downloaded successfully!",
+                "tr": "🖼️ Görsel başarıyla indirildi!",
+                "de": "🖼️ Bild erfolgreich heruntergeladen!",
+            }.get(language, "🖼️ Image downloaded successfully!")
+
+            delivery_policy.validate_telegram_upload(
+                media_file,
+                media_type="image",
+            )
+            if image_size_bytes <= 10 * 1024 * 1024:
+                with open(media_file, "rb") as image_file_handle:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=image_file_handle,
+                        caption=image_caption,
+                        read_timeout=600,
+                        write_timeout=600,
+                        connect_timeout=60,
+                        pool_timeout=60,
+                    )
+            else:
+                with open(media_file, "rb") as image_file_handle:
+                    await context.bot.send_document(
+                        chat_id=update.effective_chat.id,
+                        document=image_file_handle,
+                        filename=os.path.basename(media_file),
+                        caption=image_caption,
+                        read_timeout=600,
+                        write_timeout=600,
+                        connect_timeout=60,
+                        pool_timeout=60,
+                    )
+
         # ----------------------------------------------------
         # إرسال الصوت مع تقسيم الملفات الكبيرة
         # ----------------------------------------------------
-        if is_audio:
+        elif is_audio:
             await query.edit_message_text(
                 TEXTS[language]["uploading"]
             )
