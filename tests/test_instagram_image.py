@@ -112,3 +112,12 @@ def test_download_instagram_image_preserves_exact_source_identity(tmp_path):
         "type": "instagram_shortcode",
         "key": "Dcs0funuV-t",
     }
+
+
+def test_accepts_realistic_instagram_cdn_subdomains():
+    page = (
+        '<meta property="og:image" '
+        'content="https://scontent-ams4-1.cdninstagram.com/example.jpg">'
+    )
+    candidates = _extract_html_image_urls(page, SOURCE)
+    assert candidates == ["https://scontent-ams4-1.cdninstagram.com/example.jpg"]
