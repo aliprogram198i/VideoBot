@@ -4109,7 +4109,10 @@ async def download_media(
     # container before yt-dlp so a successful primary download cannot leave
     # a diagnostic variable unbound.
     smart_file = None
-    # Always initialize diagnostics because the final artifact gate is shared\n    # by every platform, including YouTube paths that skip Instagram recovery.\n    image_diagnostics = {}\n    smart_diagnostics = {
+    # Always initialize diagnostics because the final artifact gate is shared
+    # by every platform, including YouTube paths that skip Instagram recovery.
+    image_diagnostics = {}
+    smart_diagnostics = {
         "candidate_count": 0,
         "valid_candidate_count": 0,
         "skipped": "not_attempted",
