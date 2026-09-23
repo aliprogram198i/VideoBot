@@ -125,7 +125,7 @@ def _extract_json_image_urls(page: str, source_url: str) -> list[str]:
 def _image_extension(content_type: str, data: bytes, url: str) -> str | None:
     mime = content_type.split(";", 1)[0].strip().lower()
     if mime in {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}:
-        return mime
+        return {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}[mime]
     if data.startswith(b"\xff\xd8\xff"):
         return ".jpg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
