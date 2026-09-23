@@ -24,6 +24,41 @@ def _inside(path: str, root: str | None) -> bool:
         return False
 
 
+def _validate_image_artifact(media_file: str) -> tuple[bool, dict]:
+    result = {"valid": False, "reason": "image_not_validated"}
+    try:
+        data = Path(media_file).read_bytes()[:16]
+    except OSError:
+        result["reason"] = "image_read_failed"
+        return False, result
+
+    signatures = (
+        (bytes.fromhex("ffd8ff"), "jpeg"),
+        (bytes.fromhex("89504e470d0a1a0a"), "png"),
+        (b"GIF87a", "gif"),
+        (b"GIF89a", "gif"),
+    )
+    for signature, image_format in signatures:
+        if data.startswith(signature):
+            result.update({
+                "valid": True,
+                "reason": "image_signature_verified",
+                "image_format": image_format,
+            })
+            return True, result
+
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        result.update({
+            "valid": True,
+            "reason": "image_signature_verified",
+            "image_format": "webp",
+        })
+        return True, result
+
+    result["reason"] = "unsupported_or_invalid_image_signature"
+    return False, result
+
+
 def validate_media_artifact(media_file: str, *, media_type: str) -> tuple[bool, dict]:
     """Validate the local artifact as actual audio/video before delivery.
 
@@ -41,7 +76,11 @@ def validate_media_artifact(media_file: str, *, media_type: str) -> tuple[bool, 
         result["reason"] = "media_stat_failed"
         return False, result
 
-    expected = "audio" if str(media_type).lower() == "audio" else "video"
+    media_kind = str(media_type).lower()
+    if media_kind == "image":
+        return _validate_image_artifact(media_file)
+
+    expected = "audio" if media_kind == "audio" else "video"
     try:
         completed = subprocess.run(
             [
@@ -176,6 +215,7 @@ def admit_local_media(
         if resolver_name not in {
             "instagram_relay_html",
             "instagram_graphql",
+            "instagram_image",
             "cobalt_instagram",
         }:
             result["reason"] = "instagram_untrusted_resolver"
