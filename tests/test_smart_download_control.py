@@ -19,3 +19,13 @@ def test_duration_is_stable_and_human_readable():
     assert _duration(754) == "12:34"
     assert _duration(3723) == "1:02:03"
     assert _duration(None) == "غير متاحة"
+
+def test_keyboard_exposes_post_download_action():
+    from plugins.smart_download_control import _keyboard
+
+    keyboard = _keyboard("https://www.instagram.com/p/example", "ar")
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    post_buttons = [button for button in buttons if button.callback_data == "post_download"]
+    assert len(post_buttons) == 1
+    assert post_buttons[0].text == "📌 تحميل المنشور"
