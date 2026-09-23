@@ -97,7 +97,9 @@ def _extract_html_image_urls(page: str, source_url: str) -> list[str]:
     candidates: list[str] = []
     patterns = [
         r'<meta[^>]+property=["\']og:image(?::url)?["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image(?::url)?["\']',
         r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
         r'"display_url"\s*:\s*"([^"]+)"',
         r'"thumbnail_src"\s*:\s*"([^"]+)"',
         r'"image_versions2"\s*:\s*\{.*?"url"\s*:\s*"([^"]+)"',
@@ -243,16 +245,34 @@ def download_instagram_image(
         page = html.unescape(page)
 
         # Never turn a video/reel cover into a fake "image download".
-        # Mixed carousels are intentionally left to the existing video chain.
+        # Do not reject a photo page because Instagram's shared HTML contains
+        # unrelated video schema/scripts. Only explicit video metadata tied
+        # to this exact shortcode is authoritative.
         lower_page = page.lower()
-        video_markers = (
+        exact_markers = (
             '"video_versions"',
             '"video_url"',
             '"is_video":true',
             '"__typename":"graphvideo"',
-            'property="og:video"',
         )
-        if any(marker in lower_page for marker in video_markers):
+        exact_video = 'property="og:video"' in lower_page or "property='og:video'" in lower_page
+        for needle in (
+            f'"code":"{shortcode}"',
+            f'"shortcode":"{shortcode}"',
+            f'"code": "{shortcode}"',
+            f'"shortcode": "{shortcode}"',
+        ):
+            start = 0
+            while not exact_video:
+                index = lower_page.find(needle.lower(), start)
+                if index < 0:
+                    break
+                window = lower_page[max(0, index - 2000):index + 12000]
+                if any(marker in window for marker in exact_markers):
+                    exact_video = True
+                    break
+                start = index + len(needle)
+        if exact_video:
             diagnostics.update({
                 "status": "skipped",
                 "reason": "video_or_mixed_instagram_post",
