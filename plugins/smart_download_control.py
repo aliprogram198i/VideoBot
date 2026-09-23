@@ -33,6 +33,7 @@ _CARD_TEXTS = {
         "ready": "الرابط جاهز للتحميل.",
         "choose": "اختر ما تريد:",
         "video": "🎥 فيديو",
+        "post": "📌 تحميل المنشور",
         "audio": "🎵 MP3",
         "favorite": "⭐ حفظ",
         "library": "📚 مكتبتي",
@@ -60,6 +61,7 @@ _CARD_TEXTS = {
         "ready": "The link is ready to download.",
         "choose": "Choose an action:",
         "video": "🎥 Video",
+        "post": "📌 Download post",
         "audio": "🎵 MP3",
         "favorite": "⭐ Save",
         "library": "📚 Library",
@@ -248,6 +250,7 @@ def _keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
     labels = _labels(language)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(labels["video"], callback_data="video_menu")],
+        [InlineKeyboardButton(labels["post"], callback_data="post_download")],
         [InlineKeyboardButton(labels["audio"], callback_data="audio_menu")],
         [
             InlineKeyboardButton(labels["favorite"], callback_data="ux_favorite_current"),
