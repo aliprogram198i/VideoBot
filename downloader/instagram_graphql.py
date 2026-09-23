@@ -347,16 +347,23 @@ def download_instagram_with_graphql(
             return None, diagnostics
 
         media_url, selection = _select_video(item)
+        media_kind = "video"
+        if not media_url:
+            media_url, selection = _select_image(item)
+            media_kind = "image"
         if not media_url:
             diagnostics.update({"status": "failed", **selection})
             return None, diagnostics
 
+        extension = ".jpg" if media_kind == "image" else ".mp4"
         destination = Path(temp_dir) / _safe_filename(
             item.get("title"),
-            f"instagram_{shortcode}.mp4",
+            f"instagram_{shortcode}{extension}",
         )
-        if destination.suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
+        if media_kind == "video" and destination.suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
             destination = destination.with_suffix(".mp4")
+        elif media_kind == "image" and destination.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            destination = destination.with_suffix(".jpg")
 
         _download_media(
             media_url,
@@ -369,6 +376,7 @@ def download_instagram_with_graphql(
         diagnostics.update({
             "status": "success",
             "selected_media": selection.get("selection", "video_versions"),
+            "media_type": media_kind,
             "filename": destination.name,
         })
         diagnostics.update({"source_identity_verified": True, "identity_proof": {"type": "instagram_shortcode", "key": shortcode}})
