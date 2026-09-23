@@ -88,6 +88,27 @@ class ResolverAdmissionContractTests(unittest.TestCase):
             self.assertIsNone(path)
             self.assertEqual(result["reason"], "instagram_identity_proof_missing_or_mismatch")
 
+    def test_instagram_image_accepts_matching_identity_and_signature(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            media = Path(temp_dir) / "image.jpg"
+            media.write_bytes(bytes.fromhex("ffd8ff") + b"image")
+            path, result = admit_media_artifact(
+                "https://www.instagram.com/p/Dcs0funuV-t/",
+                str(media),
+                temp_dir=temp_dir,
+                resolver="instagram_image",
+                diagnostics={
+                    "source_identity_verified": True,
+                    "identity_proof": {
+                        "type": "instagram_shortcode",
+                        "key": "Dcs0funuV-t",
+                    },
+                },
+                media_type="image",
+            )
+            self.assertEqual(path, str(media.resolve()))
+            self.assertTrue(result["admitted"])
+
     def test_telegram_requires_identity_attestation(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             media = Path(temp_dir) / "video.mp4"

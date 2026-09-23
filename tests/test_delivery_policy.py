@@ -23,6 +23,14 @@ class DeliveryPolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 policy.validate_telegram_upload(path, media_type="audio")
 
+    def test_image_upload_gate_accepts_up_to_50mb(self):
+        policy = DeliveryPolicy()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "image.jpg"
+            with path.open("wb") as handle:
+                handle.truncate(12 * 1024 * 1024)
+            self.assertEqual(policy.validate_telegram_upload(path, media_type="image"), path)
+
     def test_video_upload_gate_accepts_telegram_safe_part(self):
         policy = DeliveryPolicy()
         with tempfile.TemporaryDirectory() as temp_dir:
