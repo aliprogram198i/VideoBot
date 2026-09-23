@@ -32,3 +32,10 @@ def test_download_callback_initializes_all_diagnostics_before_primary_download()
     assert source.index(init) < source.index(try_marker)
     for name in ("relay_diagnostics", "graphql_diagnostics", "cobalt_diagnostics", "fallback_diagnostics", "yoinku_diagnostics"):
         assert f'    {name} = {{}}' in source
+
+def test_smart_extraction_cannot_overwrite_admitted_instagram_image():
+    source = (ROOT / "bot.py").read_text(encoding="utf-8")
+    marker = 'smart_file, smart_diagnostics = await download_with_smart_extraction('
+    assert marker in source
+    before = source[source.index(marker)-250:]
+    assert "elif not smart_file:" in before
