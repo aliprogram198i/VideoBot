@@ -91,7 +91,7 @@ class ResolverAdmissionContractTests(unittest.TestCase):
     def test_instagram_image_accepts_matching_identity_and_signature(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             media = Path(temp_dir) / "image.jpg"
-            media.write_bytes(b"\\xff\\xd8\\xff" + b"image")
+            media.write_bytes(bytes.fromhex("ffd8ff") + b"image")
             path, result = admit_media_artifact(
                 "https://www.instagram.com/p/Dcs0funuV-t/",
                 str(media),
