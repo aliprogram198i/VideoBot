@@ -84,8 +84,17 @@ def test_download_instagram_image_preserves_exact_source_identity(tmp_path):
     def request_factory(*args, **kwargs):
         return object()
 
+    page = (
+        '<meta property="og:image" '
+        'content="https://scontent.cdninstagram.com/example.jpg">'
+    )
+    responses = iter([
+        _Response(page.encode()),
+        _Response(image_bytes),
+    ])
+
     def open_function(request, **kwargs):
-        return _Response(image_bytes)
+        return next(responses)
 
     path, diagnostics = download_instagram_image(
         SOURCE,
