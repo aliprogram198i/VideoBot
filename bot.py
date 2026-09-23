@@ -4536,7 +4536,7 @@ async def download_media(
             # fail-closed inside the resolver.
             graphql_file = None
             graphql_diagnostics = {}
-            if not smart_file and not is_image and instagram_source is not None:
+            if not smart_file and instagram_source is not None:
                 from downloader.instagram_graphql import download_instagram_with_graphql
 
                 graphql_file, graphql_diagnostics = await asyncio.to_thread(
@@ -4548,15 +4548,22 @@ async def download_media(
                     max_bytes=MAX_VIDEO_DOWNLOAD_BYTES,
                 )
                 if graphql_file:
-                    admitted_file, admission = admit_local_media(
+                    graphql_media_type = (
+                        "image"
+                        if graphql_diagnostics.get("media_type") == "image"
+                        else "video"
+                    )
+                    admitted_file, admission = admit_media_artifact(
                         url,
                         graphql_file,
                         temp_dir=temp_dir,
                         resolver="instagram_graphql",
                         diagnostics=graphql_diagnostics,
+                        media_type=graphql_media_type,
                     )
                     if admitted_file:
                         smart_file = admitted_file
+                        is_image = graphql_media_type == "image"
                         smart_diagnostics = {
                             **smart_diagnostics,
                             "resolver": "instagram_graphql",
