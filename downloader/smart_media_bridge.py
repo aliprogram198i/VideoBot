@@ -676,6 +676,68 @@ def install(bot_module) -> None:
                     except Exception as exc:
                         print(f"⚠️ Facebook Source Resolver variant failed: {type(exc).__name__}", flush=True)
 
+            # Instagram public-source recovery: exact shortcode only, no credentials/cookies.
+            instagram_host = False
+            try:
+                instagram_host = (urlparse(str(url)).hostname or "").lower().rstrip(".") in {
+                    "instagram.com", "www.instagram.com"
+                }
+            except Exception:
+                pass
+            if instagram_host:
+                instagram_cobalt = __import__(
+                    "downloader.cobalt_instagram",
+                    fromlist=["download_instagram_with_cobalt"],
+                )
+                instagram_relay = __import__(
+                    "downloader.instagram_relay_html",
+                    fromlist=["download_instagram_with_relay"],
+                )
+                for resolver_name, resolver_fn in (
+                    ("instagram_cobalt", instagram_cobalt.download_instagram_with_cobalt),
+                    ("instagram_relay_html", instagram_relay.download_instagram_with_relay),
+                ):
+                    try:
+                        print(
+                            f"📸 Instagram Source Resolver: trying {resolver_name}",
+                            flush=True,
+                        )
+                        resolved_path, resolver_diagnostics = await asyncio.to_thread(
+                            resolver_fn,
+                            url,
+                            temp_dir,
+                            request_factory=bot_module.Request,
+                            open_function=bot_module.safe_urlopen,
+                        )
+                        if _is_local_file(resolved_path, temp_dir):
+                            print(
+                                f"✅ Instagram Source Resolver: {resolver_name} produced exact-source media",
+                                flush=True,
+                            )
+                            return (
+                                resolved_path,
+                                f"Instagram Source Resolver: {resolver_name}",
+                                "",
+                                {
+                                    "status": "success",
+                                    "resolver": resolver_name,
+                                    "source_url": url,
+                                    "resolver_diagnostics": resolver_diagnostics,
+                                    "source_identity_verified": True,
+                                },
+                            )
+                        print(
+                            f"⚠️ Instagram Source Resolver: {resolver_name} did not produce media",
+                            flush=True,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        print(
+                            f"⚠️ Instagram Source Resolver {resolver_name} failed: {type(exc).__name__}",
+                            flush=True,
+                        )
+
             if _protected_social_post(url):
                 print(
                     "🛡️ Smart Media Bridge: blocked generic direct-media handoff for protected social post identity",
