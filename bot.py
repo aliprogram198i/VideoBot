@@ -4355,6 +4355,15 @@ async def download_media(
                     open_function=safe_urlopen,
                     max_bytes=50 * 1024 * 1024,
                 )
+                logger.info(
+                    "🖼️ Instagram Image Resolver diagnostics | status=%s reason=%s "
+                    "shortcode=%s candidates=%s identity_verified=%s",
+                    image_diagnostics.get("status"),
+                    image_diagnostics.get("reason"),
+                    image_diagnostics.get("shortcode"),
+                    image_diagnostics.get("candidate_count"),
+                    image_diagnostics.get("source_identity_verified"),
+                )
                 if image_file:
                     admitted_file, admission = admit_media_artifact(
                         url,
@@ -4398,15 +4407,10 @@ async def download_media(
             # accept media from a neighboring/unrelated Instagram post.
 
             # Shared recovery/reporting code consumes these values after the
-            # platform-specific branches. Initialize them before branching so
-            # YouTube and other skip paths can never reference an unbound value.
-            smart_file = None
-            smart_diagnostics = {
-                "candidate_count": 0,
-                "valid_candidate_count": 0,
-                "skipped": "not_attempted",
-            }
-
+            # platform-specific branches. The Instagram image resolver may have
+            # already produced an admitted artifact above; never reset that
+            # artifact here or the pipeline will incorrectly fall through to
+            # video-only recovery.
             instagram_access_blocked = (
                 "instagram.com" in hostname
                 and any(
