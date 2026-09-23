@@ -32,6 +32,15 @@ from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
 from plugins.smart_search_pro import register_smart_search_pro
 from data_layer import get_db as _data_get_db, record_download as _record_download
+from telemetry.resolver_outcomes import (
+    begin_attempt,
+    clear_attempt,
+    ensure_schema as ensure_resolver_telemetry_schema,
+    record_error as record_resolver_error,
+    record_success as record_resolver_success,
+    record_terminal_failure as record_resolver_terminal_failure,
+    set_final_resolver,
+)
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
     parse_telegram_post_url,
@@ -884,6 +893,23 @@ def log_download_error(
         conn.commit()
         conn.close()
 
+        record_resolver_error(
+            get_db,
+            resolver=stage or "unknown",
+            error_type=error_type or "UnknownError",
+            attempt_id=attempt_id,
+            website=website,
+            media_type=media_type,
+        )
+        if isinstance(details, dict) and details.get("terminal_failure"):
+            record_resolver_terminal_failure(
+                get_db,
+                resolver=stage or "download_pipeline",
+                attempt_id=attempt_id,
+                website=website,
+                media_type=media_type,
+            )
+
     except Exception as exc:
         logger.exception(
             "Failed to save download error: %s",
@@ -1204,6 +1230,7 @@ def init_db():
 
     conn = get_db()
     cur = conn.cursor()
+    ensure_resolver_telemetry_schema(conn)
 
     # --------------------------------------------------------
     # إنشاء جدول المستخدمين
@@ -1694,6 +1721,11 @@ def save_download(user, url, website, media_type, quality):
         media_type=media_type,
         quality=quality,
         created_at=datetime.now().isoformat(),
+    )
+    record_resolver_success(
+        get_db,
+        website=website,
+        media_type=media_type,
     )
 
 
@@ -4061,6 +4093,12 @@ async def download_media(
     # يجب أن تستخدم نفس attempt_id حتى يستطيع Gemini تجميعها كحادثة واحدة.
     attempt_id = uuid.uuid4().hex
 
+    begin_attempt(
+        attempt_id,
+        website,
+        "audio" if is_audio else "video",
+    )
+
     # Shared delivery/lifecycle reporting uses total_parts after the
     # media-type branches. Keep the default safe for unsplit media.
     total_parts = 1
@@ -4951,6 +4989,7 @@ async def download_media(
                         details={
                             "fallback": fallback_diagnostics,
                             "yoinku": yoinku_diagnostics,
+                            "terminal_failure": True,
                         },
                     )
 
@@ -5012,6 +5051,7 @@ async def download_media(
                 artifact_diagnostics.update(_nested)
 
         artifact_resolver = artifact_diagnostics.get("resolver") or "download_pipeline"
+        set_final_resolver(artifact_resolver)
 
         admitted_file, artifact_admission = admit_media_artifact(
             url,
@@ -5420,7 +5460,8 @@ async def download_media(
             pass
 
     finally:
-                shutil.rmtree(
+        clear_attempt()
+        shutil.rmtree(
             temp_dir,
             ignore_errors=True
         )
