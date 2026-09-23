@@ -221,10 +221,12 @@ def _download_media(
     response = open_function(request, timeout=timeout, max_bytes=max_bytes)
     try:
         content_type = (response.headers.get_content_type() or "").lower()
-        if content_type and not (
+        allowed = (
             content_type.startswith("video/")
+            or content_type.startswith("image/")
             or content_type.startswith("application/octet-stream")
-        ):
+        )
+        if content_type and not allowed:
             raise ValueError(f"Unexpected Instagram media content type: {content_type}")
 
         with destination.open("wb") as output:
