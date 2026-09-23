@@ -4465,7 +4465,7 @@ async def download_media(
                     "ℹ️ Skipping generic Smart Extraction fallback for YouTube"
                 )
 
-            else:
+            elif not smart_file:
 
 
                             smart_file, smart_diagnostics = await download_with_smart_extraction(
@@ -4485,6 +4485,11 @@ async def download_media(
                                 attempt_number=attempt_number,
 
                             )
+            else:
+                smart_diagnostics = {
+                    **smart_diagnostics,
+                    "skipped": "youtube_smart_extraction_not_applicable",
+                }
 
 
             # Instagram direct Relay/HTML recovery. This reads the public
