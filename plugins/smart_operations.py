@@ -12,6 +12,7 @@ from .user_experience_v2 import register_user_experience_v2
 from .telegram_message_guard import install as install_telegram_message_guard
 from .link_investigator import install as install_link_investigator
 from .group_publisher import register_group_publisher
+from .resolver_monitor import render_resolver_monitor
 
 CALLBACK = "admin_smart_operations"
 
@@ -102,7 +103,10 @@ async def smart_operations_callback(update: Update, context: ContextTypes.DEFAUL
     query=update.callback_query; await query.answer()
     if not update.effective_user or update.effective_user.id != admin_id: return
     try:
-        await query.edit_message_text(render_smart_operations(collect_smart_operations(get_db)),parse_mode="HTML",reply_markup=_keyboard())
+        data = collect_smart_operations(get_db)
+        text = render_smart_operations(data)
+        text += "\n\n" + render_resolver_monitor(get_db, days=1)
+        await query.edit_message_text(text,parse_mode="HTML",reply_markup=_keyboard())
     except Exception:
         await query.edit_message_text("🤖 <b>Smart Operations</b>\n\n🔴 تعذر قراءة البيانات.\nℹ️ لم يتم تعديل قاعدة البيانات.",parse_mode="HTML",reply_markup=_keyboard())
 
