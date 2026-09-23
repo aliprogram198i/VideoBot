@@ -207,7 +207,7 @@ def get_monitor_data(get_db: Callable[[], Any], days: int = 1) -> dict[str, Any]
         and not any(row["event_type"] == "success" for row in events)
     )
 
-    by_resolver: dict[str, dict[str, int]] = {}
+    by_resolver: dict[str, dict[str, Any]] = {}
     recovery: dict[str, int] = {}
 
     for attempt_id, events in attempts.items():
@@ -220,6 +220,7 @@ def get_monitor_data(get_db: Callable[[], Any], days: int = 1) -> dict[str, Any]
             stats = by_resolver.setdefault(
                 resolver,
                 {
+                    "attempt_ids": set(),
                     "attempts": 0,
                     "errors": 0,
                     "recovered": 0,
@@ -227,7 +228,7 @@ def get_monitor_data(get_db: Callable[[], Any], days: int = 1) -> dict[str, Any]
                 },
             )
             if row["event_type"] in {"error", "success"}:
-                stats["attempts"] += 1
+                stats["attempt_ids"].add(attempt_id)
             if row["event_type"] == "error":
                 stats["errors"] += 1
             if row["event_type"] == "terminal_failure":
@@ -238,6 +239,7 @@ def get_monitor_data(get_db: Callable[[], Any], days: int = 1) -> dict[str, Any]
                 by_resolver.setdefault(
                     resolver,
                     {
+                        "attempt_ids": set(),
                         "attempts": 0,
                         "errors": 0,
                         "recovered": 0,
@@ -263,6 +265,7 @@ def get_monitor_data(get_db: Callable[[], Any], days: int = 1) -> dict[str, Any]
             item[0],
         ),
     ):
+        stats["attempts"] = len(stats.pop("attempt_ids", set()))
         resolver_rows.append({"resolver": resolver, **stats})
 
     return {
