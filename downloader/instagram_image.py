@@ -12,7 +12,6 @@ image and attaching an exact Instagram shortcode identity proof.
 from __future__ import annotations
 
 import html
-import json
 import os
 import re
 import urllib.error
@@ -23,7 +22,6 @@ from urllib.parse import urlparse, unquote
 DEFAULT_TIMEOUT = 45
 DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
-MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_FILENAME = 120
 
 _IMAGE_CONTENT_TYPES = {
@@ -62,6 +60,19 @@ def _safe_filename(value: str | None, fallback: str) -> str:
     return raw or fallback
 
 
+def _is_allowed_media_host(hostname: str) -> bool:
+    """Allow Instagram-owned CDN subdomains without allowing arbitrary hosts."""
+    host = hostname.lower().rstrip(".")
+    return (
+        host == "instagram.com"
+        or host.endswith(".instagram.com")
+        or host == "cdninstagram.com"
+        or host.endswith(".cdninstagram.com")
+        or host == "fbcdn.net"
+        or host.endswith(".fbcdn.net")
+    )
+
+
 def _normalise_candidate(value: str, source_url: str) -> str | None:
     value = html.unescape(value).strip()
     value = (
@@ -77,13 +88,7 @@ def _normalise_candidate(value: str, source_url: str) -> str | None:
     if not value.startswith(("https://", "http://")):
         return None
     parsed = urlparse(value)
-    if (parsed.hostname or "").lower().rstrip(".") not in {
-        "instagram.com",
-        "www.instagram.com",
-        "cdninstagram.com",
-        "scontent.cdninstagram.com",
-        "fbcdn.net",
-    }:
+    if not _is_allowed_media_host(parsed.hostname or ""):
         return None
     return value
 
