@@ -121,3 +121,33 @@ def test_accepts_realistic_instagram_cdn_subdomains():
     )
     candidates = _extract_html_image_urls(page, SOURCE)
     assert candidates == ["https://scontent-ams4-1.cdninstagram.com/example.jpg"]
+
+
+def test_photo_post_ignores_unrelated_video_schema():
+    page = (
+        '<meta content="https://scontent-ams4-1.cdninstagram.com/example.jpg" '
+        'property="og:image">'
+        '{"other_post":{"video_versions":["https://scontent.cdninstagram.com/other.mp4"]}}'
+    )
+
+    def request_factory(*args, **kwargs):
+        return object()
+
+    responses = iter([
+        _Response(page.encode()),
+        _Response(bytes.fromhex("ffd8ff") + b"photo"),
+    ])
+
+    def open_function(request, **kwargs):
+        return next(responses)
+
+    path, diagnostics = download_instagram_image(
+        SOURCE,
+        Path("/tmp"),
+        request_factory=request_factory,
+        open_function=open_function,
+    )
+
+    assert path is not None
+    assert diagnostics["status"] == "success"
+    assert diagnostics["source_identity_verified"] is True
