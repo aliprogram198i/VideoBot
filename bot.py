@@ -1962,6 +1962,13 @@ async def handle_message(
 
         [
             InlineKeyboardButton(
+                "📌 تحميل المنشور",
+                callback_data="post_download"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
                 TEXTS[language]["audio_type"],
                 callback_data="audio_menu"
             )
@@ -3875,6 +3882,13 @@ async def download_media(
 
     choice = query.data
 
+    # "تحميل المنشور" هو مسار تلقائي: نستخدم أفضل صيغة للفيديو،
+    # لكن Instagram image resolver يعمل قبل قبول أي فيديو نهائي،
+    # لذلك إذا كان المنشور صورة سيتم إرساله كصورة أصلية.
+    post_download = choice == "post_download"
+    if post_download:
+        choice = "video_best"
+
     # --------------------------------------------------------
     # --------------------------------------------------------
 
@@ -5412,11 +5426,15 @@ async def download_media(
             url=url,
             website=website,
             media_type=(
-                "audio"
-                if is_audio
-                else "video"
+                "image"
+                if is_image
+                else ("audio" if is_audio else "video")
             ),
-            quality=quality_name,
+            quality=(
+                "Original post"
+                if post_download
+                else quality_name
+            ),
         )
 
         # ----------------------------------------------------
@@ -8074,7 +8092,7 @@ def main():
     app.add_handler(
         CallbackQueryHandler(
             download_media,
-            pattern=r"^(video_|audio_|main_menu)"
+            pattern=r"^(video_|audio_|main_menu|post_download)$"
         )
     )
 
