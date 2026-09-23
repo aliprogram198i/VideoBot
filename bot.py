@@ -5395,6 +5395,7 @@ async def download_media(
             details={
                 "timeout": True,
                 "duration_ms": timeout_duration_ms,
+                "terminal_failure": True,
             },
         )
 
@@ -5443,6 +5444,7 @@ async def download_media(
                     repr(e)
                 ),
                 "duration_ms": exception_duration_ms,
+                "terminal_failure": True,
             },
         )
 
