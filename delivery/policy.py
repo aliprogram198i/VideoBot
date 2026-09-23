@@ -12,8 +12,10 @@ class DeliveryPolicy:
 
     max_video_bytes: int = 500 * 1024 * 1024
     max_audio_bytes: int = 500 * 1024 * 1024
+    max_image_bytes: int = 50 * 1024 * 1024
     max_telegram_video_bytes: int = 49 * 1024 * 1024
     max_telegram_audio_bytes: int = 47 * 1024 * 1024
+    max_telegram_image_bytes: int = 50 * 1024 * 1024
 
     def validate_file(self, path: str | Path, *, media_type: str) -> Path:
         """Validate a complete local artifact before delivery preparation."""
@@ -26,7 +28,12 @@ class DeliveryPolicy:
             raise ValueError("media file is empty")
 
         media_kind = str(media_type).lower()
-        limit = self.max_audio_bytes if media_kind == "audio" else self.max_video_bytes
+        if media_kind == "audio":
+            limit = self.max_audio_bytes
+        elif media_kind == "image":
+            limit = self.max_image_bytes
+        else:
+            limit = self.max_video_bytes
         if size > limit:
             raise ValueError(f"media exceeds artifact limit: {size} > {limit}")
         return file_path
@@ -42,11 +49,12 @@ class DeliveryPolicy:
         size = file_path.stat().st_size
         media_kind = str(media_type).lower()
 
-        limit = (
-            self.max_telegram_audio_bytes
-            if media_kind == "audio"
-            else self.max_telegram_video_bytes
-        )
+        if media_kind == "audio":
+            limit = self.max_telegram_audio_bytes
+        elif media_kind == "image":
+            limit = self.max_telegram_image_bytes
+        else:
+            limit = self.max_telegram_video_bytes
         if size > limit:
             raise ValueError(
                 f"media exceeds Telegram upload limit: {size} > {limit}"
