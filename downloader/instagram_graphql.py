@@ -147,6 +147,20 @@ def _extract_item(data: dict[str, Any], shortcode: str) -> tuple[dict[str, Any] 
     return item, None
 
 
+def _select_image(item: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    versions = item.get("image_versions2")
+    if isinstance(versions, dict):
+        candidates = versions.get("candidates")
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if isinstance(candidate, dict) and isinstance(candidate.get("url"), str) and candidate["url"].startswith(("https://", "http://")):
+                    return candidate["url"], {"selection": "image_versions2"}
+    display_url = item.get("display_url")
+    if isinstance(display_url, str) and display_url.startswith(("https://", "http://")):
+        return display_url, {"selection": "display_url"}
+    return None, {"reason": "no_public_image_url"}
+
+
 def _select_video(item: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     videos = item.get("video_versions")
     if isinstance(videos, list):
