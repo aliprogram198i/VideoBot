@@ -4338,6 +4338,55 @@ async def download_media(
                 "www.youtube-nocookie.com",
             }
 
+            # Instagram photo recovery is intentionally separate from the video
+            # pipeline. yt-dlp is a video/audio downloader and currently raises
+            # "No video formats found" for image-only Instagram posts. The image
+            # resolver only accepts media tied to the exact requested shortcode.
+            image_file = None
+            image_diagnostics = {}
+            if not smart_file and instagram_source is not None:
+                from downloader.instagram_image import download_instagram_image
+
+                image_file, image_diagnostics = await asyncio.to_thread(
+                    download_instagram_image,
+                    url,
+                    temp_dir,
+                    request_factory=Request,
+                    open_function=safe_urlopen,
+                    max_bytes=50 * 1024 * 1024,
+                )
+                if image_file:
+                    admitted_file, admission = admit_media_artifact(
+                        url,
+                        image_file,
+                        temp_dir=temp_dir,
+                        resolver="instagram_image",
+                        diagnostics=image_diagnostics,
+                        media_type="image",
+                    )
+                    if admitted_file:
+                        smart_file = admitted_file
+                        is_image = True
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_image",
+                            "instagram_image": image_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print("🖼️ Instagram Image Resolver: SUCCESS")
+                    else:
+                        smart_diagnostics = {
+                            **smart_diagnostics,
+                            "resolver": "instagram_image",
+                            "instagram_image": image_diagnostics,
+                            "resolver_admission": admission,
+                        }
+                        print(
+                            "🛡️ Instagram Image Resolver: admission rejected "
+                            f"({admission.get('reason')})"
+                        )
+
+
             # ------------------------------------------------
             # Smart Extraction fallback
             # يتم تجربته فقط بعد فشل yt-dlp الأساسي.
@@ -4412,54 +4461,6 @@ async def download_media(
 
                             )
 
-
-            # Instagram photo recovery is intentionally separate from the video
-            # pipeline. yt-dlp is a video/audio downloader and currently raises
-            # "No video formats found" for image-only Instagram posts. The image
-            # resolver only accepts media tied to the exact requested shortcode.
-            image_file = None
-            image_diagnostics = {}
-            if not smart_file and instagram_source is not None:
-                from downloader.instagram_image import download_instagram_image
-
-                image_file, image_diagnostics = await asyncio.to_thread(
-                    download_instagram_image,
-                    url,
-                    temp_dir,
-                    request_factory=Request,
-                    open_function=safe_urlopen,
-                    max_bytes=50 * 1024 * 1024,
-                )
-                if image_file:
-                    admitted_file, admission = admit_media_artifact(
-                        url,
-                        image_file,
-                        temp_dir=temp_dir,
-                        resolver="instagram_image",
-                        diagnostics=image_diagnostics,
-                        media_type="image",
-                    )
-                    if admitted_file:
-                        smart_file = admitted_file
-                        is_image = True
-                        smart_diagnostics = {
-                            **smart_diagnostics,
-                            "resolver": "instagram_image",
-                            "instagram_image": image_diagnostics,
-                            "resolver_admission": admission,
-                        }
-                        print("🖼️ Instagram Image Resolver: SUCCESS")
-                    else:
-                        smart_diagnostics = {
-                            **smart_diagnostics,
-                            "resolver": "instagram_image",
-                            "instagram_image": image_diagnostics,
-                            "resolver_admission": admission,
-                        }
-                        print(
-                            "🛡️ Instagram Image Resolver: admission rejected "
-                            f"({admission.get('reason')})"
-                        )
 
             # Instagram direct Relay/HTML recovery. This reads the public
             # page payload used by Instagram's web client. It remains isolated
@@ -5070,7 +5071,11 @@ async def download_media(
             temp_dir=temp_dir,
             resolver=artifact_resolver,
             diagnostics=artifact_diagnostics,
-            media_type="audio" if is_audio else "video",
+            media_type=(
+                "image"
+                if is_image
+                else ("audio" if is_audio else "video")
+            ),
         )
         if not admitted_file:
             print(
@@ -5095,7 +5100,11 @@ async def download_media(
         try:
             delivery_policy.validate_file(
                 media_file,
-                media_type="audio" if is_audio else "video",
+                media_type=(
+                    "image"
+                    if is_image
+                    else ("audio" if is_audio else "video")
+                ),
             )
         except (FileNotFoundError, ValueError) as exc:
             print(
