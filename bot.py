@@ -4109,7 +4109,7 @@ async def download_media(
     # container before yt-dlp so a successful primary download cannot leave
     # a diagnostic variable unbound.
     smart_file = None
-    smart_diagnostics = {
+    # Always initialize diagnostics because the final artifact gate is shared\n    # by every platform, including YouTube paths that skip Instagram recovery.\n    image_diagnostics = {}\n    smart_diagnostics = {
         "candidate_count": 0,
         "valid_candidate_count": 0,
         "skipped": "not_attempted",
@@ -4364,7 +4364,6 @@ async def download_media(
             # "No video formats found" for image-only Instagram posts. The image
             # resolver only accepts media tied to the exact requested shortcode.
             image_file = None
-            image_diagnostics = {}
             if not smart_file and instagram_source is not None:
                 from downloader.instagram_image import download_instagram_image
 
