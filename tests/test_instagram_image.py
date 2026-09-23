@@ -74,12 +74,12 @@ def test_rejects_video_markers_in_image_resolver(tmp_path):
 
 
 def test_image_extension_uses_magic_bytes():
-    assert _image_extension("application/octet-stream", b"\\xff\\xd8\\xffabc", "x") == ".jpg"
-    assert _image_extension("application/octet-stream", b"\\x89PNG\\r\\n\\x1a\\nabc", "x") == ".png"
+    assert _image_extension("application/octet-stream", bytes.fromhex("ffd8ff") + b"abc", "x") == ".jpg"
+    assert _image_extension("application/octet-stream", bytes.fromhex("89504e470d0a1a0a") + b"abc", "x") == ".png"
 
 
 def test_download_instagram_image_preserves_exact_source_identity(tmp_path):
-    image_bytes = b"\\xff\\xd8\\xff" + b"fake-jpeg-payload"
+    image_bytes = bytes.fromhex("ffd8ff") + b"fake-jpeg-payload"
 
     def request_factory(*args, **kwargs):
         return object()
