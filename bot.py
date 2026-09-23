@@ -2002,6 +2002,13 @@ async def show_main_menu(
 
         [
             InlineKeyboardButton(
+                "📌 تحميل المنشور",
+                callback_data="post_download"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
                 TEXTS[language]["audio_type"],
                 callback_data="audio_menu"
             )
