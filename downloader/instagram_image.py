@@ -1,18 +1,17 @@
 """Exact-source Instagram photo resolver.
 
-yt-dlp is a video/audio downloader and currently fails closed on public
-Instagram photo posts with "No video formats found". This resolver handles
-photo-only / image posts separately and never guesses a neighboring post.
+yt-dlp is a video/audio downloader and can fail closed on public Instagram
+photo posts. This resolver handles image posts separately and never guesses a
+neighboring post.
 
-It prefers an image URL embedded in the exact Instagram post HTML. The URL
-it downloads is accepted only after validating the downloaded bytes as an
-image and attaching an exact Instagram shortcode identity proof.
+It prefers an image URL embedded in the exact Instagram post HTML. The URL it
+downloads is accepted only after validating the downloaded bytes as an image
+and attaching exact Instagram shortcode identity proof.
 """
 
 from __future__ import annotations
 
 import html
-import json
 import os
 import re
 import urllib.error
@@ -23,15 +22,9 @@ from urllib.parse import urlparse, unquote
 DEFAULT_TIMEOUT = 45
 DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
-MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_FILENAME = 120
 
-_IMAGE_CONTENT_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
+_ALLOWED_MEDIA_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 
 def _parse_source(url: str) -> tuple[str, str] | None:
@@ -62,6 +55,19 @@ def _safe_filename(value: str | None, fallback: str) -> str:
     return raw or fallback
 
 
+def _is_allowed_media_host(hostname: str) -> bool:
+    """Allow Instagram-owned CDN subdomains without allowing arbitrary hosts."""
+    host = hostname.lower().rstrip(".")
+    return (
+        host == "instagram.com"
+        or host.endswith(".instagram.com")
+        or host == "cdninstagram.com"
+        or host.endswith(".cdninstagram.com")
+        or host == "fbcdn.net"
+        or host.endswith(".fbcdn.net")
+    )
+
+
 def _normalise_candidate(value: str, source_url: str) -> str | None:
     value = html.unescape(value).strip()
     value = (
@@ -72,18 +78,10 @@ def _normalise_candidate(value: str, source_url: str) -> str | None:
         .replace("\\u003f", "?")
     )
     value = unquote(value)
-    if value.startswith("//"):
-        value = "https:" + value
     if not value.startswith(("https://", "http://")):
         return None
     parsed = urlparse(value)
-    if (parsed.hostname or "").lower().rstrip(".") not in {
-        "instagram.com",
-        "www.instagram.com",
-        "cdninstagram.com",
-        "scontent.cdninstagram.com",
-        "fbcdn.net",
-    }:
+    if not _is_allowed_media_host(parsed.hostname or ""):
         return None
     return value
 
@@ -126,8 +124,8 @@ def _extract_json_image_urls(page: str, source_url: str) -> list[str]:
 
 def _image_extension(content_type: str, data: bytes, url: str) -> str | None:
     mime = content_type.split(";", 1)[0].strip().lower()
-    if mime in _IMAGE_CONTENT_TYPES:
-        return _IMAGE_CONTENT_TYPES[mime]
+    if mime in {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}:
+        return mime
     if data.startswith(b"\xff\xd8\xff"):
         return ".jpg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -137,7 +135,7 @@ def _image_extension(content_type: str, data: bytes, url: str) -> str | None:
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return ".webp"
     suffix = Path(urlparse(url).path).suffix.lower()
-    return suffix if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else None
+    return suffix if suffix in _ALLOWED_MEDIA_SUFFIXES else None
 
 
 def _read_limited(response: Any, max_bytes: int) -> bytes:
@@ -213,8 +211,8 @@ def download_instagram_image(
     request = request_factory(
         source_url,
         headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/140.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": "https://www.instagram.com/",
         },
@@ -228,17 +226,12 @@ def download_instagram_image(
             expected_content_types={"text/html", "application/xhtml+xml"},
         )
         try:
-            page = _read_limited(response, MAX_HTML_BYTES).decode(
-                response.headers.get_content_charset() or "utf-8",
-                errors="ignore",
-            )
+            charset = response.headers.get_content_charset() or "utf-8"
+            page = _read_limited(response, MAX_HTML_BYTES).decode(charset, errors="ignore")
         finally:
             response.close()
 
         page = html.unescape(page)
-
-        # Never turn a video/reel cover into a fake "image download".
-        # Mixed carousels are intentionally left to the existing video chain.
         lower_page = page.lower()
         video_markers = (
             '"video_versions"',
@@ -248,10 +241,7 @@ def download_instagram_image(
             'property="og:video"',
         )
         if any(marker in lower_page for marker in video_markers):
-            diagnostics.update({
-                "status": "skipped",
-                "reason": "video_or_mixed_instagram_post",
-            })
+            diagnostics.update({"status": "skipped", "reason": "video_or_mixed_instagram_post"})
             return None, diagnostics
 
         candidates = _extract_html_image_urls(page, source_url)
@@ -264,11 +254,7 @@ def download_instagram_image(
             return None, diagnostics
 
         diagnostics["candidate_count"] = len(candidates)
-
-        base = Path(temp_dir) / _safe_filename(
-            f"instagram_{shortcode}",
-            f"instagram_{shortcode}",
-        )
+        base = Path(temp_dir) / _safe_filename(f"instagram_{shortcode}", f"instagram_{shortcode}")
 
         for index, media_url in enumerate(candidates[:10], start=1):
             try:
@@ -296,10 +282,7 @@ def download_instagram_image(
                     "filename": output.name,
                     "content_type": content_type,
                     "source_identity_verified": True,
-                    "identity_proof": {
-                        "type": "instagram_shortcode",
-                        "key": shortcode,
-                    },
+                    "identity_proof": {"type": "instagram_shortcode", "key": shortcode},
                 })
                 return str(output), diagnostics
 
