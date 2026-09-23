@@ -48,15 +48,29 @@ def test_extracts_exact_instagram_og_image():
     assert candidates == ["https://scontent.cdninstagram.com/example.jpg"]
 
 
-def test_rejects_video_markers_in_image_resolver():
-    # The resolver must not turn a reel/video cover into a photo download.
+def test_rejects_video_markers_in_image_resolver(tmp_path):
     page = (
         '<meta property="og:image" '
         'content="https://scontent.cdninstagram.com/cover.jpg">'
         '{"video_url":"https://scontent.cdninstagram.com/video.mp4"}'
     )
-    lower = page.lower()
-    assert '"video_url"' in lower
+
+    def request_factory(*args, **kwargs):
+        return object()
+
+    def open_function(request, **kwargs):
+        return _Response(page.encode())
+
+    path, diagnostics = download_instagram_image(
+        SOURCE,
+        tmp_path,
+        request_factory=request_factory,
+        open_function=open_function,
+    )
+
+    assert path is None
+    assert diagnostics["status"] == "skipped"
+    assert diagnostics["reason"] == "video_or_mixed_instagram_post"
 
 
 def test_image_extension_uses_magic_bytes():
