@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -9,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, ContextTypes
+from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from delivery.policy import DeliveryPolicy
 
 CACHE_DIR = Path(os.getenv("MEDIA_STUDIO_CACHE_DIR", "/app/data/media_studio"))
@@ -17,6 +18,13 @@ CACHE_TTL_SECONDS = 6 * 60 * 60
 CACHE_MAX_BYTES = 200 * 1024 * 1024
 MAX_RESULT_BYTES = 47 * 1024 * 1024
 FFMPEG_TIMEOUT_SECONDS = 240
+MAX_CUSTOM_TRIM_SECONDS = 5 * 60
+CUSTOM_TRIM_PATTERN = re.compile(
+    r"^\s*(?P<start>(?:\d{1,2}:)?\d{1,2}:\d{2}|\d+(?:\.\d+)?)"
+    r"\s*(?:-|–|—|to|إلى)\s*"
+    r"(?P<end>(?:\d{1,2}:)?\d{1,2}:\d{2}|\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
+)
 delivery_policy = DeliveryPolicy()
 
 
@@ -87,17 +95,130 @@ def studio_keyboard(token: str) -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton("🎵 MP3", callback_data=f"studio:mp3:{token}"),
+                InlineKeyboardButton("🎧 صيغ صوت", callback_data=f"studio:audio:{token}"),
+            ],
+            [
                 InlineKeyboardButton("🖼️ صورة", callback_data=f"studio:thumb:{token}"),
+                InlineKeyboardButton("🗜️ ضغط", callback_data=f"studio:compress:{token}"),
             ],
             [
                 InlineKeyboardButton("✂️ أول 15ث", callback_data=f"studio:trim:{token}:15"),
                 InlineKeyboardButton("✂️ أول 30ث", callback_data=f"studio:trim:{token}:30"),
             ],
             [
-                InlineKeyboardButton("🗜️ ضغط", callback_data=f"studio:compress:{token}"),
+                InlineKeyboardButton("✂️ قص مخصص", callback_data=f"studio:trimcustom:{token}"),
+                InlineKeyboardButton("📐 المقاس", callback_data=f"studio:resize:{token}"),
+            ],
+            [
+                InlineKeyboardButton("📱 استخدام", callback_data=f"studio:preset:{token}"),
+                InlineKeyboardButton("🔊 الصوت", callback_data=f"studio:volume:{token}"),
             ],
         ]
     )
+
+
+def _keyboard_audio(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🎵 MP3 320k", callback_data=f"studio:audio:{token}:mp3"),
+                InlineKeyboardButton("🎧 M4A 192k", callback_data=f"studio:audio:{token}:m4a"),
+            ],
+            [
+                InlineKeyboardButton("🎧 OPUS 160k", callback_data=f"studio:audio:{token}:opus"),
+            ],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+        ]
+    )
+
+
+def _keyboard_resize(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("💎 1080p", callback_data=f"studio:resize:{token}:1080"),
+                InlineKeyboardButton("📺 720p", callback_data=f"studio:resize:{token}:720"),
+            ],
+            [
+                InlineKeyboardButton("📱 480p", callback_data=f"studio:resize:{token}:480"),
+                InlineKeyboardButton("📲 360p", callback_data=f"studio:resize:{token}:360"),
+            ],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+        ]
+    )
+
+
+def _keyboard_presets(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🎵 TikTok", callback_data=f"studio:preset:{token}:tiktok"),
+                InlineKeyboardButton("📸 Reels", callback_data=f"studio:preset:{token}:reels"),
+            ],
+            [
+                InlineKeyboardButton("▶️ Shorts", callback_data=f"studio:preset:{token}:shorts"),
+                InlineKeyboardButton("📱 WhatsApp", callback_data=f"studio:preset:{token}:whatsapp"),
+            ],
+            [
+                InlineKeyboardButton("✈️ Telegram", callback_data=f"studio:preset:{token}:telegram"),
+            ],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+        ]
+    )
+
+
+def _keyboard_volume(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🔉 50%", callback_data=f"studio:volume:{token}:50"),
+                InlineKeyboardButton("🔊 100%", callback_data=f"studio:volume:{token}:100"),
+            ],
+            [
+                InlineKeyboardButton("🔊 150%", callback_data=f"studio:volume:{token}:150"),
+                InlineKeyboardButton("🔊 200%", callback_data=f"studio:volume:{token}:200"),
+            ],
+            [InlineKeyboardButton("🔇 كتم الصوت", callback_data=f"studio:volume:{token}:0")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+        ]
+    )
+
+
+def _parse_timecode(value: str) -> float:
+    value = value.strip()
+    if ":" not in value:
+        seconds = float(value)
+    else:
+        parts = [int(part) for part in value.split(":")]
+        if len(parts) == 2:
+            minutes, seconds_part = parts
+            if seconds_part >= 60:
+                raise ValueError("media_studio_invalid_timecode")
+            seconds = minutes * 60 + seconds_part
+        elif len(parts) == 3:
+            hours, minutes, seconds_part = parts
+            if minutes >= 60 or seconds_part >= 60:
+                raise ValueError("media_studio_invalid_timecode")
+            seconds = hours * 3600 + minutes * 60 + seconds_part
+        else:
+            raise ValueError("media_studio_invalid_timecode")
+
+    if seconds < 0:
+        raise ValueError("media_studio_invalid_timecode")
+    return seconds
+
+
+def _parse_custom_trim(text: str) -> tuple[float, float]:
+    match = CUSTOM_TRIM_PATTERN.match(text)
+    if not match:
+        raise ValueError("media_studio_invalid_trim")
+
+    start = _parse_timecode(match.group("start"))
+    end = _parse_timecode(match.group("end"))
+    duration = end - start
+    if duration <= 0 or duration > MAX_CUSTOM_TRIM_SECONDS:
+        raise ValueError("media_studio_trim_limit")
+    return start, duration
 
 
 async def _run_ffmpeg(*args: str) -> None:
@@ -133,9 +254,21 @@ def _validate_result(path: Path) -> None:
         raise RuntimeError("media_studio_result_too_large")
 
 
+def _video_encode_args(output: Path) -> tuple[str, ...]:
+    return (
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "27",
+        "-c:a", "aac",
+        "-b:a", "96k",
+        "-movflags", "+faststart",
+        str(output),
+    )
+
+
 async def _create_result(source: Path, action: str, value: str | None) -> tuple[Path, str]:
-    suffix = source.suffix.lower()
     stem = source.stem
+
     if action == "mp3":
         output = source.with_name(f"{stem}_alibot.mp3")
         await _run_ffmpeg(
@@ -144,6 +277,26 @@ async def _create_result(source: Path, action: str, value: str | None) -> tuple[
             "-vn",
             "-c:a", "libmp3lame",
             "-b:a", "320k",
+            str(output),
+        )
+        return output, "audio"
+
+    if action == "audio":
+        audio_formats = {
+            "mp3": ("mp3", "libmp3lame", "320k"),
+            "m4a": ("m4a", "aac", "192k"),
+            "opus": ("opus", "libopus", "160k"),
+        }
+        fmt, codec, bitrate = audio_formats.get(value or "", (None, None, None))
+        if not fmt:
+            raise ValueError("media_studio_unknown_audio_format")
+        output = source.with_name(f"{stem}_alibot.{fmt}")
+        await _run_ffmpeg(
+            "-i", str(source),
+            "-map", "0:a:0?",
+            "-vn",
+            "-c:a", codec,
+            "-b:a", bitrate,
             str(output),
         )
         return output, "audio"
@@ -168,13 +321,22 @@ async def _create_result(source: Path, action: str, value: str | None) -> tuple[
             "-t", seconds,
             "-map", "0:v:0",
             "-map", "0:a:0?",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            str(output),
+            *(_video_encode_args(output)),
+        )
+        return output, "video"
+
+    if action == "trimcustom":
+        if not value:
+            raise ValueError("media_studio_missing_trim")
+        start, duration = _parse_custom_trim(value)
+        output = source.with_name(f"{stem}_alibot_custom.mp4")
+        await _run_ffmpeg(
+            "-ss", f"{start:.3f}",
+            "-i", str(source),
+            "-t", f"{duration:.3f}",
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+            *(_video_encode_args(output)),
         )
         return output, "video"
 
@@ -193,6 +355,65 @@ async def _create_result(source: Path, action: str, value: str | None) -> tuple[
             "-movflags", "+faststart",
             str(output),
         )
+        return output, "video"
+
+    if action == "resize":
+        heights = {"1080", "720", "480", "360"}
+        if value not in heights:
+            raise ValueError("media_studio_unknown_resize")
+        output = source.with_name(f"{stem}_alibot_{value}p.mp4")
+        await _run_ffmpeg(
+            "-i", str(source),
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+            "-vf", f"scale=-2:min({value}\\,ih)",
+            *(_video_encode_args(output)),
+        )
+        return output, "video"
+
+    if action == "preset":
+        presets = {
+            "tiktok": "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+            "reels": "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+            "shorts": "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+            "whatsapp": "scale=-2:720",
+            "telegram": "scale=min(720\\,iw):-2",
+        }
+        filter_graph = presets.get(value or "")
+        if not filter_graph:
+            raise ValueError("media_studio_unknown_preset")
+        output = source.with_name(f"{stem}_alibot_{value}.mp4")
+        await _run_ffmpeg(
+            "-i", str(source),
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+            "-vf", filter_graph,
+            *(_video_encode_args(output)),
+        )
+        return output, "video"
+
+    if action == "volume":
+        levels = {"0": "0", "50": "0.5", "100": "1.0", "150": "1.5", "200": "2.0"}
+        factor = levels.get(value or "")
+        if factor is None:
+            raise ValueError("media_studio_unknown_volume")
+        output = source.with_name(f"{stem}_alibot_volume_{value}.mp4")
+        if value == "0":
+            await _run_ffmpeg(
+                "-i", str(source),
+                "-map", "0:v:0",
+                "-map", "0:a:0?",
+                "-af", "volume=0",
+                *(_video_encode_args(output)),
+            )
+        else:
+            await _run_ffmpeg(
+                "-i", str(source),
+                "-map", "0:v:0",
+                "-map", "0:a:0?",
+                "-af", f"volume={factor}",
+                *(_video_encode_args(output)),
+            )
         return output, "video"
 
     raise ValueError("media_studio_unknown_action")
@@ -214,7 +435,7 @@ async def _send_result(
             await context.bot.send_audio(
                 chat_id=chat_id,
                 audio=handle,
-                caption="🎵 تم استخراج الصوت بصيغة MP3 بواسطة AliBot.",
+                caption="🎵 تم تجهيز الصوت بواسطة AliBot.",
                 read_timeout=600,
                 write_timeout=600,
                 connect_timeout=60,
@@ -236,13 +457,76 @@ async def _send_result(
             await context.bot.send_video(
                 chat_id=chat_id,
                 video=handle,
-                caption="🎬 تم تجهيز المقطع بواسطة AliBot.",
+                caption="🎬 تم تجهيز الفيديو بواسطة AliBot.",
                 supports_streaming=True,
                 read_timeout=600,
                 write_timeout=600,
                 connect_timeout=60,
                 pool_timeout=60,
             )
+
+
+def _status_message(action: str) -> str | None:
+    return {
+        "mp3": "🎵 جاري استخراج الصوت بصيغة MP3...",
+        "audio": "🎧 جاري تجهيز الصيغة الصوتية...",
+        "thumb": "🖼️ جاري استخراج الصورة...",
+        "trim": "✂️ جاري قص المقطع...",
+        "trimcustom": "✂️ جاري تنفيذ القص المخصص...",
+        "compress": "🗜️ جاري ضغط الفيديو...",
+        "resize": "📐 جاري تغيير المقاس...",
+        "preset": "📱 جاري تجهيز الفيديو للاستخدام المحدد...",
+        "volume": "🔊 جاري تعديل مستوى الصوت...",
+    }.get(action)
+
+
+def _remember_pending(context: ContextTypes.DEFAULT_TYPE, token: str, action: str) -> None:
+    context.user_data["media_studio_pending"] = {"token": token, "action": action}
+
+
+def _clear_pending(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("media_studio_pending", None)
+
+
+async def _run_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    token: str,
+    action: str,
+    value: str | None,
+) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
+    source = _cached_path(user.id, token)
+    if source is None:
+        await message.reply_text(
+            "⚠️ انتهت صلاحية نسخة الاستوديو لهذا الفيديو.\n"
+            "أعد تحميل الفيديو ثم استخدم أدوات الاستوديو."
+        )
+        return
+
+    status = _status_message(action)
+    if not status:
+        return
+
+    await message.reply_text(status)
+    output = None
+    try:
+        output, media_type = await _create_result(source, action, value)
+        _validate_result(output)
+        await _send_result(update, context, output, media_type)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f"⚠️ Media Studio failed: {type(exc).__name__}: {exc}")
+        await message.reply_text(
+            "❌ تعذر تنفيذ العملية على هذا الفيديو.\n"
+            "جرّب إعدادًا آخر أو فيديو أقصر."
+        )
+    finally:
+        if output is not None:
+            output.unlink(missing_ok=True)
 
 
 async def media_studio_callback(
@@ -264,44 +548,76 @@ async def media_studio_callback(
     token = parts[2]
     value = parts[3] if len(parts) == 4 else None
 
-    source = _cached_path(user.id, token)
-    if source is None:
+    if action == "back":
+        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token))
+        return
+
+    if action in {"audio", "resize", "preset", "volume"} and value is None:
+        keyboards = {
+            "audio": (_keyboard_audio, "🎧 اختر الصيغة الصوتية:"),
+            "resize": (_keyboard_resize, "📐 اختر المقاس:"),
+            "preset": (_keyboard_presets, "📱 اختر الاستخدام:"),
+            "volume": (_keyboard_volume, "🔊 اختر مستوى الصوت:"),
+        }
+        builder, prompt = keyboards[action]
+        await query.message.reply_text(prompt, reply_markup=builder(token))
+        return
+
+    if action == "trimcustom" and value is None:
+        _remember_pending(context, token, action)
         await query.message.reply_text(
-            "⚠️ انتهت صلاحية نسخة الاستوديو لهذا الفيديو.\n"
-            "أعد تحميل الفيديو ثم استخدم أدوات الاستوديو."
+            "✂️ أرسل الفترة بهذا الشكل:\n"
+            "00:10 - 00:40\n\n"
+            "الحد الأقصى للقص المخصص: 5 دقائق."
         )
         return
 
-    status = {
-        "mp3": "🎵 جاري استخراج الصوت...",
-        "thumb": "🖼️ جاري استخراج الصورة...",
-        "trim": "✂️ جاري قص المقطع...",
-        "compress": "🗜️ جاري ضغط الفيديو...",
-    }.get(action)
-    if not status:
+    await _run_action(update, context, token, action, value)
+
+
+async def media_studio_text_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    pending = context.user_data.get("media_studio_pending")
+    if not pending:
         return
 
-    await query.message.reply_text(status)
-    output = None
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user or not message.text:
+        return
+
+    token = pending.get("token")
+    action = pending.get("action")
+    if not token or action != "trimcustom":
+        _clear_pending(context)
+        return
+
     try:
-        output, media_type = await _create_result(source, action, value)
-        _validate_result(output)
-        await _send_result(update, context, output, media_type)
-    except (RuntimeError, ValueError, OSError) as exc:
-        print(f"⚠️ Media Studio failed: {type(exc).__name__}: {exc}")
-        await query.message.reply_text(
-            "❌ تعذر تنفيذ العملية على هذا الفيديو.\n"
-            "جرّب فيديو أقصر أو اختر عملية أخرى."
+        _parse_custom_trim(message.text)
+    except ValueError:
+        await message.reply_text(
+            "⚠️ الصيغة غير صحيحة. أرسل مثلًا: 00:10 - 00:40\n"
+            "المدة القصوى 5 دقائق."
         )
-    finally:
-        if output is not None:
-            output.unlink(missing_ok=True)
+        return
+
+    _clear_pending(context)
+    await _run_action(update, context, token, "trimcustom", message.text)
 
 
 def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|thumb|trim|compress):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|back):",
         )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            media_studio_text_handler,
+        ),
+        group=-1,
     )
