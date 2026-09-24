@@ -184,7 +184,7 @@ async def _create_result(source: Path, action: str, value: str | None) -> tuple[
             "-i", str(source),
             "-map", "0:v:0",
             "-map", "0:a:0?",
-            "-vf", "scale=min(720,iw):-2",
+            "-vf", "scale=min(720\\,iw):-2",
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "29",
@@ -305,3 +305,4 @@ def register_media_studio(app) -> None:
             pattern=r"^studio:(mp3|thumb|trim|compress):",
         )
     )
+}
