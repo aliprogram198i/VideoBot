@@ -223,6 +223,36 @@ def test_custom_trim_pending_input_is_handled_by_media_studio(monkeypatch):
     assert "media_studio_pending" not in FakeContext.user_data
 
 
+def test_media_studio_pending_url_releases_state_for_download_handler(monkeypatch):
+    called = {"run_action": False}
+
+    async def fake_run_action(*args, **kwargs):
+        called["run_action"] = True
+
+    monkeypatch.setattr(studio, "_run_action", fake_run_action)
+
+    class FakeMessage:
+        text = "https://youtu.be/example"
+
+        async def reply_text(self, text):
+            raise AssertionError("URL must not be treated as trim input")
+
+    class FakeUser:
+        id = 123
+
+    class FakeUpdate:
+        effective_message = FakeMessage()
+        effective_user = FakeUser()
+
+    class FakeContext:
+        user_data = {"media_studio_pending": {"token": "abc123", "action": "trimcustom"}}
+
+    asyncio.run(studio.media_studio_text_handler(FakeUpdate(), FakeContext()))
+
+    assert "media_studio_pending" not in FakeContext.user_data
+    assert called["run_action"] is False
+
+
 def test_media_studio_pending_input_stops_downstream_text_handlers():
     class FakeMessage:
         text = "not a valid trim"

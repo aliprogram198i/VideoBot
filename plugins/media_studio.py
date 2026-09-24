@@ -594,6 +594,13 @@ async def media_studio_text_handler(
     if not message or not user or not message.text:
         return
 
+    # A URL is a new download request, not Media Studio input. If a user
+    # leaves the custom-trim prompt and sends a URL, release the pending
+    # Studio state and let the canonical URL download handler process it.
+    if re.match(r"^https?://", message.text.strip(), re.IGNORECASE):
+        _clear_pending(context)
+        return
+
     token = pending.get("token")
     action = pending.get("action")
     if not token or action != "trimcustom":
