@@ -28,43 +28,69 @@ def get_db() -> sqlite3.Connection:
 
 def record_download(
     *,
-    user_id: int,
-    username: str | None,
-    url: str,
-    website: str,
-    media_type: str,
-    quality: str,
-    created_at: str,
+    event: DownloadEvent | None = None,
+    user_id: int | None = None,
+    username: str | None = None,
+    url: str | None = None,
+    website: str | None = None,
+    media_type: str | None = None,
+    quality: str | None = None,
+    created_at: str | None = None,
 ) -> None:
-    """Atomically record a delivered download and increment the user counter.
+    """Atomically record one canonical successful-delivery event.
 
-    The ledger accepts only the canonical successful-delivery event shape.
+    ``event`` is the preferred path. The legacy keyword fields remain
+    supported so existing callers keep the same database behavior.
     """
-    event = DownloadEvent(
-        user_id=user_id,
-        username=username,
-        url=url,
-        website=website,
-        media_type=media_type,
-        quality=quality,
-        created_at=created_at,
-    )
+    if event is None:
+        required = {
+            "user_id": user_id,
+            "url": url,
+            "website": website,
+            "media_type": media_type,
+            "quality": quality,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise ValueError("missing download event fields: " + ", ".join(missing))
+        event = DownloadEvent(
+            user_id=int(user_id),
+            username=username,
+            url=str(url),
+            website=str(website),
+            media_type=str(media_type),
+            quality=str(quality),
+            created_at=created_at,
+        )
+
+    if not isinstance(event, DownloadEvent):
+        raise TypeError("event must be a DownloadEvent")
+    if not event.ledger_eligible:
+        raise ValueError("only successfully delivered events may enter the ledger")
+
     conn = get_db()
     try:
         with conn:
             conn.execute(
                 """INSERT INTO downloads
                    (user_id, username, url, website, media_type, quality, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, username, url, website, media_type, quality, created_at),
+                   VALUES (?, ?, ?, ?, ?, ?, ?)"""
+                ,(
+                    event.user_id,
+                    event.username,
+                    event.url,
+                    event.website,
+                    event.media_type,
+                    event.quality,
+                    event.timestamp,
+                ),
             )
             conn.execute(
                 "UPDATE users SET downloads = downloads + 1 WHERE user_id = ?",
-                (user_id,),
+                (event.user_id,),
             )
     finally:
         conn.close()
-
 
 def download_counts(*, days: int | None = None) -> dict[str, int]:
     """Return canonical download counters from the existing downloads ledger."""
