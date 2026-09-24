@@ -618,5 +618,6 @@ def register_media_studio(app) -> None:
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             media_studio_text_handler,
-        )
+        ),
+        group=-1,
     )
