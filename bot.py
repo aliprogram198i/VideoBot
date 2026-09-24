@@ -32,6 +32,8 @@ from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
 from plugins.smart_search_pro import register_smart_search_pro
 from data_layer import get_db as _data_get_db, record_download as _record_download
+from download_events import DownloadEvent
+from downloader.telemetry import TelemetryRecorder
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
     parse_telegram_post_url,
@@ -1684,18 +1686,77 @@ def delete_user(user_id):
 # حفظ التحميل
 # ============================================================
 
-def save_download(user, url, website, media_type, quality):
-    """Compatibility facade for the canonical atomic download ledger write."""
-    _record_download(
+def _get_download_telemetry():
+    """Lazily access the unified telemetry recorder."""
+    recorder = getattr(_get_download_telemetry, "_recorder", None)
+    if recorder is None:
+        recorder = TelemetryRecorder()
+        _get_download_telemetry._recorder = recorder
+    return recorder
+
+
+def save_download(
+    user,
+    url,
+    website,
+    media_type,
+    quality,
+    *,
+    attempt_id=None,
+    attempt_number=None,
+    elapsed_ms=None,
+    delivered_parts=1,
+):
+    """Record one delivered download through the canonical event contract.
+
+    The same immutable event is sent to telemetry and then to the ledger.
+    Telemetry is failure-isolated and therefore cannot block delivery.
+    """
+    event = DownloadEvent(
         user_id=user.id,
         username=user.username,
         url=url,
         website=website,
         media_type=media_type,
         quality=quality,
-        created_at=datetime.now().isoformat(),
+        attempt_id=attempt_id,
+        attempt_number=attempt_number,
+        delivery_status="delivered",
+        delivered_parts=delivered_parts,
+        elapsed_ms=elapsed_ms,
     )
+    _get_download_telemetry().record_download_event(event)
+    _record_download(event=event)
 
+
+def record_download_failure(
+    user,
+    url,
+    website,
+    media_type,
+    quality,
+    *,
+    attempt_id=None,
+    attempt_number=None,
+    elapsed_ms=None,
+    failure_reason=None,
+):
+    """Record one terminal download failure without writing to the ledger."""
+    if not failure_reason:
+        failure_reason = "download_failed"
+    event = DownloadEvent.failed(
+        user_id=user.id,
+        username=user.username,
+        url=url,
+        website=website,
+        media_type=media_type,
+        quality=quality,
+        attempt_id=attempt_id,
+        attempt_number=attempt_number,
+        elapsed_ms=elapsed_ms,
+        failure_reason=sanitize_error_for_storage(str(failure_reason))[:500],
+    )
+    _get_download_telemetry().record_download_event(event)
 
 # ============================================================
 # اللغة
