@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .instagram_identity import (
+from .facebook_identity import (\n    FacebookReelIdentity,\n    candidate_matches_facebook_reel,\n    parse_facebook_reel_url,\n)\nfrom .instagram_identity import (
     InstagramPostIdentity,
     candidate_matches_instagram_source,
     parse_instagram_post_url,
@@ -27,7 +27,7 @@ class SourceIdentity:
 
     platform: str
     value: str
-    native: TelegramPostIdentity | InstagramPostIdentity
+    native: TelegramPostIdentity | InstagramPostIdentity | FacebookReelIdentity
 
     @property
     def key(self) -> tuple[str, str]:
