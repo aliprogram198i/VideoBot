@@ -156,7 +156,7 @@ def test_resize_uses_requested_height(monkeypatch, tmp_path):
     asyncio.run(studio._create_result(source, "resize", "720"))
 
     filter_index = captured["args"].index("-vf")
-    assert captured["args"][filter_index + 1] == "scale=-2:720"
+    assert captured["args"][filter_index + 1] == r"scale=-2:min(720\,ih)"
 
 
 def test_preset_vertical_filter_is_valid(monkeypatch, tmp_path):
@@ -183,4 +183,6 @@ def test_volume_levels_and_mute(monkeypatch, tmp_path):
 
     captured = _capture_ffmpeg(monkeypatch, tmp_path)
     asyncio.run(studio._create_result(source, "volume", "0"))
-    assert "-an" in captured["args"]
+    assert "-af" in captured["args"]
+    assert "volume=0" in captured["args"]
+    assert "-an" not in captured["args"]
