@@ -366,7 +366,7 @@ async def _create_result(source: Path, action: str, value: str | None) -> tuple[
             "-i", str(source),
             "-map", "0:v:0",
             "-map", "0:a:0?",
-            "-vf", f"scale=-2:{value}",
+            "-vf", f"scale=-2:min({value}\\,ih)",
             *(_video_encode_args(output)),
         )
         return output, "video"
@@ -403,7 +403,7 @@ async def _create_result(source: Path, action: str, value: str | None) -> tuple[
                 "-i", str(source),
                 "-map", "0:v:0",
                 "-map", "0:a:0?",
-                "-an",
+                "-af", "volume=0",
                 *(_video_encode_args(output)),
             )
         else:
