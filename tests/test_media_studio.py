@@ -215,12 +215,33 @@ async def test_custom_trim_pending_input_is_handled_by_media_studio(monkeypatch)
     class FakeContext:
         user_data = {"media_studio_pending": {"token": "abc123", "action": "trimcustom"}}
 
-    await studio.media_studio_text_handler(FakeUpdate(), FakeContext())
+    with pytest.raises(studio.ApplicationHandlerStop):
+        await studio.media_studio_text_handler(FakeUpdate(), FakeContext())
 
     assert captured["token"] == "abc123"
     assert captured["action"] == "trimcustom"
     assert captured["value"] == "00:10 - 00:40"
     assert "media_studio_pending" not in FakeContext.user_data
+
+
+def test_media_studio_pending_input_stops_downstream_text_handlers():
+    class FakeMessage:
+        text = "not a valid trim"
+        async def reply_text(self, text):
+            pass
+
+    class FakeUser:
+        id = 123
+
+    class FakeUpdate:
+        effective_message = FakeMessage()
+        effective_user = FakeUser()
+
+    class FakeContext:
+        user_data = {"media_studio_pending": {"token": "abc123", "action": "trimcustom"}}
+
+    with pytest.raises(studio.ApplicationHandlerStop):
+        asyncio.run(studio.media_studio_text_handler(FakeUpdate(), FakeContext()))
 
 
 def test_media_studio_text_handler_has_explicit_early_routing_group():
