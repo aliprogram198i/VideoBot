@@ -336,12 +336,25 @@ class EmbedResolver:
                 for candidate in all_candidates
                 if candidate.source_page == fetched.url
             ):
+                # Prefer the canonical URL after HTTP redirects. Facebook
+                # /share/v/... links commonly redirect to /reel/... or /videos/...
+                # and the native extractor is materially more reliable on that
+                # canonical resource. Keep the original URL as a fallback when
+                # no canonical redirect occurred.
+                ytdlp_source = fetched.url if fetched.url != current_url else current_url
                 self._add_universal_ytdlp_candidates(
-                    current_url,
+                    ytdlp_source,
                     depth=depth,
                     all_candidates=all_candidates,
                     seen_candidates=seen_candidates,
                 )
+                if ytdlp_source != current_url and not all_candidates:
+                    self._add_universal_ytdlp_candidates(
+                        current_url,
+                        depth=depth,
+                        all_candidates=all_candidates,
+                        seen_candidates=seen_candidates,
+                    )
 
             if len(all_candidates) >= self.max_candidates:
                 break

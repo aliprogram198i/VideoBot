@@ -31,6 +31,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
 from plugins.smart_search_pro import register_smart_search_pro
+from plugins.media_studio import cache_media_for_user, register_media_studio, studio_keyboard
 from data_layer import get_db as _data_get_db, record_download as _record_download
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
@@ -5416,7 +5417,7 @@ async def download_media(
                     media_file,
                     "rb",
                 ) as video:
-                    await context.bot.send_video(
+                    sent_video = await context.bot.send_video(
                         chat_id=update.effective_chat.id,
                         video=video,
                         caption=video_caption,
@@ -5424,6 +5425,22 @@ async def download_media(
                         write_timeout=600,
                         connect_timeout=60,
                         pool_timeout=60,
+                    )
+
+                # Media Studio works from the validated local artifact. The
+                # cache is best-effort and never blocks a successful download.
+                try:
+                    studio_token = cache_media_for_user(
+                        user.id,
+                        media_file,
+                    )
+                    await sent_video.edit_reply_markup(
+                        reply_markup=studio_keyboard(studio_token),
+                    )
+                except (FileNotFoundError, OSError, ValueError) as exc:
+                    print(
+                        "⚠️ Media Studio cache unavailable: "
+                        f"{type(exc).__name__}"
                     )
             else:
                 # فيديو أكبر من الحد: تقسيمه بدون إعادة ترميز.
@@ -8144,6 +8161,12 @@ def main():
             pattern=r"^admin_top_websites$"
         )
     )
+
+    # ========================================================
+    # Media Studio
+    # ========================================================
+
+    register_media_studio(app)
 
     # ========================================================
     # التحميل
