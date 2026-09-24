@@ -124,3 +124,14 @@ def test_failed_download_event_cannot_enter_ledger(tmp_path, monkeypatch):
         assert "successfully delivered" in str(exc)
     else:
         raise AssertionError("failed event was accepted by the ledger")
+
+
+def test_bot_wires_terminal_download_outcome_to_canonical_event():
+    source = Path("bot.py").read_text(encoding="utf-8")
+    assert "from download_events import DownloadEvent" in source
+    assert "from downloader.telemetry import TelemetryRecorder" in source
+    assert "delivery_confirmed = True" in source
+    assert "record_download_failure(" in source
+    assert "if not delivery_confirmed:" in source
+    assert "attempt_id=attempt_id" in source
+    assert "delivered_parts=total_parts" in source
