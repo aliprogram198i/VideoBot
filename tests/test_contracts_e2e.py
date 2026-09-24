@@ -95,10 +95,11 @@ class SmartExtractionE2ETests(unittest.TestCase):
         )
         gate = CandidateIdentityGate("https://t.me/examplechannel/8453")
         class Result:
-            valid = True
-            candidate = candidate
+            def __init__(self, value: MediaCandidate) -> None:
+                self.valid = True
+                self.candidate = value
         diagnostics: list[str] = []
-        self.assertEqual(gate.filter_results([Result()], diagnostics), [])
+        self.assertEqual(gate.filter_results([Result(candidate)], diagnostics), [])
         self.assertTrue(any("source_identity_rejected:telegram" in item for item in diagnostics))
 
 
