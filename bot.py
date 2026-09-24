@@ -4059,6 +4059,20 @@ async def download_media(
 
     website = detect_website(url)
 
+    # Resolve the platform before building the yt-dlp command. The YouTube
+    # client/PO-token policy below is evaluated before process execution.
+    hostname = (urlparse(url).hostname or "").lower()
+    is_youtube = hostname in {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtu.be",
+        "www.youtu.be",
+        "youtube-nocookie.com",
+        "www.youtube-nocookie.com",
+    }
+
     await query.edit_message_text(
         TEXTS[language]["loading"].format(
             username=(
@@ -4358,19 +4372,8 @@ async def download_media(
             # YouTube has a dedicated yt-dlp extractor.
             # Its generic HTML/direct-media fallback is not an
             # independent recovery path for YouTube.
-            hostname = (urlparse(url).hostname or "").lower()
             telegram_source = parse_telegram_post_url(url)
             instagram_source = parse_instagram_post_url(url)
-            is_youtube = hostname in {
-                "youtube.com",
-                "www.youtube.com",
-                "m.youtube.com",
-                "music.youtube.com",
-                "youtu.be",
-                "www.youtu.be",
-                "youtube-nocookie.com",
-                "www.youtube-nocookie.com",
-            }
 
             # Instagram photo recovery is intentionally separate from the video
             # pipeline. yt-dlp is a video/audio downloader and currently raises
