@@ -1,6 +1,6 @@
 from downloader.embed_resolver import EmbedResolver
 from downloader.page_fetcher import FetchedPage, PageFetcher
-from downloader.smart_extractor import MediaCandidate
+from types import SimpleNamespace
 
 
 def test_resolver_prefers_canonical_redirect_for_ytdlp(monkeypatch):
@@ -17,12 +17,11 @@ def test_resolver_prefers_canonical_redirect_for_ytdlp(monkeypatch):
     def fake_ytdlp(url):
         calls.append(url)
         return [
-            MediaCandidate(
+            SimpleNamespace(
                 url="https://video.example.test/media.mp4",
                 kind="progressive",
-                source_page=url,
                 discovered_by="yt-dlp",
-                score=0.9,
+                confidence=0.9,
                 metadata={},
             )
         ]
