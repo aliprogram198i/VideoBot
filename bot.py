@@ -4245,18 +4245,44 @@ async def download_media(
                 f"enabled for {telegram_identity.channel}/{telegram_identity.message_id}"
             )
 
-        # YouTube currently requires PO-token-backed GVS access for some
-        # anonymous clients. When the internal provider is configured, use the
-        # documented mweb + PO-token path explicitly; otherwise keep yt-dlp's
-        # normal client selection unchanged.
-        if is_youtube and os.getenv("YTDLP_POT_BASE_URL"):
-            command.extend([
-                "--extractor-args",
-                "youtube:player_client=mweb",
-                "--extractor-args",
-                f"youtubepot-bgutilhttp:base_url={os.environ['YTDLP_POT_BASE_URL']}",
-            ])
-            print("🛡️ YouTube mweb + PO Token Provider: configured", flush=True)
+        # YouTube anonymous extraction can be challenged on Railway/datacenter
+        # IPs. Keep the PO-token provider inside the same container so the
+        # download path does not depend on an unconfigured external service.
+        if is_youtube:
+            pot_script_path = os.getenv(
+                "YTDLP_POT_SCRIPT_PATH",
+                "/opt/bgutil/server/src/generate_once.ts",
+            )
+            pot_base_url = os.getenv("YTDLP_POT_BASE_URL")
+
+            if pot_base_url:
+                command.extend([
+                    "--extractor-args",
+                    "youtube:player_client=mweb",
+                    "--extractor-args",
+                    f"youtubepot-bgutilhttp:base_url={pot_base_url}",
+                ])
+                print(
+                    "🛡️ YouTube mweb + external PO Token Provider: configured",
+                    flush=True,
+                )
+            elif os.path.isfile(pot_script_path):
+                command.extend([
+                    "--extractor-args",
+                    "youtube:player_client=mweb",
+                    "--extractor-args",
+                    f"youtubepot-bgutilscript:script_path={pot_script_path}",
+                ])
+                print(
+                    "🛡️ YouTube mweb + bundled Deno PO Token Provider: configured",
+                    flush=True,
+                )
+            else:
+                print(
+                    "⚠️ YouTube PO Token Provider unavailable; "
+                    "continuing with yt-dlp native clients",
+                    flush=True,
+                )
 
         command.append(telegram_download_url)
 
