@@ -4149,6 +4149,7 @@ async def download_media(
     total_parts = 1
     attempt_number = 1
     attempt_started_at = time.monotonic()
+    delivery_confirmed = False
 
     print(
         "🧭 Download attempt started | "
@@ -5503,6 +5504,7 @@ async def download_media(
         # حفظ التحميل
         # ----------------------------------------------------
 
+        delivery_confirmed = True
         save_download(
             user=user,
             url=url,
@@ -5517,6 +5519,10 @@ async def download_media(
                 if post_download
                 else quality_name
             ),
+            attempt_id=attempt_id,
+            attempt_number=attempt_number,
+            elapsed_ms=(time.monotonic() - attempt_started_at) * 1000.0,
+            delivered_parts=total_parts,
         )
 
         # ----------------------------------------------------
@@ -5535,6 +5541,19 @@ async def download_media(
         timeout_duration_ms = int(
             (time.monotonic() - attempt_started_at) * 1000
         )
+
+        if not delivery_confirmed:
+            record_download_failure(
+                user=user,
+                url=url,
+                website=website,
+                media_type="image" if is_image else ("audio" if is_audio else "video"),
+                quality=quality_name if "quality_name" in locals() else "unknown",
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+                elapsed_ms=timeout_duration_ms,
+                failure_reason=last_error_type or "timeout",
+            )
 
         log_download_error(
             user_id=query.from_user.id if query.from_user else None,
@@ -5581,6 +5600,19 @@ async def download_media(
         exception_duration_ms = int(
             (time.monotonic() - attempt_started_at) * 1000
         )
+
+        if not delivery_confirmed:
+            record_download_failure(
+                user=user,
+                url=url,
+                website=website,
+                media_type="image" if is_image else ("audio" if is_audio else "video"),
+                quality=quality_name if "quality_name" in locals() else "unknown",
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+                elapsed_ms=exception_duration_ms,
+                failure_reason=last_error_type or type(e).__name__,
+            )
 
         log_download_error(
             user_id=query.from_user.id if query.from_user else None,
