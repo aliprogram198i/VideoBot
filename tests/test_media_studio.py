@@ -190,8 +190,7 @@ def test_volume_levels_and_mute(monkeypatch, tmp_path):
     assert "-an" not in captured["args"]
 
 
-@pytest.mark.asyncio
-async def test_custom_trim_pending_input_is_handled_by_media_studio(monkeypatch):
+def test_custom_trim_pending_input_is_handled_by_media_studio(monkeypatch):
     captured = {}
 
     async def fake_run_action(update, context, token, action, value):
@@ -216,7 +215,7 @@ async def test_custom_trim_pending_input_is_handled_by_media_studio(monkeypatch)
         user_data = {"media_studio_pending": {"token": "abc123", "action": "trimcustom"}}
 
     with pytest.raises(studio.ApplicationHandlerStop):
-        await studio.media_studio_text_handler(FakeUpdate(), FakeContext())
+        asyncio.run(studio.media_studio_text_handler(FakeUpdate(), FakeContext()))
 
     assert captured["token"] == "abc123"
     assert captured["action"] == "trimcustom"
