@@ -10,12 +10,14 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
+from delivery.policy import DeliveryPolicy
 
 CACHE_DIR = Path(os.getenv("MEDIA_STUDIO_CACHE_DIR", "/app/data/media_studio"))
 CACHE_TTL_SECONDS = 6 * 60 * 60
 CACHE_MAX_BYTES = 200 * 1024 * 1024
 MAX_RESULT_BYTES = 47 * 1024 * 1024
 FFMPEG_TIMEOUT_SECONDS = 240
+delivery_policy = DeliveryPolicy()
 
 
 def _ensure_cache_dir() -> None:
@@ -203,6 +205,10 @@ async def _send_result(
     media_type: str,
 ) -> None:
     chat_id = update.effective_chat.id
+    delivery_policy.validate_telegram_upload(
+        output,
+        media_type={"photo": "image"}.get(media_type, media_type),
+    )
     if media_type == "audio":
         with output.open("rb") as handle:
             await context.bot.send_audio(
