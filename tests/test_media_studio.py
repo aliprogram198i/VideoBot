@@ -67,3 +67,26 @@ def test_create_trim_uses_accurate_reencode(monkeypatch, tmp_path):
     assert "-t" in captured["args"]
     assert "15" in captured["args"]
     assert "libx264" in captured["args"]
+
+
+def test_create_compress_escapes_scale_expression_comma(monkeypatch, tmp_path):
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"input")
+    captured = {}
+
+    async def fake_run(*args):
+        captured["args"] = args
+        Path(args[-1]).write_bytes(b"output")
+
+    monkeypatch.setattr(studio, "_run_ffmpeg", fake_run)
+
+    output, media_type = asyncio.run(
+        studio._create_result(source, "compress", None)
+    )
+
+    assert media_type == "video"
+    assert output.name.endswith("_compressed.mp4")
+    assert "-vf" in captured["args"]
+    filter_index = captured["args"].index("-vf")
+    assert captured["args"][filter_index + 1] == r"scale=min(720\,iw):-2"
+    assert "libx264" in captured["args"]
