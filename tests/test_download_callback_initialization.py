@@ -26,10 +26,13 @@ def test_download_callback_initializes_total_parts_before_shared_delivery():
 
 def test_download_callback_initializes_all_diagnostics_before_primary_download():
     source = (ROOT / "bot.py").read_text(encoding="utf-8")
-    init = '    smart_file = None\n    smart_diagnostics = {'
+    smart_file_marker = '    smart_file = None'
+    smart_diagnostics_marker = '    smart_diagnostics = {'
     try_marker = '    try:\n\n        output_template = os.path.join('
-    assert init in source
-    assert source.index(init) < source.index(try_marker)
+    assert smart_file_marker in source
+    assert smart_diagnostics_marker in source
+    assert source.index(smart_file_marker) < source.index(try_marker)
+    assert source.index(smart_diagnostics_marker) < source.index(try_marker)
     for name in ("relay_diagnostics", "graphql_diagnostics", "cobalt_diagnostics", "fallback_diagnostics", "yoinku_diagnostics"):
         assert f'    {name} = {{}}' in source
 
