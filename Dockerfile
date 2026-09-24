@@ -16,7 +16,7 @@ RUN apt-get update \
     && chmod +x /usr/local/bin/deno \
     && rm -f /tmp/deno.zip /tmp/deno.sha256 \
     && deno --version \
-    && curl -fsSL "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/v${BGUTIL_VERSION}.tar.gz" -o /tmp/bgutil.tar.gz \
+    && curl -fsSL "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/${BGUTIL_VERSION}.tar.gz" -o /tmp/bgutil.tar.gz \
     && mkdir -p /opt/bgutil \
     && tar -xzf /tmp/bgutil.tar.gz --strip-components=1 -C /opt/bgutil \
     && cd /opt/bgutil/server \
