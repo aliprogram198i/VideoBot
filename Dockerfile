@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-ARG DENO_VERSION=2.8.3
+ARG DENO_VERSION=2.9.5
 ARG BGUTIL_VERSION=2.0.0
 
 RUN apt-get update \
