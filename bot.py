@@ -4155,9 +4155,6 @@ async def download_media(
 
             "--no-playlist",
 
-            "--extractor-args",
-            "youtube:player_client=android,web",
-
             "-f",
             format_option,
 
@@ -4233,6 +4230,19 @@ async def download_media(
                 "🛡️ Telegram Primary Download: exact single-post embed "
                 f"enabled for {telegram_identity.channel}/{telegram_identity.message_id}"
             )
+
+        # YouTube currently requires PO-token-backed GVS access for some
+        # anonymous clients. When the internal provider is configured, use the
+        # documented mweb + PO-token path explicitly; otherwise keep yt-dlp's
+        # normal client selection unchanged.
+        if is_youtube and os.getenv("YTDLP_POT_BASE_URL"):
+            command.extend([
+                "--extractor-args",
+                "youtube:player_client=mweb",
+                "--extractor-args",
+                f"youtubepot-bgutilhttp:base_url={os.environ['YTDLP_POT_BASE_URL']}",
+            ])
+            print("🛡️ YouTube mweb + PO Token Provider: configured", flush=True)
 
         command.append(telegram_download_url)
 
