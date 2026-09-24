@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from download_events import DownloadEvent
 from .resolver_contracts import ResolverResult
 from .resolver_outcome_telemetry import ResolverOutcomeTelemetry
 
@@ -103,23 +102,6 @@ class TelemetryRecorder:
                 failure_reason=result.failure_reason,
                 platform=context.platform,
                 media_kind=context.media_kind,
-            )
-        except Exception:
-            return
-
-    def record_download_event(self, event: DownloadEvent) -> None:
-        """Record one canonical download outcome without affecting control flow."""
-        try:
-            if not isinstance(event, DownloadEvent):
-                raise TypeError("event must be a DownloadEvent")
-            self.record_download(
-                platform=event.website,
-                media_type=event.media_type,
-                success=event.success,
-                elapsed_ms=event.elapsed_ms or 0.0,
-                url=event.url,
-                attempt_id=event.attempt_id,
-                failure_reason=event.failure_reason,
             )
         except Exception:
             return
