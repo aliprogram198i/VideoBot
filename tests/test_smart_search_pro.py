@@ -1,3 +1,8 @@
+import asyncio
+
+import pytest
+from telegram.ext import ApplicationHandlerStop
+
 from downloader.smart_search import SearchResult
 from plugins.smart_search_pro import _button_label, _format_duration, _format_views, _results_message, _title_window
 
@@ -82,3 +87,32 @@ def test_results_message_lists_full_titles_in_result_order_only():
     assert "42" not in message
     assert "1.2M" not in message
     assert "ignored query" not in message
+
+
+def test_smart_search_stops_when_media_studio_owns_pending_text():
+    from plugins.smart_search_pro import _search_handler
+
+    class FakeMessage:
+        text = "00:10 - 00:40"
+
+    class FakeUser:
+        id = 123
+
+    class FakeUpdate:
+        message = FakeMessage()
+        effective_user = FakeUser()
+
+    class FakeContext:
+        user_data = {
+            "media_studio_pending": {
+                "token": "abc123",
+                "action": "trimcustom",
+            }
+        }
+
+    class FakeBotModule:
+        def register_user(self, user):
+            raise AssertionError("Smart Search must not register or process Media Studio input")
+
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(_search_handler(FakeUpdate(), FakeContext(), FakeBotModule()))

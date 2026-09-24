@@ -337,6 +337,12 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
     if not text or text.startswith("/") or URL_RE.match(text):
         return
     user = update.effective_user
+    # Media Studio owns the next text message after a custom-trim prompt.
+    # Keep this guard in Smart Search as a second routing boundary so a
+    # pending Studio action can never fall through into search, even if
+    # handler ordering changes or another text router is introduced.
+    if context.user_data.get("media_studio_pending"):
+        raise ApplicationHandlerStop
     if _is_admin_workflow(context, bot_module, user.id):
         return
     bot_module.register_user(user)
