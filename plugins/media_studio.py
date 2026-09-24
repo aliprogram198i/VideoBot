@@ -615,9 +615,13 @@ def register_media_studio(app) -> None:
         )
     )
     app.add_handler(
+        # Media Studio owns its pending text input before Smart Search Pro
+        # and the legacy catch-all text router can see it. This is an
+        # explicit routing boundary, not a filter heuristic, so a custom
+        # trim such as "00:10 - 00:40" can never become a search query.
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             media_studio_text_handler,
         ),
-        group=-1,
+        group=-3,
     )
