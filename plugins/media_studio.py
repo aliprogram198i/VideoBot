@@ -305,4 +305,3 @@ def register_media_studio(app) -> None:
             pattern=r"^studio:(mp3|thumb|trim|compress):",
         )
     )
-}
