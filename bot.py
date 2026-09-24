@@ -2324,7 +2324,7 @@ async def download_with_smart_extraction(
             command[3:3] = ["--js-runtimes", "deno"]
 
         if is_audio:
-            command.extend([
+            # Optional internal YouTube PO Token provider.\n        # The provider returns per-video PO tokens without cookies or account data.\n        pot_base_url = os.getenv("YTDLP_POT_BASE_URL")\n        if pot_base_url:\n            command.extend([\n                "--extractor-args",\n                f"youtubepot-bgutilhttp:base_url={pot_base_url}",\n            ])\n            print("🛡️ YouTube PO Token Provider: configured", flush=True)\n\n        command.extend([
                 "-x",
                 "--audio-format",
                 "mp3",
@@ -4154,9 +4154,6 @@ async def download_media(
         command.extend([
 
             "--no-playlist",
-
-            "--extractor-args",
-            "youtube:player_client=android,web",
 
             "-f",
             format_option,
