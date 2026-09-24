@@ -32,6 +32,8 @@ from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
 from plugins.smart_search_pro import register_smart_search_pro
 from data_layer import get_db as _data_get_db, record_download as _record_download
+from download_events import DownloadEvent
+from downloader.telemetry import TelemetryRecorder
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
     parse_telegram_post_url,
@@ -1684,18 +1686,77 @@ def delete_user(user_id):
 # حفظ التحميل
 # ============================================================
 
-def save_download(user, url, website, media_type, quality):
-    """Compatibility facade for the canonical atomic download ledger write."""
-    _record_download(
+def _get_download_telemetry():
+    """Lazily access the unified telemetry recorder."""
+    recorder = getattr(_get_download_telemetry, "_recorder", None)
+    if recorder is None:
+        recorder = TelemetryRecorder()
+        _get_download_telemetry._recorder = recorder
+    return recorder
+
+
+def save_download(
+    user,
+    url,
+    website,
+    media_type,
+    quality,
+    *,
+    attempt_id=None,
+    attempt_number=None,
+    elapsed_ms=None,
+    delivered_parts=1,
+):
+    """Record one delivered download through the canonical event contract.
+
+    The same immutable event is sent to telemetry and then to the ledger.
+    Telemetry is failure-isolated and therefore cannot block delivery.
+    """
+    event = DownloadEvent(
         user_id=user.id,
         username=user.username,
         url=url,
         website=website,
         media_type=media_type,
         quality=quality,
-        created_at=datetime.now().isoformat(),
+        attempt_id=attempt_id,
+        attempt_number=attempt_number,
+        delivery_status="delivered",
+        delivered_parts=delivered_parts,
+        elapsed_ms=elapsed_ms,
     )
+    _get_download_telemetry().record_download_event(event)
+    _record_download(event=event)
 
+
+def record_download_failure(
+    user,
+    url,
+    website,
+    media_type,
+    quality,
+    *,
+    attempt_id=None,
+    attempt_number=None,
+    elapsed_ms=None,
+    failure_reason=None,
+):
+    """Record one terminal download failure without writing to the ledger."""
+    if not failure_reason:
+        failure_reason = "download_failed"
+    event = DownloadEvent.failed(
+        user_id=user.id,
+        username=user.username,
+        url=url,
+        website=website,
+        media_type=media_type,
+        quality=quality,
+        attempt_id=attempt_id,
+        attempt_number=attempt_number,
+        elapsed_ms=elapsed_ms,
+        failure_reason=sanitize_error_for_storage(str(failure_reason))[:500],
+    )
+    _get_download_telemetry().record_download_event(event)
 
 # ============================================================
 # اللغة
@@ -4088,6 +4149,7 @@ async def download_media(
     total_parts = 1
     attempt_number = 1
     attempt_started_at = time.monotonic()
+    delivery_confirmed = False
 
     print(
         "🧭 Download attempt started | "
@@ -5442,6 +5504,7 @@ async def download_media(
         # حفظ التحميل
         # ----------------------------------------------------
 
+        delivery_confirmed = True
         save_download(
             user=user,
             url=url,
@@ -5456,6 +5519,10 @@ async def download_media(
                 if post_download
                 else quality_name
             ),
+            attempt_id=attempt_id,
+            attempt_number=attempt_number,
+            elapsed_ms=(time.monotonic() - attempt_started_at) * 1000.0,
+            delivered_parts=total_parts,
         )
 
         # ----------------------------------------------------
@@ -5474,6 +5541,19 @@ async def download_media(
         timeout_duration_ms = int(
             (time.monotonic() - attempt_started_at) * 1000
         )
+
+        if not delivery_confirmed:
+            record_download_failure(
+                user=user,
+                url=url,
+                website=website,
+                media_type="image" if is_image else ("audio" if is_audio else "video"),
+                quality=quality_name if "quality_name" in locals() else "unknown",
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+                elapsed_ms=timeout_duration_ms,
+                failure_reason=last_error_type or "timeout",
+            )
 
         log_download_error(
             user_id=query.from_user.id if query.from_user else None,
@@ -5520,6 +5600,19 @@ async def download_media(
         exception_duration_ms = int(
             (time.monotonic() - attempt_started_at) * 1000
         )
+
+        if not delivery_confirmed:
+            record_download_failure(
+                user=user,
+                url=url,
+                website=website,
+                media_type="image" if is_image else ("audio" if is_audio else "video"),
+                quality=quality_name if "quality_name" in locals() else "unknown",
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+                elapsed_ms=exception_duration_ms,
+                failure_reason=last_error_type or type(e).__name__,
+            )
 
         log_download_error(
             user_id=query.from_user.id if query.from_user else None,
