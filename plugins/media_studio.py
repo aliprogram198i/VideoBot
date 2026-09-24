@@ -10,7 +10,13 @@ import uuid
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from delivery.policy import DeliveryPolicy
 
 CACHE_DIR = Path(os.getenv("MEDIA_STUDIO_CACHE_DIR", "/app/data/media_studio"))
@@ -592,7 +598,7 @@ async def media_studio_text_handler(
     action = pending.get("action")
     if not token or action != "trimcustom":
         _clear_pending(context)
-        return
+        raise ApplicationHandlerStop
 
     try:
         _parse_custom_trim(message.text)
@@ -601,10 +607,11 @@ async def media_studio_text_handler(
             "⚠️ الصيغة غير صحيحة. أرسل مثلًا: 00:10 - 00:40\n"
             "المدة القصوى 5 دقائق."
         )
-        return
+        raise ApplicationHandlerStop
 
     _clear_pending(context)
     await _run_action(update, context, token, "trimcustom", message.text)
+    raise ApplicationHandlerStop
 
 
 def register_media_studio(app) -> None:
