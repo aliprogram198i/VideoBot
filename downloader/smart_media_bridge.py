@@ -235,8 +235,9 @@ def install(bot_module) -> None:
     browser_resolver = __import__("downloader.browser_media_resolver", fromlist=["resolve"])
     browser_handoff = __import__("downloader.browser_download_handoff", fromlist=["resolve_to_file"])
     cobalt_resolver = __import__("downloader.cobalt_resolver", fromlist=["resolve"])
-    telemetry_module = __import__("downloader.resolver_outcome_telemetry", fromlist=["ResolverOutcomeTelemetry"])
-    telemetry = telemetry_module.ResolverOutcomeTelemetry()
+    telemetry_module = __import__("downloader.telemetry", fromlist=["TelemetryContext", "TelemetryRecorder"])
+    contracts = __import__("downloader.resolver_contracts", fromlist=["ResolverResult", "result_from_exception"])
+    telemetry = telemetry_module.TelemetryRecorder()
     movie_guard = __import__("downloader.movie_source_guard", fromlist=["should_guard", "is_ad_host", "assess_local_media"])
     browser_candidate_cache = {}
 
@@ -247,18 +248,34 @@ def install(bot_module) -> None:
             result = operation(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result
-            count = len(result) if isinstance(result, (list, tuple)) else int(bool(result))
-            telemetry.record(name, success=bool(result), candidate_count=count,
-                             elapsed_ms=(time.monotonic() - started) * 1000,
-                             platform=platform, media_kind=kind)
+            contract = contracts.ResolverResult.from_output(
+                name,
+                result,
+                elapsed_ms=(time.monotonic() - started) * 1000,
+            )
+            telemetry.record_resolver(
+                contract,
+                context=telemetry_module.TelemetryContext(
+                    platform=platform,
+                    media_kind=kind,
+                ),
+            )
             return result
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            telemetry.record(name, success=False, candidate_count=0,
-                             elapsed_ms=(time.monotonic() - started) * 1000,
-                             failure_reason=type(exc).__name__,
-                             platform=platform, media_kind=kind)
+            contract = contracts.result_from_exception(
+                name,
+                exc,
+                elapsed_ms=(time.monotonic() - started) * 1000,
+            )
+            telemetry.record_resolver(
+                contract,
+                context=telemetry_module.TelemetryContext(
+                    platform=platform,
+                    media_kind=kind,
+                ),
+            )
             raise
 
     def _is_local_file(value, temp_dir):
