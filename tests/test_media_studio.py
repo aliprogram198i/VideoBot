@@ -188,3 +188,43 @@ def test_volume_levels_and_mute(monkeypatch, tmp_path):
     assert "-af" in captured["args"]
     assert "volume=0" in captured["args"]
     assert "-an" not in captured["args"]
+
+
+@pytest.mark.asyncio
+async def test_custom_trim_pending_input_is_handled_by_media_studio(monkeypatch):
+    captured = {}
+
+    async def fake_run_action(update, context, token, action, value):
+        captured.update(token=token, action=action, value=value)
+
+    monkeypatch.setattr(studio, "_run_action", fake_run_action)
+
+    class FakeMessage:
+        text = "00:10 - 00:40"
+
+        async def reply_text(self, text):
+            captured["reply"] = text
+
+    class FakeUser:
+        id = 123
+
+    class FakeUpdate:
+        effective_message = FakeMessage()
+        effective_user = FakeUser()
+
+    class FakeContext:
+        user_data = {"media_studio_pending": {"token": "abc123", "action": "trimcustom"}}
+
+    await studio.media_studio_text_handler(FakeUpdate(), FakeContext())
+
+    assert captured["token"] == "abc123"
+    assert captured["action"] == "trimcustom"
+    assert captured["value"] == "00:10 - 00:40"
+    assert "media_studio_pending" not in FakeContext.user_data
+
+
+def test_media_studio_text_handler_has_explicit_early_routing_group():
+    source = Path(studio.__file__).read_text(encoding="utf-8")
+    registration = source[source.index("def register_media_studio"):]
+    handler = registration[registration.index("media_studio_text_handler"):]
+    assert "group=-3" in handler
