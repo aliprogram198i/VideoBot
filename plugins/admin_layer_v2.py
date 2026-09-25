@@ -45,6 +45,7 @@ from .smart_operations import register_smart_operations
 from .admin_user_history import clear_prompt_callback, clear_confirm_callback
 from .admin_user_intelligence import register_admin_user_intelligence
 from .admin_role_management import register_admin_role_management
+from .admin_operations_observability import register_admin_operations_observability
 
 
 async def _admin_entry(update, context, admin_id: int) -> None:
@@ -140,6 +141,7 @@ def register_admin_layer(app: Any, bot_module: Any, admin_id: int) -> None:
     _register_core_callback(app, admin_roles_callback, r"^admin_roles$", get_db, admin_id)
     register_admin_role_management(app, get_db, admin_id)
     register_admin_operations_center(app, get_db, admin_id)
+    register_admin_operations_observability(app, get_db, admin_id)
     register_admin_fallback_intelligence(app, admin_id)
     register_admin_backup_recovery(app, admin_id, get_db)
     register_admin_security_center(app, admin_id, get_db)
