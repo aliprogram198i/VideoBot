@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
-from typing import Awaitable, Callable
+from html import escape
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -73,6 +72,7 @@ def link_preview_text(language: str, platform: str, url: str) -> str:
     }
     title, platform_label, url_label, action = labels.get(language, labels["ar"])
     display_url = url if len(url) <= 80 else f"{url[:77]}..."
+    display_url = escape(display_url, quote=True)
     return f"{title}\n\n{platform_label}: <b>{platform}</b>\n{url_label}: <code>{display_url}</code>\n\n{action}"
 
 
