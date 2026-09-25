@@ -4783,6 +4783,16 @@ async def download_media(
                         attempt_id=attempt_id,
                         attempt_number=attempt_number,
                     )
+                    print(
+                        "🧩 Yoinku fallback result: "
+                        f"status={yoinku_diagnostics.get('status')} "
+                        f"http={yoinku_diagnostics.get('http_status')} "
+                        f"attempts={yoinku_diagnostics.get('internal_attempts')} "
+                        f"response_type={yoinku_diagnostics.get('response_type')} "
+                        f"bytes={yoinku_diagnostics.get('bytes_downloaded')} "
+                        f"error={yoinku_diagnostics.get('exception_type')}",
+                        flush=True,
+                    )
 
                 # ------------------------------------------------
                 # محاولة استخراج مصدر مباشر من صفحة الموقع
