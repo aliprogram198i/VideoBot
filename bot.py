@@ -4332,6 +4332,47 @@ async def download_media(
         )
         media_file = final_output_from_yt_dlp(stdout_text, temp_dir, allowed_extensions)
 
+        # YouTube bot-check recovery is a bounded second yt-dlp attempt.
+        # Do not broaden the fallback chain or bypass source/media admission.
+        if (
+            is_youtube
+            and (process.returncode != 0 or not media_file)
+            and "Sign in to confirm you’re not a bot" in stderr_text
+            and "youtube:player_client=default,mweb" in command
+        ):
+            retry_command = list(command)
+            retry_index = retry_command.index(
+                "youtube:player_client=default,mweb"
+            )
+            retry_command[retry_index] = (
+                "youtube:player_client=default,web_embedded"
+            )
+            print(
+                "🛡️ YouTube client retry: default + web_embedded",
+                flush=True,
+            )
+            retry_process = await asyncio.create_subprocess_exec(
+                *retry_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            retry_stdout, retry_stderr = await communicate_with_cleanup(
+                retry_process,
+                DOWNLOAD_TIMEOUT,
+            )
+            retry_stdout_text = retry_stdout.decode(errors="ignore")
+            retry_stderr_text = retry_stderr.decode(errors="ignore")
+            retry_media_file = final_output_from_yt_dlp(
+                retry_stdout_text,
+                temp_dir,
+                allowed_extensions,
+            )
+
+            process = retry_process
+            stdout_text = retry_stdout_text
+            stderr_text = retry_stderr_text
+            media_file = retry_media_file
+
         print("yt-dlp completed")
 
         if stderr_text:
