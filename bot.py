@@ -3916,7 +3916,6 @@ async def download_media(
         if not url or not choice:
             await query.edit_message_text(TEXTS[language]["expired"])
             return
-        await query.answer("🔄 إعادة المحاولة...")
     else:
         context.user_data["last_download_request"] = {
             "url": url,
