@@ -93,6 +93,9 @@ def _dashboard_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 التنزيلات", callback_data="admin_ops_downloads"),
          InlineKeyboardButton("🩺 صحة المنصات", callback_data="admin_ops_platforms")],
+        [InlineKeyboardButton("🧭 Operations Timeline", callback_data="admin_ops_timeline"),
+         InlineKeyboardButton("🌐 Resolver Drill-down", callback_data="admin_ops_resolvers")],
+        [InlineKeyboardButton("💾 Storage Monitor", callback_data="admin_ops_storage")],
         [InlineKeyboardButton("🚨 مركز الحوادث", callback_data="admin_ops_incidents")],
         [InlineKeyboardButton("🧠 Fallback Intelligence", callback_data="admin_fallback_intelligence")],
         [InlineKeyboardButton("🛡️ مركز الأمان", callback_data="admin_security"),
