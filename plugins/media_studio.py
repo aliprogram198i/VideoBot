@@ -97,34 +97,36 @@ def _cached_path(user_id: int, token: str) -> Path | None:
     return matches[0] if len(matches) == 1 and matches[0].is_file() else None
 
 
-def studio_keyboard(token: str) -> InlineKeyboardMarkup:
+def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+    language = normalize_language(language)
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("🎵 MP3", callback_data=f"studio:mp3:{token}"),
-                InlineKeyboardButton("🎧 صيغ صوت", callback_data=f"studio:audio:{token}"),
+                InlineKeyboardButton(t("studio", "audio_formats", language), callback_data=f"studio:audio:{token}"),
             ],
             [
-                InlineKeyboardButton("🖼️ صورة", callback_data=f"studio:thumb:{token}"),
-                InlineKeyboardButton("🗜️ ضغط", callback_data=f"studio:compress:{token}"),
+                InlineKeyboardButton(t("studio", "image", language), callback_data=f"studio:thumb:{token}"),
+                InlineKeyboardButton(t("studio", "compress", language), callback_data=f"studio:compress:{token}"),
             ],
             [
-                InlineKeyboardButton("✂️ أول 15ث", callback_data=f"studio:trim:{token}:15"),
-                InlineKeyboardButton("✂️ أول 30ث", callback_data=f"studio:trim:{token}:30"),
+                InlineKeyboardButton(t("studio", "trim15", language), callback_data=f"studio:trim:{token}:15"),
+                InlineKeyboardButton(t("studio", "trim30", language), callback_data=f"studio:trim:{token}:30"),
             ],
             [
-                InlineKeyboardButton("✂️ قص مخصص", callback_data=f"studio:trimcustom:{token}"),
-                InlineKeyboardButton("📐 المقاس", callback_data=f"studio:resize:{token}"),
+                InlineKeyboardButton(t("studio", "custom_trim", language), callback_data=f"studio:trimcustom:{token}"),
+                InlineKeyboardButton(t("studio", "resize", language), callback_data=f"studio:resize:{token}"),
             ],
             [
-                InlineKeyboardButton("📱 استخدام", callback_data=f"studio:preset:{token}"),
-                InlineKeyboardButton("🔊 الصوت", callback_data=f"studio:volume:{token}"),
+                InlineKeyboardButton(t("studio", "preset", language), callback_data=f"studio:preset:{token}"),
+                InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}"),
             ],
         ]
     )
 
 
-def _keyboard_audio(token: str) -> InlineKeyboardMarkup:
+def _keyboard_audio(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+    language = normalize_language(language)
     return InlineKeyboardMarkup(
         [
             [
@@ -134,12 +136,13 @@ def _keyboard_audio(token: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("🎧 OPUS 160k", callback_data=f"studio:audio:{token}:opus"),
             ],
-            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back:{token}")],
         ]
     )
 
 
-def _keyboard_resize(token: str) -> InlineKeyboardMarkup:
+def _keyboard_resize(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+    language = normalize_language(language)
     return InlineKeyboardMarkup(
         [
             [
@@ -155,7 +158,8 @@ def _keyboard_resize(token: str) -> InlineKeyboardMarkup:
     )
 
 
-def _keyboard_presets(token: str) -> InlineKeyboardMarkup:
+def _keyboard_presets(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+    language = normalize_language(language)
     return InlineKeyboardMarkup(
         [
             [
@@ -174,7 +178,8 @@ def _keyboard_presets(token: str) -> InlineKeyboardMarkup:
     )
 
 
-def _keyboard_volume(token: str) -> InlineKeyboardMarkup:
+def _keyboard_volume(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+    language = normalize_language(language)
     return InlineKeyboardMarkup(
         [
             [
@@ -185,7 +190,7 @@ def _keyboard_volume(token: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🔊 150%", callback_data=f"studio:volume:{token}:150"),
                 InlineKeyboardButton("🔊 200%", callback_data=f"studio:volume:{token}:200"),
             ],
-            [InlineKeyboardButton("🔇 كتم الصوت", callback_data=f"studio:volume:{token}:0")],
+            [InlineKeyboardButton(t("studio", "mute", language), callback_data=f"studio:volume:{token}:0")],
             [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
         ]
     )
@@ -554,22 +559,22 @@ async def media_studio_callback(
     value = parts[3] if len(parts) == 4 else None
 
     if action == "back":
-        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token))
+        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, normalize_language(bot_module.get_language(user.id))))
         return
 
     if action in {"audio", "resize", "preset", "volume"} and value is None:
         keyboards = {
-            "audio": (_keyboard_audio, "🎧 اختر الصيغة الصوتية:"),
-            "resize": (_keyboard_resize, "📐 اختر المقاس:"),
-            "preset": (_keyboard_presets, "📱 اختر الاستخدام:"),
-            "volume": (_keyboard_volume, "🔊 اختر مستوى الصوت:"),
+            "audio": (_keyboard_audio, t("studio", "audio_prompt", language)),
+            "resize": (_keyboard_resize, t("studio", "resize_prompt", language)),
+            "preset": (_keyboard_presets, t("studio", "preset_prompt", language)),
+            "volume": (_keyboard_volume, t("studio", "volume_prompt", language)),
         }
         builder, prompt = keyboards[action]
         # Submenus must replace the Studio keyboard on the same message.
         # Sending a new reply would leave the main Studio buttons underneath
         # and cause the keyboards to stack when the user presses Back.
         await query.answer(prompt)
-        await query.message.edit_reply_markup(reply_markup=builder(token))
+        await query.message.edit_reply_markup(reply_markup=builder(token, language))
         return
 
     if action == "trimcustom" and value is None:
