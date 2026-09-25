@@ -140,6 +140,14 @@ def test_query_variants_adds_year_free_recall_variant():
     assert "محمد عبده" in variants
 
 
+def test_page_callback_regex_matches_numeric_pages():
+    from plugins.smart_search_pro import PAGE_RE
+
+    assert PAGE_RE.fullmatch("smart_pro_page_0")
+    assert PAGE_RE.fullmatch("smart_pro_page_12")
+    assert not PAGE_RE.fullmatch("smart_pro_page_x")
+
+
 def test_results_keyboard_paginates_five_results_per_page():
     results = [_result(title=f"Result {i}", index=i) for i in range(12)]
     first = _results_keyboard(results, page=0)
