@@ -191,7 +191,7 @@ def _keyboard_volume(token: str, language: str = "ar") -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🔊 200%", callback_data=f"studio:volume:{token}:200"),
             ],
             [InlineKeyboardButton(t("studio", "mute", language), callback_data=f"studio:volume:{token}:0")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back:{token}")],
         ]
     )
 
