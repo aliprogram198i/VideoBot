@@ -231,12 +231,13 @@ TEXTS = {
             "🔙 رجوع",
 
         "loading":
-            "⏳ <b>AliBot | جاري تجهيز طلبك</b>\n\n"
+            "⏳ <b>AliBot | جاري تحميل الملف</b>\n\n"
             "👤 المستخدم: {username}\n"
             "🌐 المنصة: {website}\n"
             "🎚 الجودة: {quality}\n\n"
-            "⚙️ جاري معالجة الرابط وتجهيز الملف...\n"
-            "🚀 قد تستغرق العملية لحظات حسب حجم الفيديو وسرعة المنصة.\n\n"
+            "📥 جاري تحميل المحتوى من المصدر...\n"
+            "⚙️ بعد اكتمال التحميل سيتم تجهيز الملف للإرسال.\n"
+            "🚀 قد تستغرق العملية لحظات حسب حجم الملف وسرعة المنصة.\n\n"
             "💙 AliBot يعمل من أجلك، يرجى الانتظار...",
 
         "uploading":
@@ -379,11 +380,12 @@ TEXTS = {
             "🔙 Back",
 
         "loading":
-            "⏳ <b>AliBot | Preparing your request</b>\n\n"
+            "⏳ <b>AliBot | Downloading your file</b>\n\n"
             "👤 User: {username}\n"
             "🌐 Platform: {website}\n"
             "🎚 Quality: {quality}\n\n"
-            "⚙️ Processing the link and preparing your file...\n"
+            "📥 Downloading the content from the source...\n"
+            "⚙️ After the download, the file will be prepared for delivery.\n"
             "🚀 This may take a moment depending on the file size and platform speed.\n\n"
             "💙 AliBot is working for you. Please wait...",
 
@@ -523,11 +525,12 @@ TEXTS = {
             "🔙 Geri",
 
         "loading":
-            "⏳ <b>AliBot | İsteğiniz hazırlanıyor</b>\n\n"
+            "⏳ <b>AliBot | Dosyanız indiriliyor</b>\n\n"
             "👤 Kullanıcı: {username}\n"
             "🌐 Platform: {website}\n"
             "🎚 Kalite: {quality}\n\n"
-            "⚙️ Bağlantı işleniyor ve dosyanız hazırlanıyor...\n"
+            "📥 İçerik kaynaktan indiriliyor...\n"
+            "⚙️ İndirme tamamlandıktan sonra dosya gönderim için hazırlanacak.\n"
             "🚀 Dosya boyutuna ve platform hızına bağlı olarak biraz sürebilir.\n\n"
             "💙 AliBot sizin için çalışıyor. Lütfen bekleyin...",
 
@@ -666,12 +669,13 @@ TEXTS = {
             "🔙 Zurück",
 
         "loading":
-            "⏳ <b>AliBot | Anfrage wird vorbereitet</b>\n\n"
+            "⏳ <b>AliBot | Datei wird heruntergeladen</b>\n\n"
             "👤 Benutzer: {username}\n"
             "🌐 Plattform: {website}\n"
             "🎚 Qualität: {quality}\n\n"
-            "⚙️ Link wird verarbeitet und Ihre Datei wird vorbereitet...\n"
-            "🚀 Je nach Dateigröße und Plattformgeschwindigkeit kann dies einen Moment dauern.\n\n"
+            "📥 Inhalt wird von der Quelle heruntergeladen...\n"
+            "⚙️ Nach dem Download wird die Datei für die Übertragung vorbereitet.\n"
+            "🚀 Dies kann je nach Dateigröße und Plattformgeschwindigkeit einen Moment dauern.\n\n"
             "💙 AliBot arbeitet für Sie. Bitte warten...",
 
         "uploading":
