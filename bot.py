@@ -2026,15 +2026,8 @@ async def show_main_menu(
 
     ])
 
-    preview_url = context.user_data.get("video_url")
-    preview = (
-        link_preview_text(language, detect_website(preview_url), preview_url)
-        if preview_url
-        else TEXTS[language]["received"]
-    )
     await query.edit_message_text(
-        preview,
-        parse_mode="HTML",
+        TEXTS[language]["received"],
         reply_markup=keyboard
     )
 
