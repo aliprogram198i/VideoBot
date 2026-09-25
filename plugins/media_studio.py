@@ -153,7 +153,7 @@ def _keyboard_resize(token: str, language: str = "ar") -> InlineKeyboardMarkup:
                 InlineKeyboardButton("📱 480p", callback_data=f"studio:resize:{token}:480"),
                 InlineKeyboardButton("📲 360p", callback_data=f"studio:resize:{token}:360"),
             ],
-            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back:{token}")],
         ]
     )
 
