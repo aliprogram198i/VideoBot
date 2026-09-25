@@ -2649,11 +2649,121 @@ async def download_with_yoinku(
         )
         return None, diagnostics
 
+    # Yoinku requires a format id that is actually present in the
+    # source's /info response. Hard-coding v-720/a-320 can produce HTTP 422
+    # even when the source itself is supported.
+    info_url = (
+        "https://yoinku.com/api/v1/info?"
+        + urllib.parse.urlencode({"url": url})
+    )
+    selected_format = "a-mp3" if is_audio else "v-720"
+    info_diagnostics = {}
+
+    def fetch_info():
+        request = Request(
+            info_url,
+            headers={
+                "x-api-key": api_key,
+                "Accept": "application/json",
+                "User-Agent": "VideoBot/1.0",
+            },
+        )
+        remaining_time = fetch_deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise TimeoutError(
+                "Yoinku download exceeded "
+                f"{YOINKU_DOWNLOAD_TIMEOUT} seconds"
+            )
+        with safe_urlopen(
+            request,
+            timeout=min(30, max(1, remaining_time)),
+            max_bytes=MAX_YOINKU_RESPONSE_BYTES,
+            expected_content_types={"application/json"},
+        ) as response:
+            info_diagnostics["http_status"] = getattr(
+                response, "status", None
+            )
+            info_diagnostics["response_type"] = (
+                response.headers.get("Content-Type")
+                if getattr(response, "headers", None)
+                else None
+            )
+            return json.loads(
+                read_limited(
+                    response,
+                    MAX_YOINKU_RESPONSE_BYTES,
+                ).decode("utf-8")
+            )
+
+    try:
+        info_data = await asyncio.to_thread(fetch_info)
+        formats = (
+            info_data.get("data", {}).get("formats", [])
+            if isinstance(info_data, dict)
+            else []
+        )
+        valid_formats = [
+            item for item in formats
+            if isinstance(item, dict) and item.get("id")
+        ]
+
+        if is_audio:
+            for preferred in ("a-mp3", "a-m4a"):
+                if any(item.get("id") == preferred for item in valid_formats):
+                    selected_format = preferred
+                    break
+        else:
+            video_formats = []
+            for item in valid_formats:
+                if item.get("kind") != "video":
+                    continue
+                try:
+                    height = int(item.get("height") or 0)
+                except (TypeError, ValueError):
+                    height = 0
+                if height > 0:
+                    video_formats.append((height, item.get("id")))
+
+            if video_formats:
+                under_or_equal_720 = [
+                    item for item in video_formats if item[0] <= 720
+                ]
+                pool = under_or_equal_720 or video_formats
+                selected_format = max(pool, key=lambda item: item[0])[1]
+
+        info_diagnostics["selected_format"] = selected_format
+        info_diagnostics["available_formats"] = [
+            item.get("id") for item in valid_formats[:20]
+        ]
+        print(
+            "🧩 Yoinku format negotiation: "
+            f"selected={selected_format} "
+            f"available={info_diagnostics['available_formats']}",
+            flush=True,
+        )
+    except HTTPError as exc:
+        info_diagnostics["http_status"] = getattr(exc, "code", None)
+        info_diagnostics["error"] = type(exc).__name__
+        logger.warning(
+            "Yoinku /info HTTP failure: status=%s; using fallback format=%s",
+            info_diagnostics["http_status"],
+            selected_format,
+        )
+    except Exception as exc:
+        info_diagnostics["error"] = type(exc).__name__
+        logger.warning(
+            "Yoinku /info failed: %s; using fallback format=%s",
+            type(exc).__name__,
+            selected_format,
+        )
+
+    diagnostics["yoinku_info"] = info_diagnostics
+
     api_url = (
         "https://yoinku.com/api/v1/download?"
         + urllib.parse.urlencode({
             "url": url,
-            "format": "a-320" if is_audio else "v-720",
+            "format": selected_format,
         })
     )
 
@@ -2833,6 +2943,27 @@ async def download_with_yoinku(
         except HTTPError as exc:
             diagnostics["http_status"] = getattr(exc, "code", None)
             diagnostics["exception_type"] = type(exc).__name__
+
+            # Yoinku returns structured JSON error details for HTTP 4xx/5xx.
+            # urllib raises before safe_urlopen can expose that body, so read
+            # only a bounded, sanitized error payload for diagnostics.
+            error_detail = None
+            try:
+                error_body = exc.read(MAX_YOINKU_RESPONSE_BYTES).decode(
+                    "utf-8",
+                    errors="replace",
+                )
+                parsed_error = json.loads(error_body)
+                if isinstance(parsed_error, dict):
+                    error_detail = (
+                        parsed_error.get("error", {}).get("message")
+                        if isinstance(parsed_error.get("error"), dict)
+                        else parsed_error.get("message")
+                    )
+                if not error_detail:
+                    error_detail = error_body[:1000]
+            except Exception:
+                error_detail = None
 
             retry_after = None
             try:
