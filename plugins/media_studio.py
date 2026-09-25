@@ -581,11 +581,7 @@ async def media_studio_callback(
 
     if action == "trimcustom" and value is None:
         _remember_pending(context, token, action)
-        await query.message.reply_text(
-            "✂️ أرسل الفترة بهذا الشكل:\n"
-            "00:10 - 00:40\n\n"
-            "الحد الأقصى للقص المخصص: 5 دقائق."
-        )
+        await query.message.reply_text(t("studio", "custom_prompt", language))
         return
 
     await _run_action(update, context, token, action, value)
@@ -620,10 +616,7 @@ async def media_studio_text_handler(
     try:
         _parse_custom_trim(message.text)
     except ValueError:
-        await message.reply_text(
-            "⚠️ الصيغة غير صحيحة. أرسل مثلًا: 00:10 - 00:40\n"
-            "المدة القصوى 5 دقائق."
-        )
+        await message.reply_text(t("studio", "invalid_trim", normalize_language(bot_module.get_language(user.id))))
         raise ApplicationHandlerStop
 
     _clear_pending(context)
