@@ -4122,7 +4122,7 @@ async def download_media(
 
         format_option = (
             "bestvideo[height<=1080]+bestaudio/"
-            "best[height<=1080]
+            "best[height<=1080]"
         )
 
         quality_name = "1080p"
@@ -4132,7 +4132,7 @@ async def download_media(
         format_option = (
             "bestvideo*[height<=720]"
             "+bestaudio/"
-            "best[height<=720]
+            "best[height<=720]"
         )
 
         quality_name = "720p"
@@ -4142,7 +4142,7 @@ async def download_media(
         format_option = (
             "bestvideo*[height<=480]"
             "+bestaudio/"
-            "best[height<=480]
+            "best[height<=480]"
         )
 
         quality_name = "480p"
@@ -4152,7 +4152,7 @@ async def download_media(
         format_option = (
             "bestvideo*[height<=360]"
             "+bestaudio/"
-            "best[height<=360]
+            "best[height<=360]"
         )
 
         quality_name = "360p"
