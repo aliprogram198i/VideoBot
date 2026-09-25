@@ -64,7 +64,7 @@ def _tokens(value: str) -> list[str]:
 
 def _parse_query_intent(query: str) -> dict[str, Any]:
     normalized = _normalize(query)
-    years = re.findall(r"\\b(?:19|20)\\d{2}\\b", normalized)
+    years = re.findall(r"\b(?:19|20)\d{2}\b", normalized)
     groups = {
         "official": ("رسمي", "official"), "lyrics": ("كلمات", "lyrics", "lyric"),
         "remix": ("ريمكس", "remix"), "live": ("حفله", "حفلة", "live", "concert"),
@@ -78,7 +78,7 @@ def _query_variants(query: str) -> list[str]:
     original = re.sub(r"\s+", " ", query).strip()[:MAX_QUERY_LENGTH]
     normalized = _normalize(original)[:MAX_QUERY_LENGTH]
     intent = _parse_query_intent(original)
-    core = re.sub(r"\\b(?:19|20)\\d{2}\\b", " ", normalized)
+    core = re.sub(r"\b(?:19|20)\d{2}\b", " ", normalized)
     core = re.sub(r"\s+", " ", core).strip()
     variants: list[str] = []
     for value in (original, normalized, core if intent["years"] else ""):
