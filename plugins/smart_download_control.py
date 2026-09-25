@@ -353,6 +353,10 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
             parse_mode="HTML",
             reply_markup=_keyboard(url, language),
         )
+        try:
+            await status_message.delete()
+        except Exception:
+            pass
     return True
 
 
