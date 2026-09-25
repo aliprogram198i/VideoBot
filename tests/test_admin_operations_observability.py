@@ -43,11 +43,11 @@ def _db(path):
     )
     conn.execute(
         "INSERT INTO error_logs VALUES "
-        "(1,7,'https://instagram.com/reel/x','instagram','video','download','resolver_failed','failed','a1',1,'{"fallback":{"resolver":"instagram_relay_html"}}','2026-09-25T08:59:00')"
+        '(1,7,\'https://instagram.com/reel/x\',\'instagram\',\'video\',\'download\',\'resolver_failed\',\'failed\',\'a1\',1,\'{"fallback":{"resolver":"instagram_relay_html"}}\',\'2026-09-25T08:59:00\')'
     )
     conn.execute(
         "INSERT INTO error_logs VALUES "
-        "(2,7,'https://instagram.com/reel/x','instagram','video','download','resolver_failed','failed','a1',2,'{"fallback":{"resolver":"instagram_relay_html"}}','2026-09-25T08:58:00')"
+        '(2,7,\'https://instagram.com/reel/x\',\'instagram\',\'video\',\'download\',\'resolver_failed\',\'failed\',\'a1\',2,\'{"fallback":{"resolver":"instagram_relay_html"}}\',\'2026-09-25T08:58:00\')'
     )
     conn.commit()
     return conn
