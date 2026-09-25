@@ -39,3 +39,10 @@ def test_quality_callbacks_cover_all_requested_video_levels_and_mp3():
         assert f'audio_quality = "{bitrate}"' in source
     assert '"--audio-format"' in source
     assert '"mp3"' in source
+
+
+def test_quality_menu_callbacks_are_reachable():
+    source = BOT.read_text(encoding="utf-8")
+    assert 'callback_data="video_menu"' in source
+    assert 'callback_data="audio_menu"' in source
+    assert 'pattern=r"^(video_menu|audio_menu|video_|audio_|main_menu|post_download|retry_download)$"' in source
