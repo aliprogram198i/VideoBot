@@ -43,3 +43,12 @@ def test_smart_search_uses_shared_localization_for_navigation():
     assert 't("smart_search", "previous", language)' in source
     assert 't("smart_search", "more", language)' in source
     assert 't("smart_search", "cancel", language)' in source
+
+
+def test_media_studio_uses_shared_localization_for_user_messages():
+    source = Path("plugins/media_studio.py").read_text(encoding="utf-8")
+    assert 'from plugins.localization import t, language as normalize_language' in source
+    assert 't("studio", "audio_formats", language)' in source
+    assert 't("studio", "back", language)' in source
+    assert 't("studio", "custom_prompt", language)' in source
+    assert 't("studio", "invalid_trim"' in source
