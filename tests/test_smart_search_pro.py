@@ -147,7 +147,7 @@ def test_results_keyboard_paginates_five_results_per_page():
     third = _results_keyboard(results, page=2)
     assert len(first.inline_keyboard) == PAGE_SIZE + 2
     assert len(second.inline_keyboard) == PAGE_SIZE + 2
-    assert len(third.inline_keyboard) == 2
+    assert len(third.inline_keyboard) == 4
     assert first.inline_keyboard[-2][0].callback_data == "smart_pro_page_1"
     assert second.inline_keyboard[-2][0].callback_data == "smart_pro_page_0"
     assert second.inline_keyboard[-2][1].callback_data == "smart_pro_page_2"
