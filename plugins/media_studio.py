@@ -550,6 +550,8 @@ async def media_studio_callback(
     if not user:
         return
 
+    bot_module = __import__("bot")
+    language = normalize_language(bot_module.get_language(user.id))
     parts = (query.data or "").split(":")
     if len(parts) < 3 or parts[0] != "studio":
         return
@@ -559,7 +561,7 @@ async def media_studio_callback(
     value = parts[3] if len(parts) == 4 else None
 
     if action == "back":
-        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, normalize_language(bot_module.get_language(user.id))))
+        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
         return
 
     if action in {"audio", "resize", "preset", "volume"} and value is None:
