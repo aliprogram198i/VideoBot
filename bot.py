@@ -54,6 +54,13 @@ from downloader.error_sanitizer import (
     details_to_json as _details_to_json,
 )
 from downloader.source_detection import detect_website
+from downloader.user_experience import (
+    RETRY_CALLBACK,
+    link_preview_text,
+    optimize_video_for_telegram,
+    progress_text,
+    retry_keyboard,
+)
 
 from plugins import gemini_service
 
@@ -1977,8 +1984,10 @@ async def handle_message(
 
     ])
 
+    website = detect_website(url)
     await update.message.reply_text(
-        TEXTS[language]["received"],
+        link_preview_text(language, website, url),
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
@@ -3890,6 +3899,22 @@ async def download_media(
 
     choice = query.data
 
+    if choice == RETRY_CALLBACK:
+        saved_request = context.user_data.get("last_download_request")
+        if not isinstance(saved_request, dict):
+            await query.edit_message_text(TEXTS[language]["expired"])
+            return
+        url = saved_request.get("url")
+        choice = saved_request.get("choice")
+        if not url or not choice:
+            await query.edit_message_text(TEXTS[language]["expired"])
+            return
+    else:
+        context.user_data["last_download_request"] = {
+            "url": url,
+            "choice": choice,
+        }
+
     # "تحميل المنشور" هو مسار تلقائي: نستخدم أفضل صيغة للفيديو،
     # لكن Instagram image resolver يعمل قبل قبول أي فيديو نهائي،
     # لذلك إذا كان المنشور صورة سيتم إرساله كصورة أصلية.
@@ -4308,6 +4333,10 @@ async def download_media(
         # تشغيل yt-dlp
         # ----------------------------------------------------
 
+        await query.edit_message_text(
+            progress_text(language, "download", website, quality_name)
+        )
+
         process = (
             await asyncio.create_subprocess_exec(
                 *command,
@@ -4437,6 +4466,10 @@ async def download_media(
             # ------------------------------------------------
             # Fallback policy
             # ------------------------------------------------
+
+            await query.edit_message_text(
+                progress_text(language, "fallback", website, quality_name)
+            )
             # YouTube has a dedicated yt-dlp extractor.
             # Its generic HTML/direct-media fallback is not an
             # independent recovery path for YouTube.
@@ -5161,10 +5194,64 @@ async def download_media(
         if not media_file:
 
             await query.edit_message_text(
-                TEXTS[language]["file_error"]
+                TEXTS[language]["file_error"],
+                reply_markup=retry_keyboard(language),
             )
 
             return
+
+        # ----------------------------------------------------
+        # P0 Smart Size Handling.
+        # Oversized video -> bounded H.264 optimization -> existing split fallback.
+        # The optimized artifact still passes the universal admission/delivery gates.
+        # ----------------------------------------------------
+        if (
+            media_file
+            and not is_audio
+            and not is_image
+            and os.path.isfile(media_file)
+            and os.path.getsize(media_file) > MAX_TELEGRAM_VIDEO_BYTES
+        ):
+            await query.edit_message_text(
+                (
+                    "🗜️ الملف أكبر من حد Telegram الآمن.\n\n"
+                    "⚙️ AliBot يحاول ضغطه تلقائياً مع الحفاظ على جودة مناسبة..."
+                )
+                if language == "ar"
+                else (
+                    "🗜️ The file is above Telegram's safe limit.\n\n"
+                    "⚙️ AliBot is optimizing it automatically..."
+                )
+            )
+            optimized_file, optimization_diagnostics = (
+                await optimize_video_for_telegram(
+                    media_file,
+                    temp_dir,
+                    max_bytes=47 * 1024 * 1024,
+                )
+            )
+            fallback_diagnostics = {
+                **fallback_diagnostics,
+                "delivery_optimizer": optimization_diagnostics,
+            }
+            if optimized_file:
+                media_file = optimized_file
+                fallback_diagnostics["resolver"] = "delivery_optimizer"
+                print(
+                    "🗜️ Delivery optimizer: SUCCESS | "
+                    f"bytes={optimization_diagnostics.get('optimized_bytes')}",
+                    flush=True,
+                )
+            else:
+                print(
+                    "🗜️ Delivery optimizer did not reach the safe limit; "
+                    "existing split delivery remains active.",
+                    flush=True,
+                )
+
+        await query.edit_message_text(
+            progress_text(language, "delivery", website, quality_name)
+        )
 
         # ----------------------------------------------------
         # Universal local-artifact acceptance gate.
@@ -5614,7 +5701,8 @@ async def download_media(
 
         try:
             await query.edit_message_text(
-                TEXTS[language]["download_error"]
+                TEXTS[language]["download_error"],
+                reply_markup=retry_keyboard(language),
             )
         except Exception:
             pass
@@ -5668,7 +5756,8 @@ async def download_media(
 
         try:
             await query.edit_message_text(
-                TEXTS[language]["general_error"]
+                TEXTS[language]["general_error"],
+                reply_markup=retry_keyboard(language),
             )
         except Exception:
             pass
@@ -8226,7 +8315,7 @@ def main():
     app.add_handler(
         CallbackQueryHandler(
             download_media,
-            pattern=r"^(video_|audio_|main_menu|post_download)$"
+            pattern=r"^(video_|audio_|main_menu|post_download|retry_download)$"
         )
     )
 
