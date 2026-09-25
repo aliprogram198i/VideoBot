@@ -35,6 +35,7 @@ _CARD_TEXTS = {
         "video": "🎥 فيديو",
         "post": "📌 تحميل المنشور",
         "audio": "🎵 MP3",
+        "post": "📌 Download post",
         "favorite": "⭐ حفظ",
         "library": "📚 مكتبتي",
         "settings": "⚙️ الإعدادات",
@@ -90,6 +91,7 @@ _CARD_TEXTS = {
         "choose": "Bir işlem seçin:",
         "video": "🎥 Video",
         "audio": "🎵 MP3",
+        "post": "📌 Gönderiyi indir",
         "favorite": "⭐ Kaydet",
         "library": "📚 Kitaplığım",
         "settings": "⚙️ Ayarlar",
@@ -117,6 +119,7 @@ _CARD_TEXTS = {
         "choose": "Aktion auswählen:",
         "video": "🎥 Video",
         "audio": "🎵 MP3",
+        "post": "📌 Beitrag herunterladen",
         "favorite": "⭐ Speichern",
         "library": "📚 Bibliothek",
         "settings": "⚙️ Einstellungen",
@@ -178,7 +181,7 @@ def _source(url: str) -> str:
     for domain, label in labels.items():
         if host == domain or host.endswith("." + domain):
             return label
-    return host or "Other"
+    return host or "Unknown"
 
 
 def _duration(value, language: str = "ar") -> str:
