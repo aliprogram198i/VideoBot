@@ -313,11 +313,14 @@ def _severity_icon(value: str) -> str:
 
 def _home_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚨 Error & Incident Center", callback_data=_INCIDENTS)],
-        [InlineKeyboardButton("🌐 Platform / Resolver Monitor", callback_data=_RESOLVERS)],
-        [InlineKeyboardButton("🔔 Admin Alerts", callback_data=_ALERTS)],
+        [InlineKeyboardButton("🚨 الحوادث", callback_data=_INCIDENTS),
+         InlineKeyboardButton("🔔 التنبيهات", callback_data=_ALERTS)],
+        [InlineKeyboardButton("🌐 Resolver Drill-down", callback_data="admin_ops_resolvers"),
+         InlineKeyboardButton("🧭 Operations Timeline", callback_data="admin_ops_timeline")],
+        [InlineKeyboardButton("📡 المراقبة الذكية", callback_data="admin_observability")],
         [InlineKeyboardButton("🔄 تحديث", callback_data=_HOME),
-         InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
+         InlineKeyboardButton("📊 مركز العمليات", callback_data="admin_ops_dashboard")],
+        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ])
 
 
