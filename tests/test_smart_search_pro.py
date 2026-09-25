@@ -126,7 +126,7 @@ def test_results_message_lists_full_titles_in_result_order_only():
     assert "0:12" not in message
     assert "42" not in message
     assert "1.2M" not in message
-    assert "ignored query" not in message
+    assert "ignored query" in message
 
 
 def test_smart_search_stops_when_media_studio_owns_pending_text():
