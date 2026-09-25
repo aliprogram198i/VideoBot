@@ -536,7 +536,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     try:
         bot_module.validate_public_http_url(selected.url)
     except Exception:
-        await query.edit_message_text(t("smart_search", "invalid_result", normalize_language(bot_module.get_language(user.id))))
+        await query.edit_message_text(t("smart_search", "invalid_result", language))
         return
 
     # Smart Search hands the selected URL to the canonical Smart Download
@@ -544,7 +544,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     # selection state until the handoff succeeds so a transient exception does
     # not strand the user with the previous generic "unexpected error" response.
     await query.edit_message_text(
-        f"{t('smart_search', 'selected', normalize_language(bot_module.get_language(user.id)))}\n{html.escape(selected.title[:200])}\n\n{t('smart_search', 'opening', normalize_language(bot_module.get_language(user.id)))}",
+        f"{t('smart_search', 'selected', language)}\n{html.escape(selected.title[:200])}\n\n{t('smart_search', 'opening', language)}",
         parse_mode="HTML",
     )
     try:
@@ -556,10 +556,10 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
             hashlib.sha256(selected.url.encode("utf-8")).hexdigest()[:12],
         )
         await query.edit_message_text(
-            t("smart_search", "retry_failed", normalize_language(bot_module.get_language(user.id))),
+            t("smart_search", "retry_failed", language),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(t("smart_search", "retry", normalize_language(bot_module.get_language(user.id))), callback_data=f"smart_pro_pick_{index}")],
+                [InlineKeyboardButton(t("smart_search", "retry", language), callback_data=f"smart_pro_pick_{index}")],
                 [InlineKeyboardButton(t("smart_search", "cancel", language), callback_data="smart_pro_cancel")],
             ]),
         )
