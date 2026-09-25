@@ -4259,12 +4259,12 @@ async def download_media(
             if pot_base_url:
                 command.extend([
                     "--extractor-args",
-                    "youtube:player_client=mweb,web_safari",
+                    "youtube:player_client=default,mweb",
                     "--extractor-args",
                     f"youtubepot-bgutilhttp:base_url={pot_base_url}",
                 ])
                 print(
-                    "🛡️ YouTube mweb + external PO Token Provider: configured",
+                    "🛡️ YouTube default + mweb + external PO Token Provider: configured",
                     flush=True,
                 )
             elif os.path.isfile(pot_script_path):
