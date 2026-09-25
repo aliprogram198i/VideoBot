@@ -376,7 +376,7 @@ async def _animate_result_buttons(
         while True:
             await asyncio.sleep(MARQUEE_INTERVAL_SECONDS)
             offset += 3
-            await message.edit_reply_markup(reply_markup=_results_keyboard(results, page=0, title_offset=offset))
+            await message.edit_reply_markup(reply_markup=_results_keyboard(results, page=0, title_offset=offset, language=normalize_language(context.user_data.get("smart_search_language"))))
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -470,6 +470,7 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
     if previous_task and previous_task is not current_task and not previous_task.done():
         previous_task.cancel()
     context.user_data["smart_search_task"] = current_task
+    context.user_data["smart_search_language"] = language
     query_hash = hashlib.sha256(_normalize(text).encode("utf-8")).hexdigest()[:12]
     logger.info("smart_search_started query_hash=%s", query_hash)
     status = await update.message.reply_text(t("smart_search", "searching", language))
@@ -527,14 +528,14 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         context.user_data.pop("smart_search_results", None)
         context.user_data.pop("smart_search_query", None)
         context.user_data.pop("smart_search_results_expires_at", None)
-        await query.edit_message_text("❌ انتهت صلاحية نتائج البحث. أعد البحث من جديد.")
+        await query.edit_message_text(t("smart_search", "expired", normalize_language(bot_module.get_language(user.id))))
         return
     selected = results[index]
     _telemetry("result_selected", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], index=index, page=index // PAGE_SIZE, position=(index % PAGE_SIZE) + 1, result_count=len(results))
     try:
         bot_module.validate_public_http_url(selected.url)
     except Exception:
-        await query.edit_message_text("❌ تعذر التحقق من نتيجة البحث.")
+        await query.edit_message_text(t("smart_search", "invalid_result", normalize_language(bot_module.get_language(user.id))))
         return
 
     # Smart Search hands the selected URL to the canonical Smart Download
@@ -542,7 +543,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     # selection state until the handoff succeeds so a transient exception does
     # not strand the user with the previous generic "unexpected error" response.
     await query.edit_message_text(
-        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected.title[:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
+        f"{t("smart_search", "new", normalize_language(bot_module.get_language(user.id)))}",
         parse_mode="HTML",
     )
     try:
