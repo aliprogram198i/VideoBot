@@ -38,7 +38,7 @@ def normalize_runtime_environment():
         os.getenv("YTDLP_POT_BASE_URL") is None
         and os.getenv("RAILWAY_ENVIRONMENT_NAME", "").strip().lower() == "production"
     ):
-        os.environ["YTDL_POT_PROVIDER_URL"] = "http://youtube-pot-provider.railway.internal:4416"
+        os.environ["YTDLP_POT_BASE_URL"] = "http://youtube-pot-provider.railway.internal:4416"
         print("🛡️ YouTube PO-token provider base URL: configured via Railway private network.", flush=True)
 
 
