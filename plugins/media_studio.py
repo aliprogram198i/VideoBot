@@ -18,6 +18,7 @@ from telegram.ext import (
     filters,
 )
 from delivery.policy import DeliveryPolicy
+from plugins.localization import t, language as normalize_language
 
 CACHE_DIR = Path(os.getenv("MEDIA_STUDIO_CACHE_DIR", "/app/data/media_studio"))
 CACHE_TTL_SECONDS = 6 * 60 * 60
@@ -441,7 +442,7 @@ async def _send_result(
             await context.bot.send_audio(
                 chat_id=chat_id,
                 audio=handle,
-                caption="🎵 تم تجهيز الصوت بواسطة AliBot.",
+                caption=t("studio", "done_audio", normalize_language(getattr(update.effective_user, "language_code", None))),
                 read_timeout=600,
                 write_timeout=600,
                 connect_timeout=60,
@@ -452,7 +453,7 @@ async def _send_result(
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=handle,
-                caption="🖼️ تم استخراج الصورة المصغرة من الفيديو.",
+                caption=t("studio", "done_photo", normalize_language(getattr(update.effective_user, "language_code", None))),
                 read_timeout=600,
                 write_timeout=600,
                 connect_timeout=60,
@@ -463,7 +464,7 @@ async def _send_result(
             await context.bot.send_video(
                 chat_id=chat_id,
                 video=handle,
-                caption="🎬 تم تجهيز الفيديو بواسطة AliBot.",
+                caption=t("studio", "done_video", normalize_language(getattr(update.effective_user, "language_code", None))),
                 supports_streaming=True,
                 read_timeout=600,
                 write_timeout=600,
@@ -472,18 +473,14 @@ async def _send_result(
             )
 
 
-def _status_message(action: str) -> str | None:
-    return {
-        "mp3": "🎵 جاري استخراج الصوت بصيغة MP3...",
-        "audio": "🎧 جاري تجهيز الصيغة الصوتية...",
-        "thumb": "🖼️ جاري استخراج الصورة...",
-        "trim": "✂️ جاري قص المقطع...",
-        "trimcustom": "✂️ جاري تنفيذ القص المخصص...",
-        "compress": "🗜️ جاري ضغط الفيديو...",
-        "resize": "📐 جاري تغيير المقاس...",
-        "preset": "📱 جاري تجهيز الفيديو للاستخدام المحدد...",
-        "volume": "🔊 جاري تعديل مستوى الصوت...",
-    }.get(action)
+def _status_message(action: str, language: str = "ar") -> str | None:
+    keys = {
+        "mp3": "mp3_status", "audio": "audio_status", "thumb": "thumb_status",
+        "trim": "trim_status", "trimcustom": "custom_status", "compress": "compress_status",
+        "resize": "resize_status", "preset": "preset_status", "volume": "volume_status",
+    }
+    key = keys.get(action)
+    return t("studio", key, normalize_language(language)) if key else None
 
 
 def _remember_pending(context: ContextTypes.DEFAULT_TYPE, token: str, action: str) -> None:
