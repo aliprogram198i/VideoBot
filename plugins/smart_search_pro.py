@@ -529,7 +529,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     selected = results[index]
     _telemetry("result_selected", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], index=index, page=index // PAGE_SIZE, position=(index % PAGE_SIZE) + 1, result_count=len(results))
     try:
-        bot_module.validate_public_http_url(selected["url"])
+        bot_module.validate_public_http_url(selected.url)
     except Exception:
         await query.edit_message_text("❌ تعذر التحقق من نتيجة البحث.")
         return
@@ -539,16 +539,16 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     # selection state until the handoff succeeds so a transient exception does
     # not strand the user with the previous generic "unexpected error" response.
     await query.edit_message_text(
-        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
+        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected.title[:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
         parse_mode="HTML",
     )
     try:
-        handled = await show_control_for_url(query.message, context, selected["url"], user)
+        handled = await show_control_for_url(query.message, context, selected.url, user)
     except Exception:
         logger.exception(
             "smart_search_handoff_failed index=%d url_hash=%s",
             index,
-            hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12],
+            hashlib.sha256(selected.url.encode("utf-8")).hexdigest()[:12],
         )
         await query.edit_message_text(
             "❌ تعذر فتح لوحة التحميل لهذه النتيجة حالياً.\n\n"
