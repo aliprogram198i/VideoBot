@@ -273,6 +273,14 @@ def test_media_studio_pending_input_stops_downstream_text_handlers():
         asyncio.run(studio.media_studio_text_handler(FakeUpdate(), FakeContext()))
 
 
+def test_submenu_navigation_reuses_the_same_message():
+    source = Path(studio.__file__).read_text(encoding="utf-8")
+    callback = source[source.index("async def media_studio_callback"):source.index("async def media_studio_text_handler")]
+    assert "query.message.reply_text(prompt" not in callback
+    assert "query.message.edit_reply_markup(reply_markup=builder(token))" in callback
+    assert "await query.answer(prompt)" in callback
+
+
 def test_media_studio_text_handler_has_explicit_early_routing_group():
     source = Path(studio.__file__).read_text(encoding="utf-8")
     registration = source[source.index("def register_media_studio"):]
