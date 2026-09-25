@@ -28,7 +28,7 @@ from plugins.smart_download_control import show_control_for_url
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 PICK_RE = re.compile(r"^smart_pro_pick_(\d+)$")
 NAV_RE = re.compile(r"^smart_pro_(new|cancel)$")
-PAGE_RE = re.compile(r"^smart_pro_page_(\\d+)$")
+PAGE_RE = re.compile(r"^smart_pro_page_(\d+)$")
 MAX_QUERY_LENGTH = 160
 PAGE_SIZE = 5
 MAX_SEARCH_RESULTS = 25
@@ -324,7 +324,7 @@ async def _animate_result_buttons(
         while True:
             await asyncio.sleep(MARQUEE_INTERVAL_SECONDS)
             offset += 3
-            await message.edit_reply_markup(reply_markup=_results_keyboard(results, offset))
+            await message.edit_reply_markup(reply_markup=_results_keyboard(results, page=0, title_offset=offset))
     except asyncio.CancelledError:
         raise
     except Exception:
