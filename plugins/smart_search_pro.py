@@ -28,7 +28,10 @@ from plugins.smart_download_control import show_control_for_url
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 PICK_RE = re.compile(r"^smart_pro_pick_(\d+)$")
 NAV_RE = re.compile(r"^smart_pro_(new|cancel)$")
+PAGE_RE = re.compile(r"^smart_pro_page_(\\d+)$")
 MAX_QUERY_LENGTH = 160
+PAGE_SIZE = 5
+MAX_SEARCH_RESULTS = 25
 CACHE_TTL_SECONDS = 120
 MAX_CACHE_ITEMS = 128
 LOW_SCORE_THRESHOLD = 42.0
@@ -59,14 +62,29 @@ def _tokens(value: str) -> list[str]:
     return re.findall(r"[\w\u0600-\u06ff]+", _normalize(value), flags=re.UNICODE)
 
 
+def _parse_query_intent(query: str) -> dict[str, Any]:
+    normalized = _normalize(query)
+    years = re.findall(r"\b(?:19|20)\d{2}\b", normalized)
+    groups = {
+        "official": ("رسمي", "official"), "lyrics": ("كلمات", "lyrics", "lyric"),
+        "remix": ("ريمكس", "remix"), "live": ("حفله", "حفلة", "live", "concert"),
+        "short": ("short", "shorts", "قصير"),
+    }
+    intents = [name for name, terms in groups.items() if any(_normalize(t) in normalized for t in terms)]
+    return {"years": years[:2], "intents": intents}
+
+
 def _query_variants(query: str) -> list[str]:
     original = re.sub(r"\s+", " ", query).strip()[:MAX_QUERY_LENGTH]
     normalized = _normalize(original)[:MAX_QUERY_LENGTH]
+    intent = _parse_query_intent(original)
+    core = re.sub(r"\b(?:19|20)\d{2}\b", " ", normalized)
+    core = re.sub(r"\s+", " ", core).strip()
     variants: list[str] = []
-    for value in (original, normalized):
+    for value in (original, normalized, core if intent["years"] else ""):
         if value and value not in variants:
             variants.append(value)
-    return variants[:2]
+    return variants[:3]
 
 
 def _youtube_video_id(url: str) -> str:
@@ -108,6 +126,16 @@ def _channel_score(query: str, result: SearchResult) -> float:
     return min(overlap * 12.0, 12.0)
 
 
+def _intent_score(intent: dict[str, Any], result: SearchResult) -> float:
+    title = _normalize(result.title)
+    groups = {
+        "official": ("رسمي", "official"), "lyrics": ("كلمات", "lyrics", "lyric"),
+        "remix": ("ريمكس", "remix"), "live": ("حفله", "حفلة", "live", "concert"),
+        "short": ("short", "shorts", "قصير"),
+    }
+    return sum(8.0 for name in intent.get("intents", []) if any(_normalize(t) in title for t in groups[name]))
+
+
 def _duration_sanity_score(result: SearchResult) -> float:
     if result.duration is None:
         return 0.0
@@ -118,7 +146,8 @@ def _duration_sanity_score(result: SearchResult) -> float:
     return 0.0
 
 
-def _dedupe_and_rank(query: str, candidates: list[SearchResult]) -> list[SearchResult]:
+def _dedupe_and_rank(query: str, candidates: list[SearchResult], limit: int = MAX_SEARCH_RESULTS) -> list[SearchResult]:
+    intent = _parse_query_intent(query)
     by_identity: dict[str, SearchResult] = {}
     for result in candidates:
         key = _canonical_result_key(result)
@@ -129,6 +158,7 @@ def _dedupe_and_rank(query: str, candidates: list[SearchResult]) -> list[SearchR
             max(result.score, 0.0)
             + _title_score(query, result)
             + _channel_score(query, result)
+            + _intent_score(intent, result)
             + _duration_sanity_score(result)
         )
         current = by_identity.get(key)
@@ -140,14 +170,19 @@ def _dedupe_and_rank(query: str, candidates: list[SearchResult]) -> list[SearchR
     ranked = sorted(by_identity.values(), key=lambda item: (-item.score, item.title.casefold(), item.url))
     return [
         SearchResult(i, item.title, item.url, item.channel, item.duration, item.views, item.score)
-        for i, item in enumerate(ranked[:5])
+        for i, item in enumerate(ranked[:limit])
     ]
 
 def _cache_key(query: str) -> str:
     return _normalize(query)[:MAX_QUERY_LENGTH]
 
 
-async def _cache_get(key: str) -> list[SearchResult] | None:
+def _telemetry(event: str, query_hash: str, **fields: Any) -> None:
+    safe = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.info("smart_search_telemetry event=%s query_hash=%s %s", event, query_hash, safe)
+
+
+async def _cache_get(key: str, query_hash: str) -> list[SearchResult] | None:
     now = time.monotonic()
     async with _CACHE_LOCK:
         item = _CACHE.get(key)
@@ -156,7 +191,9 @@ async def _cache_get(key: str) -> list[SearchResult] | None:
         created, results = item
         if now - created > CACHE_TTL_SECONDS:
             _CACHE.pop(key, None)
+            _telemetry("cache_expired", query_hash)
             return None
+        _telemetry("cache_hit", query_hash, result_count=len(results))
         return list(results)
 
 
@@ -242,12 +279,21 @@ def _results_message(query: str, results: list[SearchResult]) -> str:
     return "\n".join(lines)
 
 
-def _results_keyboard(results: list[SearchResult], title_offset: int = 0) -> InlineKeyboardMarkup:
-    """Render distinctive multi-line result buttons plus navigation controls."""
+def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: int = 0) -> InlineKeyboardMarkup:
+    """Render one page of results with bounded navigation."""
+    start = page * PAGE_SIZE
+    visible = results[start:start + PAGE_SIZE]
     keyboard = [
-        [InlineKeyboardButton(_button_label(index, result, title_offset), callback_data=f"smart_pro_pick_{index}")]
-        for index, result in enumerate(results)
+        [InlineKeyboardButton(_button_label(start + index, result, title_offset), callback_data=f"smart_pro_pick_{start + index}")]
+        for index, result in enumerate(visible)
     ]
+    navigation = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"smart_pro_page_{page - 1}"))
+    if start + PAGE_SIZE < len(results):
+        navigation.append(InlineKeyboardButton("➡️ المزيد", callback_data=f"smart_pro_page_{page + 1}"))
+    if navigation:
+        keyboard.append(navigation)
     keyboard.append([
         InlineKeyboardButton("🔎 بحث جديد", callback_data="smart_pro_new"),
         InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel"),
@@ -290,27 +336,36 @@ async def search_pro(query: str) -> list[SearchResult]:
     query = query.strip()[:MAX_QUERY_LENGTH]
     if not query:
         return []
+    started = time.monotonic()
+    query_hash = hashlib.sha256(_normalize(query).encode("utf-8")).hexdigest()[:12]
     key = _cache_key(query)
-    cached = await _cache_get(key)
+    cached = await _cache_get(key, query_hash)
     if cached is not None:
         return cached
 
     variants = _query_variants(query)
+    intent = _parse_query_intent(query)
+    _telemetry("started", query_hash, intents=",".join(intent["intents"]) or "none", years=",".join(intent["years"]) or "none")
     candidates: list[SearchResult] = []
     try:
         async with asyncio.timeout(SEARCH_TOTAL_TIMEOUT_SECONDS):
             first = await base_search(variants[0])
             candidates.extend(first)
-            first_ranked = _dedupe_and_rank(query, first)
-            if len(first_ranked) < 5 or (first_ranked and first_ranked[0].score < LOW_SCORE_THRESHOLD):
-                if len(variants) > 1 and variants[1] != variants[0]:
-                    second = await base_search(variants[1])
+            first_ranked = _dedupe_and_rank(query, first, MAX_SEARCH_RESULTS)
+            if len(first_ranked) < PAGE_SIZE or (first_ranked and first_ranked[0].score < LOW_SCORE_THRESHOLD):
+                for variant in variants[1:]:
+                    if variant == variants[0]:
+                        continue
+                    second = await base_search(variant)
                     candidates.extend(second)
+                    if len(_dedupe_and_rank(query, candidates, MAX_SEARCH_RESULTS)) >= MAX_SEARCH_RESULTS:
+                        break
     except TimeoutError:
         pass
 
-    results = _dedupe_and_rank(query, candidates)
+    results = _dedupe_and_rank(query, candidates, MAX_SEARCH_RESULTS)
     await _cache_put(key, results)
+    _telemetry("completed", query_hash, result_count=len(results), latency_ms=round((time.monotonic() - started) * 1000))
     return results
 
 def _is_admin_workflow(context: ContextTypes.DEFAULT_TYPE, bot_module: Any, user_id: int) -> bool:
@@ -383,11 +438,12 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
     logger.info("smart_search_completed query_hash=%s result_count=%d", query_hash, len(results))
     context.user_data["smart_search_query"] = text
     context.user_data["smart_search_results"] = [{"url": r.url, "title": r.title} for r in results]
+    context.user_data["smart_search_page"] = 0
     context.user_data["smart_search_results_expires_at"] = time.monotonic() + RESULT_STATE_TTL_SECONDS
     await status.edit_text(
         _results_message(text, results),
         parse_mode="HTML",
-        reply_markup=_results_keyboard(results),
+        reply_markup=_results_keyboard(results, page=0),
     )
     task = asyncio.create_task(_animate_result_buttons(status, results, context))
     context.user_data["smart_search_marquee_task"] = task
@@ -414,7 +470,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         await query.edit_message_text("❌ انتهت صلاحية نتائج البحث. أعد البحث من جديد.")
         return
     selected = results[index]
-    logger.info("smart_search_result_selected index=%d url_hash=%s", index, hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12])
+    _telemetry("result_selected", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], index=index, page=index // PAGE_SIZE, position=(index % PAGE_SIZE) + 1, result_count=len(results))
     try:
         bot_module.validate_public_http_url(selected["url"])
     except Exception:
@@ -458,7 +514,31 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     context.user_data.pop("smart_search_results", None)
     context.user_data.pop("smart_search_query", None)
     context.user_data.pop("smart_search_results_expires_at", None)
+    context.user_data.pop("smart_search_page", None)
     raise ApplicationHandlerStop
+
+
+async def _page_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    match = PAGE_RE.match(query.data or "")
+    if not match:
+        return
+    await _stop_marquee(context)
+    page = int(match.group(1))
+    results = context.user_data.get("smart_search_results") or []
+    expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
+    max_page = max((len(results) - 1) // PAGE_SIZE, 0)
+    if not results or time.monotonic() > expires_at or page < 0 or page > max_page:
+        await query.edit_message_text("❌ انتهت صلاحية نتائج البحث. أعد البحث من جديد.")
+        return
+    context.user_data["smart_search_page"] = page
+    await query.edit_message_text(
+        _results_message(context.user_data.get("smart_search_query", ""), results),
+        parse_mode="HTML",
+        reply_markup=_results_keyboard(results, page=page),
+    )
+    _telemetry("page_viewed", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], page=page, result_count=len(results))
 
 
 async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -471,6 +551,7 @@ async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop("smart_search_results", None)
     context.user_data.pop("smart_search_query", None)
     context.user_data.pop("smart_search_results_expires_at", None)
+    context.user_data.pop("smart_search_page", None)
 
     if query.data == "smart_pro_cancel":
         await query.edit_message_text("❌ تم إلغاء البحث الذكي.")
@@ -488,6 +569,10 @@ def register_smart_search_pro(app: Any, bot_module: Any | None = None) -> None:
     )
     app.add_handler(
         CallbackQueryHandler(lambda u, c: _pick_handler(u, c, bot_module), pattern=r"^smart_pro_pick_\d+$"),
+        group=-2,
+    )
+    app.add_handler(
+        CallbackQueryHandler(_page_handler, pattern=PAGE_RE.pattern),
         group=-2,
     )
     app.add_handler(

@@ -4,7 +4,17 @@ import pytest
 from telegram.ext import ApplicationHandlerStop
 
 from downloader.smart_search import SearchResult
-from plugins.smart_search_pro import _button_label, _format_duration, _format_views, _results_message, _title_window
+from plugins.smart_search_pro import (
+    PAGE_SIZE,
+    _button_label,
+    _format_duration,
+    _format_views,
+    _parse_query_intent,
+    _query_variants,
+    _results_keyboard,
+    _results_message,
+    _title_window,
+)
 
 
 def _result(**overrides):
@@ -116,3 +126,28 @@ def test_smart_search_stops_when_media_studio_owns_pending_text():
 
     with pytest.raises(ApplicationHandlerStop):
         asyncio.run(_search_handler(FakeUpdate(), FakeContext(), FakeBotModule()))
+
+
+def test_query_intent_parses_common_search_modifiers_without_ai():
+    intent = _parse_query_intent("محمد عبده حفلة live 2024")
+    assert "live" in intent["intents"]
+    assert intent["years"] == ["2024"]
+
+
+def test_query_variants_adds_year_free_recall_variant():
+    variants = _query_variants("محمد عبده 2024")
+    assert variants[0] == "محمد عبده 2024"
+    assert "محمد عبده" in variants
+
+
+def test_results_keyboard_paginates_five_results_per_page():
+    results = [_result(title=f"Result {i}", index=i) for i in range(12)]
+    first = _results_keyboard(results, page=0)
+    second = _results_keyboard(results, page=1)
+    third = _results_keyboard(results, page=2)
+    assert len(first.inline_keyboard) == PAGE_SIZE + 2
+    assert len(second.inline_keyboard) == PAGE_SIZE + 2
+    assert len(third.inline_keyboard) == 4
+    assert first.inline_keyboard[-2][0].callback_data == "smart_pro_page_1"
+    assert second.inline_keyboard[-2][0].callback_data == "smart_pro_page_0"
+    assert second.inline_keyboard[-2][1].callback_data == "smart_pro_page_2"
