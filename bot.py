@@ -4259,7 +4259,7 @@ async def download_media(
             if pot_base_url:
                 command.extend([
                     "--extractor-args",
-                    "youtube:player_client=mweb",
+                    "youtube:player_client=mweb,web_safari",
                     "--extractor-args",
                     f"youtubepot-bgutilhttp:base_url={pot_base_url}",
                 ])
