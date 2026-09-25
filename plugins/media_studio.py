@@ -566,7 +566,11 @@ async def media_studio_callback(
             "volume": (_keyboard_volume, "🔊 اختر مستوى الصوت:"),
         }
         builder, prompt = keyboards[action]
-        await query.message.reply_text(prompt, reply_markup=builder(token))
+        # Submenus must replace the Studio keyboard on the same message.
+        # Sending a new reply would leave the main Studio buttons underneath
+        # and cause the keyboards to stack when the user presses Back.
+        await query.answer(prompt)
+        await query.message.edit_reply_markup(reply_markup=builder(token))
         return
 
     if action == "trimcustom" and value is None:
