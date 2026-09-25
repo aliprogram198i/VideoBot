@@ -2000,14 +2000,68 @@ async def show_main_menu(
     query,
     language
 ):
+    """Show the download qualities directly from the received-link panel.
+
+    Smart Studio's post-download resize controls remain separate. These
+    callbacks select the source download quality and enter the normal
+    download pipeline directly.
+    """
 
     keyboard = InlineKeyboardMarkup([
 
         [
             InlineKeyboardButton(
-                TEXTS[language]["video_type"],
-                callback_data="video_menu"
-            )
+                TEXTS[language]["best"],
+                callback_data="video_best"
+            ),
+            InlineKeyboardButton(
+                TEXTS[language]["free_1080"],
+                callback_data="video_1080"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                TEXTS[language]["free_720"],
+                callback_data="video_720"
+            ),
+            InlineKeyboardButton(
+                TEXTS[language]["free_480"],
+                callback_data="video_480"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                TEXTS[language]["free_360"],
+                callback_data="video_360"
+            ),
+            InlineKeyboardButton(
+                TEXTS[language]["audio_best"],
+                callback_data="audio_best"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                TEXTS[language]["quality_320"],
+                callback_data="audio_320"
+            ),
+            InlineKeyboardButton(
+                TEXTS[language]["quality_256"],
+                callback_data="audio_256"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                TEXTS[language]["quality_192"],
+                callback_data="audio_192"
+            ),
+            InlineKeyboardButton(
+                TEXTS[language]["quality_128"],
+                callback_data="audio_128"
+            ),
         ],
 
         [
@@ -2017,17 +2071,10 @@ async def show_main_menu(
             )
         ],
 
-        [
-            InlineKeyboardButton(
-                TEXTS[language]["audio_type"],
-                callback_data="audio_menu"
-            )
-        ],
-
     ])
 
     await query.edit_message_text(
-        TEXTS[language]["received"],
+        TEXTS[language]["video_quality"],
         reply_markup=keyboard
     )
 
