@@ -27,7 +27,8 @@ _CARD_TEXTS = {
         "source": "المصدر",
         "uploader": "الناشر",
         "views": "المشاهدات",
-        "quality": "الدقة المتاحة",
+        "dimensions": "الأبعاد الأصلية",
+        "quality": "أعلى جودة قابلة للتحميل",
         "status": "الحالة",
         "partial": "تم جلب الرابط، لكن بعض المعلومات غير متاحة.",
         "ready": "الرابط جاهز للتحميل.",
@@ -55,7 +56,8 @@ _CARD_TEXTS = {
         "source": "Source",
         "uploader": "Uploader",
         "views": "Views",
-        "quality": "Available resolution",
+        "dimensions": "Original dimensions",
+        "quality": "Highest downloadable quality",
         "status": "Status",
         "partial": "The link was detected, but some information is unavailable.",
         "ready": "The link is ready to download.",
@@ -83,7 +85,8 @@ _CARD_TEXTS = {
         "source": "Kaynak",
         "uploader": "Yayıncı",
         "views": "Görüntülenme",
-        "quality": "Mevcut çözünürlük",
+        "dimensions": "Orijinal boyutlar",
+        "quality": "En yüksek indirilebilir kalite",
         "status": "Durum",
         "partial": "Bağlantı algılandı, ancak bazı bilgiler alınamadı.",
         "ready": "Bağlantı indirmeye hazır.",
@@ -111,7 +114,8 @@ _CARD_TEXTS = {
         "source": "Quelle",
         "uploader": "Uploader",
         "views": "Aufrufe",
-        "quality": "Verfügbare Auflösung",
+        "dimensions": "Originalabmessungen",
+        "quality": "Höchste herunterladbare Qualität",
         "status": "Status",
         "partial": "Der Link wurde erkannt, aber einige Informationen sind nicht verfügbar.",
         "ready": "Der Link ist zum Download bereit.",
@@ -209,7 +213,7 @@ def _views(value, language: str = "ar") -> str:
     return str(views)
 
 
-def _quality(data: dict, language: str = "ar") -> str:
+def _dimensions(data: dict, language: str = "ar") -> str:
     labels = _labels(language)
     height = data.get("height")
     width = data.get("width")
@@ -218,11 +222,39 @@ def _quality(data: dict, language: str = "ar") -> str:
         width = int(width) if width is not None else None
     except (TypeError, ValueError):
         height = width = None
-    if height and width:
-        return f"{width}×{height}p"
-    if height:
-        return f"{height}p"
+    if width and height:
+        return f"{width}×{height}"
     return labels["unavailable"]
+
+
+def _downloadable_quality(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    formats = data.get("formats")
+    if not isinstance(formats, list):
+        return labels["unavailable"]
+
+    candidates = []
+    for item in formats:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("url"):
+            continue
+        vcodec = str(item.get("vcodec") or "none").lower()
+        if vcodec == "none":
+            continue
+        try:
+            width = int(item["width"]) if item.get("width") is not None else None
+            height = int(item["height"]) if item.get("height") is not None else None
+        except (TypeError, ValueError):
+            continue
+        if width and height:
+            candidates.append((width, height))
+
+    if not candidates:
+        return labels["unavailable"]
+
+    width, height = max(candidates, key=lambda item: (item[0] * item[1], item[1], item[0]))
+    return f"{width}×{height}"
 
 
 def _text(data: dict, language: str = "ar") -> str:
@@ -232,7 +264,8 @@ def _text(data: dict, language: str = "ar") -> str:
     duration = html.escape(_duration(data.get("duration"), language))
     uploader = html.escape(str(data.get("uploader") or labels["unknown"]))
     views = html.escape(_views(data.get("view_count"), language))
-    quality = html.escape(_quality(data, language))
+    dimensions = html.escape(_dimensions(data, language))
+    quality = html.escape(_downloadable_quality(data, language))
     status = labels["partial"] if data.get("probe_error") else labels["ready"]
     return (
         f"{labels['title']}\n"
@@ -242,7 +275,8 @@ def _text(data: dict, language: str = "ar") -> str:
         f"🌐 {labels['source']}: {source}\n"
         f"👤 {labels['uploader']}: {uploader}\n"
         f"👁 {labels['views']}: {views}\n"
-        f"📐 {labels['quality']}: {quality}\n\n"
+        f"📐 {labels['dimensions']}: {dimensions}\n"
+        f"🎚 {labels['quality']}: {quality}\n\n"
         f"ℹ️ {html.escape(status)}\n\n"
         f"{labels['choose']}\n"
     )
@@ -291,6 +325,7 @@ async def _probe(url: str) -> dict:
         "view_count": data.get("view_count"),
         "width": data.get("width"),
         "height": data.get("height"),
+        "formats": data.get("formats") if isinstance(data.get("formats"), list) else [],
     }
 
 
@@ -330,6 +365,7 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
         "view_count": None,
         "width": None,
         "height": None,
+        "formats": [],
     }
     status_message = await message.reply_text(
         _labels(language)["analyzing"],
