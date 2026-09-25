@@ -5,6 +5,7 @@ from telegram.ext import ApplicationHandlerStop
 
 from downloader.smart_search import SearchResult
 from plugins.smart_search_pro import (
+    PAGE_RE,
     PAGE_SIZE,
     _button_label,
     _format_duration,
