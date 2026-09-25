@@ -8222,7 +8222,6 @@ def main():
     # Must run before the legacy generic text handler.
     # ========================================================
 
-    register_smart_search_pro(app, sys.modules[__name__])
 
     # ========================================================
     # رسائل باقي المستخدمين
