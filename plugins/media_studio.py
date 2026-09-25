@@ -455,7 +455,7 @@ async def _send_result(
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=handle,
-                caption=t("studio", "done_photo", normalize_language(getattr(update.effective_user, "language_code", None))),
+                caption=t("studio", "done_photo", language),
                 read_timeout=600,
                 write_timeout=600,
                 connect_timeout=60,
@@ -466,7 +466,7 @@ async def _send_result(
             await context.bot.send_video(
                 chat_id=chat_id,
                 video=handle,
-                caption=t("studio", "done_video", normalize_language(getattr(update.effective_user, "language_code", None))),
+                caption=t("studio", "done_video", language),
                 supports_streaming=True,
                 read_timeout=600,
                 write_timeout=600,
@@ -505,6 +505,8 @@ async def _run_action(
     if not user or not message:
         return
 
+    bot_module = __import__("bot")
+    language = normalize_language(bot_module.get_language(user.id))
     source = _cached_path(user.id, token)
     if source is None:
         await message.reply_text(
@@ -512,8 +514,6 @@ async def _run_action(
         )
         return
 
-    bot_module = __import__("bot")
-    language = normalize_language(bot_module.get_language(user.id))
     status = _status_message(action, language)
     if not status:
         return
