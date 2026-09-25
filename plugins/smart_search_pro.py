@@ -521,6 +521,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     if not match:
         return
     await _stop_marquee(context)
+    language = normalize_language(context.user_data.get("smart_search_language"))
     expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
     results = _results_from_state(context.user_data.get("smart_search_results") or [])
     index = int(match.group(1))
@@ -528,7 +529,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         context.user_data.pop("smart_search_results", None)
         context.user_data.pop("smart_search_query", None)
         context.user_data.pop("smart_search_results_expires_at", None)
-        await query.edit_message_text(t("smart_search", "expired", normalize_language(bot_module.get_language(user.id))))
+        await query.edit_message_text(t("smart_search", "expired", language))
         return
     selected = results[index]
     _telemetry("result_selected", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], index=index, page=index // PAGE_SIZE, position=(index % PAGE_SIZE) + 1, result_count=len(results))
@@ -559,7 +560,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(t("smart_search", "retry", normalize_language(bot_module.get_language(user.id))), callback_data=f"smart_pro_pick_{index}")],
-                [InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel")],
+                [InlineKeyboardButton(t("smart_search", "cancel", language), callback_data="smart_pro_cancel")],
             ]),
         )
         return
