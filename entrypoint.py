@@ -21,13 +21,25 @@ LOCK_RETRY_SECONDS = 1
 
 
 def normalize_runtime_environment():
-    """Normalize deployment-provided secrets before importing the bot module."""
+    """Normalize deployment-provided secrets and runtime provider endpoints."""
     token = os.getenv("BOT_TOKEN")
     if token is not None:
         normalized = token.replace("\r", "").replace("\n", "").replace("\t", "").strip()
         if normalized != token:
             os.environ["BOT_TOKEN"] = normalized
             print("🧹 Runtime environment: normalized BOT_TOKEN control characters.", flush=True)
+
+    # Production has a dedicated bgutil PO-token provider on Railway's private
+    # network. The plugin is installed in the image, but it cannot use the
+    # provider unless its base URL is explicitly configured. Keep an explicit
+    # operator-provided value authoritative; only supply the known production
+    # default when the variable is absent.
+    if (
+        os.getenv("YTDL_POT_PROVIDER_URL") is None
+        and os.getenv("RAILWAY_ENVIRONMENT_NAME", "").strip().lower() == "production"
+    ):
+        os.environ["YTDL_POT_PROVIDER_URL"] = "http://youtube-pot-provider.railway.internal:4416"
+        print("🛡️ YouTube PO-token provider: configured via Railway private network.", flush=True)
 
 
 def acquire_single_instance_lock():
