@@ -8447,7 +8447,7 @@ def main():
     app.add_handler(
         CallbackQueryHandler(
             download_media,
-            pattern=r"^(video_|audio_|main_menu|post_download|retry_download)$"
+            pattern=r"^(video_menu|audio_menu|video_|audio_|main_menu|post_download|retry_download)$"
         )
     )
 
