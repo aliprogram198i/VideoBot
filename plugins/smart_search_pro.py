@@ -564,7 +564,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         logger.warning(
             "smart_search_handoff_not_handled index=%d url_hash=%s",
             index,
-            hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12],
+            hashlib.sha256(selected.url.encode("utf-8")).hexdigest()[:12],
         )
         return
 
