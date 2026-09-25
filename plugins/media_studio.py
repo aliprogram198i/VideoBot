@@ -173,7 +173,7 @@ def _keyboard_presets(token: str, language: str = "ar") -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("✈️ Telegram", callback_data=f"studio:preset:{token}:telegram"),
             ],
-            [InlineKeyboardButton("🔙 رجوع", callback_data=f"studio:back:{token}")],
+            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back:{token}")],
         ]
     )
 
@@ -609,6 +609,7 @@ async def media_studio_text_handler(
 
     token = pending.get("token")
     action = pending.get("action")
+    bot_module = __import__("bot")
     if not token or action != "trimcustom":
         _clear_pending(context)
         raise ApplicationHandlerStop
