@@ -2972,8 +2972,13 @@ async def download_with_yoinku(
                 retry_after = None
 
             diagnostics["retry_after"] = retry_after
-            diagnostics["error_message"] = (
-                sanitize_error_for_storage(str(exc))
+            diagnostics["error_message"] = sanitize_error_for_storage(
+                error_detail or str(exc)
+            )
+
+            logger.warning(
+                "Yoinku HTTP failure detail: %s",
+                diagnostics["error_message"],
             )
 
             logger.warning(
