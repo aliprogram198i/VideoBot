@@ -270,30 +270,79 @@ def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> st
     return f"{prefix}{visible_title}{suffix}"
 
 
-def _results_message(query: str, results: list[SearchResult]) -> str:
-    """Render the complete ordered title list; no result metadata is duplicated here."""
-    lines = ["🔎 <b>البحث الذكي</b>"]
-    for index, result in enumerate(results, start=1):
+def _results_message(query: str, results: list[SearchResult], page: int = 0) -> str:
+    """Render only the visible page so navigation has immediate visual feedback."""
+    total = len(results)
+    total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
+    page = max(0, min(page, total_pages - 1))
+    start = page * PAGE_SIZE
+    visible = results[start:start + PAGE_SIZE]
+    end = start + len(visible)
+
+    lines = [
+        "🔎 <b>البحث الذكي</b>",
+        f"🔤 <b>{html.escape(_clean_title(query))}</b>",
+        f"📄 النتائج {start + 1}–{end} من {total}  •  الصفحة {page + 1}/{total_pages}",
+        "",
+    ]
+    for index, result in enumerate(visible, start=start + 1):
         title = html.escape(_clean_title(result.title))
         lines.append(f"{index}. {title}")
     return "\n".join(lines)
 
 
+def _results_from_state(items: list[Any]) -> list[SearchResult]:
+    """Normalize persisted callback state back to the canonical SearchResult model."""
+    normalized: list[SearchResult] = []
+    for index, item in enumerate(items):
+        if isinstance(item, SearchResult):
+            normalized.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            SearchResult(
+                index=index,
+                title=str(item.get("title") or "").strip(),
+                url=str(item.get("url") or "").strip(),
+                channel=str(item.get("channel") or "").strip(),
+                duration=item.get("duration"),
+                views=item.get("views"),
+                score=float(item.get("score") or 0.0),
+            )
+        )
+    return [item for item in normalized if item.title and item.url]
+
+
 def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: int = 0) -> InlineKeyboardMarkup:
-    """Render one page of results with bounded navigation."""
+    """Render a stable, bounded result page with explicit navigation."""
+    total_pages = max((len(results) + PAGE_SIZE - 1) // PAGE_SIZE, 1)
+    page = max(0, min(page, total_pages - 1))
     start = page * PAGE_SIZE
     visible = results[start:start + PAGE_SIZE]
+
     keyboard = [
-        [InlineKeyboardButton(_button_label(start + index, result, title_offset), callback_data=f"smart_pro_pick_{start + index}")]
+        [
+            InlineKeyboardButton(
+                _button_label(start + index, result, title_offset),
+                callback_data=f"smart_pro_pick_{start + index}",
+            )
+        ]
         for index, result in enumerate(visible)
     ]
+
     navigation = []
     if page > 0:
-        navigation.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"smart_pro_page_{page - 1}"))
+        navigation.append(
+            InlineKeyboardButton("⬅️ السابق", callback_data=f"smart_pro_page_{page - 1}")
+        )
     if start + PAGE_SIZE < len(results):
-        navigation.append(InlineKeyboardButton("➡️ المزيد", callback_data=f"smart_pro_page_{page + 1}"))
+        navigation.append(
+            InlineKeyboardButton("➡️ المزيد", callback_data=f"smart_pro_page_{page + 1}")
+        )
     if navigation:
         keyboard.append(navigation)
+
     keyboard.append([
         InlineKeyboardButton("🔎 بحث جديد", callback_data="smart_pro_new"),
         InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel"),
@@ -437,16 +486,24 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
 
     logger.info("smart_search_completed query_hash=%s result_count=%d", query_hash, len(results))
     context.user_data["smart_search_query"] = text
-    context.user_data["smart_search_results"] = [{"url": r.url, "title": r.title} for r in results]
+    context.user_data["smart_search_results"] = [
+        {
+            "url": r.url,
+            "title": r.title,
+            "channel": r.channel,
+            "duration": r.duration,
+            "views": r.views,
+            "score": r.score,
+        }
+        for r in results
+    ]
     context.user_data["smart_search_page"] = 0
     context.user_data["smart_search_results_expires_at"] = time.monotonic() + RESULT_STATE_TTL_SECONDS
     await status.edit_text(
-        _results_message(text, results),
+        _results_message(text, results, page=0),
         parse_mode="HTML",
         reply_markup=_results_keyboard(results, page=0),
     )
-    task = asyncio.create_task(_animate_result_buttons(status, results, context))
-    context.user_data["smart_search_marquee_task"] = task
     raise ApplicationHandlerStop
 
 
@@ -461,7 +518,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         return
     await _stop_marquee(context)
     expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
-    results = context.user_data.get("smart_search_results") or []
+    results = _results_from_state(context.user_data.get("smart_search_results") or [])
     index = int(match.group(1))
     if not results or time.monotonic() > expires_at or index < 0 or index >= len(results):
         context.user_data.pop("smart_search_results", None)
@@ -472,7 +529,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     selected = results[index]
     _telemetry("result_selected", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], index=index, page=index // PAGE_SIZE, position=(index % PAGE_SIZE) + 1, result_count=len(results))
     try:
-        bot_module.validate_public_http_url(selected["url"])
+        bot_module.validate_public_http_url(selected.url)
     except Exception:
         await query.edit_message_text("❌ تعذر التحقق من نتيجة البحث.")
         return
@@ -482,16 +539,16 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     # selection state until the handoff succeeds so a transient exception does
     # not strand the user with the previous generic "unexpected error" response.
     await query.edit_message_text(
-        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected['title'][:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
+        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected.title[:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
         parse_mode="HTML",
     )
     try:
-        handled = await show_control_for_url(query.message, context, selected["url"], user)
+        handled = await show_control_for_url(query.message, context, selected.url, user)
     except Exception:
         logger.exception(
             "smart_search_handoff_failed index=%d url_hash=%s",
             index,
-            hashlib.sha256(selected["url"].encode("utf-8")).hexdigest()[:12],
+            hashlib.sha256(selected.url.encode("utf-8")).hexdigest()[:12],
         )
         await query.edit_message_text(
             "❌ تعذر فتح لوحة التحميل لهذه النتيجة حالياً.\n\n"
@@ -526,7 +583,7 @@ async def _page_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     await _stop_marquee(context)
     page = int(match.group(1))
-    results = context.user_data.get("smart_search_results") or []
+    results = _results_from_state(context.user_data.get("smart_search_results") or [])
     expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
     max_page = max((len(results) - 1) // PAGE_SIZE, 0)
     if not results or time.monotonic() > expires_at or page < 0 or page > max_page:
@@ -534,7 +591,7 @@ async def _page_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     context.user_data["smart_search_page"] = page
     await query.edit_message_text(
-        _results_message(context.user_data.get("smart_search_query", ""), results),
+        _results_message(context.user_data.get("smart_search_query", ""), results, page=page),
         parse_mode="HTML",
         reply_markup=_results_keyboard(results, page=page),
     )

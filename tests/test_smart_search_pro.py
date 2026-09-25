@@ -14,6 +14,7 @@ from plugins.smart_search_pro import (
     _query_variants,
     _results_keyboard,
     _results_message,
+    _results_from_state,
     _title_window,
 )
 
@@ -84,6 +85,34 @@ def test_marquee_button_changes_visible_title_but_keeps_metadata():
         assert len(label) <= 64
 
 
+def test_results_state_round_trips_dict_metadata():
+    stored = [{
+        "url": "https://youtube.com/watch?v=abc123456",
+        "title": "Stored Result",
+        "channel": "Channel",
+        "duration": 120,
+        "views": 5000,
+        "score": 12.5,
+    }]
+    results = _results_from_state(stored)
+    assert len(results) == 1
+    assert results[0].title == "Stored Result"
+    assert results[0].channel == "Channel"
+    assert results[0].duration == 120
+    assert results[0].views == 5000
+
+
+def test_page_render_shows_only_visible_results_and_page_indicator():
+    results = [_result(title=f"Result {i}", index=i) for i in range(12)]
+    message = _results_message("test query", results, page=1)
+    assert "النتائج 6–10 من 12" in message
+    assert "الصفحة 2/3" in message
+    assert "6. Result 5" in message
+    assert "10. Result 9" in message
+    assert "1. Result 0" not in message
+    assert "11. Result 10" not in message
+
+
 def test_results_message_lists_full_titles_in_result_order_only():
     results = [
         _result(title="First full result title"),
@@ -97,7 +126,7 @@ def test_results_message_lists_full_titles_in_result_order_only():
     assert "0:12" not in message
     assert "42" not in message
     assert "1.2M" not in message
-    assert "ignored query" not in message
+    assert "ignored query" in message
 
 
 def test_smart_search_stops_when_media_studio_owns_pending_text():
