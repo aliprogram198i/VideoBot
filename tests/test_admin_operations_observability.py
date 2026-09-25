@@ -87,3 +87,20 @@ def test_storage_monitor_is_read_only():
     rows = _storage_data()
     assert rows
     assert all("free" in row and "total" in row for row in rows)
+
+
+def test_admin_navigation_uses_unified_monitoring_path():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    command_center = (root / "plugins" / "admin_control_center.py").read_text(encoding="utf-8")
+    operations = (root / "plugins" / "admin_operations_center.py").read_text(encoding="utf-8")
+    monitoring = (root / "plugins" / "admin_monitoring_center.py").read_text(encoding="utf-8")
+
+    assert 'callback_data="admin_monitoring"' in command_center
+    assert 'callback_data="admin_incidents"' not in command_center
+    assert 'callback_data="admin_resolver_monitor"' not in command_center
+    assert 'callback_data="admin_alerts"' not in command_center
+    assert 'callback_data="admin_monitoring"' in operations
+    assert 'callback_data="admin_ops_resolvers"' in monitoring
+    assert 'callback_data="admin_ops_timeline"' in monitoring
