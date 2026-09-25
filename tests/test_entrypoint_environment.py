@@ -6,7 +6,7 @@ from entrypoint import normalize_runtime_environment
 
 
 def test_production_configures_default_pot_provider(monkeypatch):
-    monkeypatch.delenv("YTDL_POT_PROVIDER_URL", raising=False)
+    monkeypatch.delenv("YTDLP_POT_BASE_URL", raising=False)
     monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
 
     normalize_runtime_environment()
