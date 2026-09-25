@@ -433,6 +433,8 @@ async def _send_result(
     media_type: str,
 ) -> None:
     chat_id = update.effective_chat.id
+    bot_module = __import__("bot")
+    language = normalize_language(bot_module.get_language(update.effective_user.id) if update.effective_user else None)
     delivery_policy.validate_telegram_upload(
         output,
         media_type={"photo": "image"}.get(media_type, media_type),
@@ -442,7 +444,7 @@ async def _send_result(
             await context.bot.send_audio(
                 chat_id=chat_id,
                 audio=handle,
-                caption=t("studio", "done_audio", normalize_language(getattr(update.effective_user, "language_code", None))),
+                caption=t("studio", "done_audio", language),
                 read_timeout=600,
                 write_timeout=600,
                 connect_timeout=60,
@@ -506,12 +508,13 @@ async def _run_action(
     source = _cached_path(user.id, token)
     if source is None:
         await message.reply_text(
-            "⚠️ انتهت صلاحية نسخة الاستوديو لهذا الفيديو.\n"
-            "أعد تحميل الفيديو ثم استخدم أدوات الاستوديو."
+            t("studio", "expired", language)
         )
         return
 
-    status = _status_message(action)
+    bot_module = __import__("bot")
+    language = normalize_language(bot_module.get_language(user.id))
+    status = _status_message(action, language)
     if not status:
         return
 
@@ -524,8 +527,7 @@ async def _run_action(
     except (RuntimeError, ValueError, OSError) as exc:
         print(f"⚠️ Media Studio failed: {type(exc).__name__}: {exc}")
         await message.reply_text(
-            "❌ تعذر تنفيذ العملية على هذا الفيديو.\n"
-            "جرّب إعدادًا آخر أو فيديو أقصر."
+            t("studio", "failed", language)
         )
     finally:
         if output is not None:
