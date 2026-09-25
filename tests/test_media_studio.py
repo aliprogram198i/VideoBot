@@ -277,7 +277,7 @@ def test_submenu_navigation_reuses_the_same_message():
     source = Path(studio.__file__).read_text(encoding="utf-8")
     callback = source[source.index("async def media_studio_callback"):source.index("async def media_studio_text_handler")]
     assert "query.message.reply_text(prompt" not in callback
-    assert "query.message.edit_reply_markup(reply_markup=builder(token))" in callback
+    assert "query.message.edit_reply_markup(reply_markup=builder(token, language))" in callback
     assert "await query.answer(prompt)" in callback
 
 

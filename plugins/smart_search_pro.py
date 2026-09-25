@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 from downloader.smart_search import SearchResult, search as base_search
 from plugins.smart_download_control import show_control_for_url
+from plugins.localization import t, language as normalize_language
 
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 PICK_RE = re.compile(r"^smart_pro_pick_(\d+)$")
@@ -270,7 +271,7 @@ def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> st
     return f"{prefix}{visible_title}{suffix}"
 
 
-def _results_message(query: str, results: list[SearchResult], page: int = 0) -> str:
+def _results_message(query: str, results: list[SearchResult], page: int = 0, language: str = "ar") -> str:
     """Render only the visible page so navigation has immediate visual feedback."""
     total = len(results)
     total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
@@ -279,10 +280,11 @@ def _results_message(query: str, results: list[SearchResult], page: int = 0) -> 
     visible = results[start:start + PAGE_SIZE]
     end = start + len(visible)
 
+    language = normalize_language(language)
     lines = [
-        "🔎 <b>البحث الذكي</b>",
+        t("smart_search", "title", language),
         f"🔤 <b>{html.escape(_clean_title(query))}</b>",
-        f"📄 النتائج {start + 1}–{end} من {total}  •  الصفحة {page + 1}/{total_pages}",
+        t("smart_search", "page", language, start=start + 1, end=end, total=total, page=page + 1, pages=total_pages),
         "",
     ]
     for index, result in enumerate(visible, start=start + 1):
@@ -314,8 +316,9 @@ def _results_from_state(items: list[Any]) -> list[SearchResult]:
     return [item for item in normalized if item.title and item.url]
 
 
-def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: int = 0) -> InlineKeyboardMarkup:
+def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: int = 0, language: str = "ar") -> InlineKeyboardMarkup:
     """Render a stable, bounded result page with explicit navigation."""
+    language = normalize_language(language)
     total_pages = max((len(results) + PAGE_SIZE - 1) // PAGE_SIZE, 1)
     page = max(0, min(page, total_pages - 1))
     start = page * PAGE_SIZE
@@ -334,18 +337,18 @@ def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: 
     navigation = []
     if page > 0:
         navigation.append(
-            InlineKeyboardButton("⬅️ السابق", callback_data=f"smart_pro_page_{page - 1}")
+            InlineKeyboardButton(t("smart_search", "previous", language), callback_data=f"smart_pro_page_{page - 1}")
         )
     if start + PAGE_SIZE < len(results):
         navigation.append(
-            InlineKeyboardButton("➡️ المزيد", callback_data=f"smart_pro_page_{page + 1}")
+            InlineKeyboardButton(t("smart_search", "more", language), callback_data=f"smart_pro_page_{page + 1}")
         )
     if navigation:
         keyboard.append(navigation)
 
     keyboard.append([
-        InlineKeyboardButton("🔎 بحث جديد", callback_data="smart_pro_new"),
-        InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel"),
+        InlineKeyboardButton(t("smart_search", "new", language), callback_data="smart_pro_new"),
+        InlineKeyboardButton(t("smart_search", "cancel", language), callback_data="smart_pro_cancel"),
     ])
     return InlineKeyboardMarkup(keyboard)
 
@@ -373,7 +376,7 @@ async def _animate_result_buttons(
         while True:
             await asyncio.sleep(MARQUEE_INTERVAL_SECONDS)
             offset += 3
-            await message.edit_reply_markup(reply_markup=_results_keyboard(results, page=0, title_offset=offset))
+            await message.edit_reply_markup(reply_markup=_results_keyboard(results, page=0, title_offset=offset, language=normalize_language(context.user_data.get("smart_search_language"))))
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -458,7 +461,7 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         await update.message.reply_text(bot_module.TEXTS["ar"]["choose_language"], reply_markup=bot_module.language_keyboard())
         raise ApplicationHandlerStop
     if len(text) < 2 or len(text) > MAX_QUERY_LENGTH:
-        await update.message.reply_text("❌ اكتب عبارة بحث بين حرفين و160 حرفًا.")
+        await update.message.reply_text(t("smart_search", "invalid", language))
         raise ApplicationHandlerStop
 
     await _stop_marquee(context)
@@ -467,9 +470,10 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
     if previous_task and previous_task is not current_task and not previous_task.done():
         previous_task.cancel()
     context.user_data["smart_search_task"] = current_task
+    context.user_data["smart_search_language"] = language
     query_hash = hashlib.sha256(_normalize(text).encode("utf-8")).hexdigest()[:12]
     logger.info("smart_search_started query_hash=%s", query_hash)
-    status = await update.message.reply_text("🔎 جاري البحث الذكي الاحترافي...\n\n⚙️ يتم تحليل وترتيب النتائج خوارزميًا.")
+    status = await update.message.reply_text(t("smart_search", "searching", language))
     try:
         results = await search_pro(text)
     except asyncio.CancelledError:
@@ -479,7 +483,7 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         results = []
     if not results:
         logger.info("smart_search_completed query_hash=%s result_count=0", query_hash)
-        await status.edit_text("❌ لم أجد نتائج مناسبة. جرّب كلمات بحث مختلفة.")
+        await status.edit_text(t("smart_search", "empty", language))
         if context.user_data.get("smart_search_task") is current_task:
             context.user_data.pop("smart_search_task", None)
         raise ApplicationHandlerStop
@@ -500,9 +504,9 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
     context.user_data["smart_search_page"] = 0
     context.user_data["smart_search_results_expires_at"] = time.monotonic() + RESULT_STATE_TTL_SECONDS
     await status.edit_text(
-        _results_message(text, results, page=0),
+        _results_message(text, results, page=0, language=language),
         parse_mode="HTML",
-        reply_markup=_results_keyboard(results, page=0),
+        reply_markup=_results_keyboard(results, page=0, language=language),
     )
     raise ApplicationHandlerStop
 
@@ -517,6 +521,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     if not match:
         return
     await _stop_marquee(context)
+    language = normalize_language(context.user_data.get("smart_search_language"))
     expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
     results = _results_from_state(context.user_data.get("smart_search_results") or [])
     index = int(match.group(1))
@@ -524,14 +529,14 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         context.user_data.pop("smart_search_results", None)
         context.user_data.pop("smart_search_query", None)
         context.user_data.pop("smart_search_results_expires_at", None)
-        await query.edit_message_text("❌ انتهت صلاحية نتائج البحث. أعد البحث من جديد.")
+        await query.edit_message_text(t("smart_search", "expired", language))
         return
     selected = results[index]
     _telemetry("result_selected", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], index=index, page=index // PAGE_SIZE, position=(index % PAGE_SIZE) + 1, result_count=len(results))
     try:
         bot_module.validate_public_http_url(selected.url)
     except Exception:
-        await query.edit_message_text("❌ تعذر التحقق من نتيجة البحث.")
+        await query.edit_message_text(t("smart_search", "invalid_result", language))
         return
 
     # Smart Search hands the selected URL to the canonical Smart Download
@@ -539,7 +544,7 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
     # selection state until the handoff succeeds so a transient exception does
     # not strand the user with the previous generic "unexpected error" response.
     await query.edit_message_text(
-        f"🎯 <b>تم اختيار:</b>\n{html.escape(selected.title[:200])}\n\n🎛️ جاري فتح لوحة التحكم...",
+        f"{t('smart_search', 'selected', language)}\n{html.escape(selected.title[:200])}\n\n{t('smart_search', 'opening', language)}",
         parse_mode="HTML",
     )
     try:
@@ -551,12 +556,11 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
             hashlib.sha256(selected.url.encode("utf-8")).hexdigest()[:12],
         )
         await query.edit_message_text(
-            "❌ تعذر فتح لوحة التحميل لهذه النتيجة حالياً.\n\n"
-            "يمكنك الضغط على النتيجة مرة أخرى للمحاولة.",
+            t("smart_search", "retry_failed", language),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 إعادة المحاولة", callback_data=f"smart_pro_pick_{index}")],
-                [InlineKeyboardButton("❌ إلغاء", callback_data="smart_pro_cancel")],
+                [InlineKeyboardButton(t("smart_search", "retry", language), callback_data=f"smart_pro_pick_{index}")],
+                [InlineKeyboardButton(t("smart_search", "cancel", language), callback_data="smart_pro_cancel")],
             ]),
         )
         return
@@ -587,13 +591,13 @@ async def _page_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     expires_at = float(context.user_data.get("smart_search_results_expires_at") or 0.0)
     max_page = max((len(results) - 1) // PAGE_SIZE, 0)
     if not results or time.monotonic() > expires_at or page < 0 or page > max_page:
-        await query.edit_message_text("❌ انتهت صلاحية نتائج البحث. أعد البحث من جديد.")
+        await query.edit_message_text(t("smart_search", "expired", normalize_language(context.user_data.get("smart_search_language"))))
         return
     context.user_data["smart_search_page"] = page
     await query.edit_message_text(
-        _results_message(context.user_data.get("smart_search_query", ""), results, page=page),
+        _results_message(context.user_data.get("smart_search_query", ""), results, page=page, language=normalize_language(context.user_data.get("smart_search_language"))),
         parse_mode="HTML",
-        reply_markup=_results_keyboard(results, page=page),
+        reply_markup=_results_keyboard(results, page=page, language=normalize_language(context.user_data.get("smart_search_language"))),
     )
     _telemetry("page_viewed", hashlib.sha256(_normalize(context.user_data.get("smart_search_query", "")).encode("utf-8")).hexdigest()[:12], page=page, result_count=len(results))
 
@@ -611,10 +615,10 @@ async def _navigation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop("smart_search_page", None)
 
     if query.data == "smart_pro_cancel":
-        await query.edit_message_text("❌ تم إلغاء البحث الذكي.")
+        await query.edit_message_text(t("smart_search", "cancelled", normalize_language(context.user_data.get("smart_search_language"))))
         return
 
-    await query.edit_message_text("✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.", parse_mode="HTML")
+    await query.edit_message_text(t("smart_search", "new_prompt", normalize_language(context.user_data.get("smart_search_language"))), parse_mode="HTML")
 
 
 def register_smart_search_pro(app: Any, bot_module: Any | None = None) -> None:
