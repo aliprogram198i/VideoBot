@@ -44,19 +44,43 @@ def _db(path):
         """
     )
     conn.execute(
-        "INSERT INTO downloads VALUES (1, 7, 'instagram', 'video', '720p', 'ok', download_at)"
+        "INSERT INTO downloads VALUES (?, 7, 'instagram', 'video', '720p', 'ok', ?)",
+        (1, download_at),
     )
     conn.execute(
-        "INSERT INTO error_logs VALUES "
-        '(1,7,\'https://instagram.com/reel/x\',\'instagram\',\'video\',\'download\',\'resolver_failed\',\'failed\',\'a1\',1,\'{"fallback":{"resolver":"instagram_relay_html"}}\',\'2026-09-25T08:59:00\')'
+        "INSERT INTO error_logs VALUES (?,7,?,?,?,?,?,?,?, ?, ?,?)",
+        (
+            1,
+            "https://instagram.com/reel/x",
+            "instagram",
+            "video",
+            "download",
+            "resolver_failed",
+            "failed",
+            "a1",
+            1,
+            '{"fallback":{"resolver":"instagram_relay_html"}}',
+            error_1_at,
+        ),
     )
     conn.execute(
-        "INSERT INTO error_logs VALUES "
-        '(2,7,\'https://instagram.com/reel/x\',\'instagram\',\'video\',\'download\',\'resolver_failed\',\'failed\',\'a1\',2,\'{"fallback":{"resolver":"instagram_relay_html"}}\',\'2026-09-25T08:58:00\')'
+        "INSERT INTO error_logs VALUES (?,7,?,?,?,?,?,?,?, ?, ?,?)",
+        (
+            2,
+            "https://instagram.com/reel/x",
+            "instagram",
+            "video",
+            "download",
+            "resolver_failed",
+            "failed",
+            "a1",
+            2,
+            '{"fallback":{"resolver":"instagram_relay_html"}}',
+            error_2_at,
+        ),
     )
     conn.commit()
     return conn
-
 
 def test_timeline_merges_success_and_error_events(tmp_path):
     path = tmp_path / "bot.db"
