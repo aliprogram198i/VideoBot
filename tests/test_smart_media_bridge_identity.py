@@ -65,6 +65,44 @@ class SmartMediaBridgeIdentityTests(unittest.TestCase):
             "2561442584302940",
         )
 
+    def test_facebook_share_r_resolves_video_id_from_bootstrap_json(self):
+        class FakeResponse:
+            def geturl(self):
+                return "https://www.facebook.com/share/r/1BvGx4dCiQ/"
+
+            def read(self, _limit):
+                return b'{"video_id":"2561442584302940","other_id":"999999999999"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class FakeBot:
+            Request = staticmethod(lambda *args, **kwargs: object())
+
+            @staticmethod
+            def safe_urlopen(*args, **kwargs):
+                return FakeResponse()
+
+        self.assertEqual(
+            _facebook_resolve_share_id(
+                FakeBot,
+                "https://www.facebook.com/share/r/1BvGx4dCiQ/",
+            ),
+            "2561442584302940",
+        )
+
+    def test_facebook_share_r_resolves_data_video_id(self):
+        self.assertEqual(
+            __import__("downloader.smart_media_bridge", fromlist=["_facebook_extract_canonical_id"])
+            ._facebook_extract_canonical_id(
+                '<div data-video-id="2561442584302940"></div>'
+            ),
+            "2561442584302940",
+        )
+
     def test_facebook_share_r_resolver_rejects_non_facebook_canonical_url(self):
         class FakeResponse:
             def geturl(self):
