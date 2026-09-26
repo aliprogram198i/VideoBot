@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import asyncio
+import base64
 import tempfile
 import shutil
 import html
@@ -99,6 +100,50 @@ MAX_TELEGRAM_AUDIO_BYTES = (
 MAX_YOINKU_RESPONSE_BYTES = 1 * 1024 * 1024
 MIN_FREE_SPACE_BYTES = 256 * 1024 * 1024
 MAX_BROADCAST_LENGTH = 4000
+
+FACEBOOK_COOKIES_B64_ENV = "FACEBOOK_COOKIES_B64"
+
+
+def _prepare_facebook_cookie_file(source_url: str, temp_dir: str) -> str | None:
+    """Materialize an optional Facebook Netscape cookie jar without logging it."""
+    host = (urlparse(source_url).hostname or "").lower().rstrip(".")
+    if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+        return None
+
+    encoded = os.getenv(FACEBOOK_COOKIES_B64_ENV, "").strip()
+    if not encoded:
+        return None
+
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        logger.warning("Facebook cookie session ignored: invalid base64")
+        return None
+
+    if not raw or len(raw) > 2 * 1024 * 1024:
+        logger.warning("Facebook cookie session ignored: invalid size")
+        return None
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("Facebook cookie session ignored: non-UTF8 data")
+        return None
+
+    if "# Netscape HTTP Cookie File" not in text[:512]:
+        logger.warning("Facebook cookie session ignored: unsupported cookie format")
+        return None
+
+    cookie_file = os.path.join(temp_dir, ".facebook_cookies.txt")
+    try:
+        with open(cookie_file, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(cookie_file, 0o600)
+    except OSError as exc:
+        logger.warning("Facebook cookie session could not be materialized: %s", type(exc).__name__)
+        return None
+
+    return cookie_file
 
 logger = logging.getLogger(__name__)
 
@@ -4488,6 +4533,16 @@ async def download_media(
                     "continuing with yt-dlp native clients",
                     flush=True,
                 )
+
+        facebook_cookie_file = _prepare_facebook_cookie_file(url, temp_dir)
+        if facebook_cookie_file:
+            command.extend([
+                "--cookies",
+                facebook_cookie_file,
+                "--impersonate",
+                "chrome-99",
+            ])
+            print("🛡️ Facebook authenticated session: cookies + HTTP impersonation enabled", flush=True)
 
         command.append(telegram_download_url)
 
