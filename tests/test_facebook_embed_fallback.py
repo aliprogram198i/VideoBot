@@ -1,6 +1,7 @@
+from types import SimpleNamespace
 from urllib.parse import unquote, urlparse
 
-from downloader.smart_media_bridge import _facebook_embed_urls
+from downloader.smart_media_bridge import _facebook_embed_urls, _facebook_resolve_share_id
 
 
 REEL_URL = "https://www.facebook.com/reel/2115871489331970/"
@@ -24,16 +25,12 @@ def test_facebook_embed_rejects_non_facebook_or_malformed_urls():
     assert _facebook_embed_urls("not-a-url") == []
 
 
-from types import SimpleNamespace
-
-from downloader.smart_media_bridge import _facebook_resolve_share_id
-
 
 SHARE_URL = "https://www.facebook.com/share/r/1BvGx4dCiQ/"
 RESOLVED_ID = "2561442584302940"
 
 
-def test_facebook_share_resolves_canonical_id_from_redirect(monkeypatch):
+def test_facebook_share_resolves_canonical_id_from_redirect():
     class FakeResponse:
         def __init__(self, final_url):
             self.final_url = final_url
