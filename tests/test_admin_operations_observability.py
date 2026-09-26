@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 from plugins.admin_operations_observability import (
     _groups,
@@ -10,6 +11,10 @@ from plugins.admin_operations_observability import (
 
 def _db(path):
     conn = sqlite3.connect(path)
+    now = datetime.now()
+    download_at = (now - timedelta(minutes=1)).isoformat()
+    error_1_at = (now - timedelta(minutes=2)).isoformat()
+    error_2_at = (now - timedelta(minutes=3)).isoformat()
     conn.row_factory = sqlite3.Row
     conn.executescript(
         """
@@ -39,19 +44,43 @@ def _db(path):
         """
     )
     conn.execute(
-        "INSERT INTO downloads VALUES (1, 7, 'instagram', 'video', '720p', 'ok', '2026-09-25T09:00:00')"
+        "INSERT INTO downloads VALUES (?, 7, 'instagram', 'video', '720p', 'ok', ?)",
+        (1, download_at),
     )
     conn.execute(
-        "INSERT INTO error_logs VALUES "
-        '(1,7,\'https://instagram.com/reel/x\',\'instagram\',\'video\',\'download\',\'resolver_failed\',\'failed\',\'a1\',1,\'{"fallback":{"resolver":"instagram_relay_html"}}\',\'2026-09-25T08:59:00\')'
+        "INSERT INTO error_logs VALUES (?,7,?,?,?,?,?,?,?, ?, ?,?)",
+        (
+            1,
+            "https://instagram.com/reel/x",
+            "instagram",
+            "video",
+            "download",
+            "resolver_failed",
+            "failed",
+            "a1",
+            1,
+            '{"fallback":{"resolver":"instagram_relay_html"}}',
+            error_1_at,
+        ),
     )
     conn.execute(
-        "INSERT INTO error_logs VALUES "
-        '(2,7,\'https://instagram.com/reel/x\',\'instagram\',\'video\',\'download\',\'resolver_failed\',\'failed\',\'a1\',2,\'{"fallback":{"resolver":"instagram_relay_html"}}\',\'2026-09-25T08:58:00\')'
+        "INSERT INTO error_logs VALUES (?,7,?,?,?,?,?,?,?, ?, ?,?)",
+        (
+            2,
+            "https://instagram.com/reel/x",
+            "instagram",
+            "video",
+            "download",
+            "resolver_failed",
+            "failed",
+            "a1",
+            2,
+            '{"fallback":{"resolver":"instagram_relay_html"}}',
+            error_2_at,
+        ),
     )
     conn.commit()
     return conn
-
 
 def test_timeline_merges_success_and_error_events(tmp_path):
     path = tmp_path / "bot.db"
