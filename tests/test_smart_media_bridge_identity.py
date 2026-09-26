@@ -33,6 +33,35 @@ class SmartMediaBridgeIdentityTests(unittest.TestCase):
 
 
 
+    def test_facebook_share_r_resolves_canonical_id_from_embedded_metadata(self):
+        class FakeResponse:
+            def geturl(self):
+                return "https://www.facebook.com/share/r/1BvGx4dCiQ/"
+
+            def read(self, _limit):
+                return b'{"video_id":"2561442584302940","title":"example"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class FakeBot:
+            Request = staticmethod(lambda *args, **kwargs: object())
+
+            @staticmethod
+            def safe_urlopen(*args, **kwargs):
+                return FakeResponse()
+
+        self.assertEqual(
+            _facebook_resolve_share_id(
+                FakeBot,
+                "https://www.facebook.com/share/r/1BvGx4dCiQ/",
+            ),
+            "2561442584302940",
+        )
+
     def test_facebook_share_r_resolves_canonical_id_from_html(self):
         class FakeResponse:
             def geturl(self):
