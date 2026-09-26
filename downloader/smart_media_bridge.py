@@ -96,10 +96,20 @@ def _facebook_embed_urls(url):
     elif parsed.path.rstrip("/").lower() == "/watch":
         from urllib.parse import parse_qs
         video_id = (parse_qs(parsed.query).get("v") or [""])[0]
+    elif len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r":
+        # Facebook share/r links are opaque redirect URLs. Do not require a
+        # numeric video id here; the official plugin can resolve the shared
+        # resource from the exact href and preserves source identity.
+        video_id = ""
     else:
         video_id = ""
 
-    if not video_id or not re.fullmatch(r"\d{5,30}", video_id):
+    if video_id and not re.fullmatch(r"\d{5,30}", video_id):
+        return []
+
+    if not video_id and not (
+        len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r"
+    ):
         return []
 
     from urllib.parse import quote
@@ -109,12 +119,15 @@ def _facebook_embed_urls(url):
             "https://www.facebook.com/plugins/video.php"
             f"?href={encoded_source}&show_text=false&width=560"
         ),
-        (
-            "https://www.facebook.com/plugins/video.php"
-            f"?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{video_id}"
-            "&show_text=false&width=560"
-        ),
     ]
+    if video_id:
+        variants.append(
+            (
+                "https://www.facebook.com/plugins/video.php"
+                f"?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{video_id}"
+                "&show_text=false&width=560"
+            )
+        )
     return list(dict.fromkeys(variants))
 
 def _protected_social_post(url):
