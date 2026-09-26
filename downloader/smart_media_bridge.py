@@ -141,6 +141,42 @@ def _facebook_embed_urls(url, *, resolved_id=None):
     return list(dict.fromkeys(variants))
 
 
+def _facebook_extract_canonical_id(value):
+    """Extract a numeric Facebook reel/video ID from a URL or bounded HTML."""
+    if not isinstance(value, str) or not value:
+        return None
+
+    import html
+    text = html.unescape(value).replace("\\\/", "/")
+    candidates = [text]
+    candidates.extend(
+        re.findall(
+            r"https?://(?:www\\.)?(?:m\\.)?facebook\\.com/[^\\\"'<>\\s]+",
+            text,
+            re.I,
+        )
+    )
+    for candidate_url in candidates:
+        try:
+            parsed = urlparse(candidate_url)
+        except Exception:
+            continue
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+            continue
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[0].lower() in {"reel", "videos"}:
+            candidate = parts[1]
+        elif parsed.path.rstrip("/").lower() == "/watch":
+            from urllib.parse import parse_qs
+            candidate = (parse_qs(parsed.query).get("v") or [""])[0]
+        else:
+            continue
+        if re.fullmatch(r"\d{5,30}", candidate):
+            return candidate
+    return None
+
+
 def _facebook_resolve_share_id(bot_module, url):
     """Resolve a Facebook share/r URL to its canonical numeric resource ID."""
     if not isinstance(url, str) or not url.strip():
@@ -173,20 +209,22 @@ def _facebook_resolve_share_id(bot_module, url):
             geturl = getattr(response, "geturl", None)
             final_url = geturl() if callable(geturl) else ""
             final = final_url if isinstance(final_url, str) else ""
-            final_parts = [part for part in urlparse(final).path.split("/") if part]
-            if len(final_parts) >= 2 and final_parts[0].lower() in {"reel", "videos"}:
-                candidate = final_parts[1]
-                if re.fullmatch(r"\d{5,30}", candidate):
-                    return candidate
-            if urlparse(final).path.rstrip("/").lower() == "/watch":
-                from urllib.parse import parse_qs
-                candidate = (parse_qs(urlparse(final).query).get("v") or [""])[0]
-                if re.fullmatch(r"\d{5,30}", candidate):
-                    return candidate
+            candidate = _facebook_extract_canonical_id(final)
+            if candidate:
+                return candidate
+
+            try:
+                raw = response.read(512 * 1024)
+            except Exception:
+                raw = b""
+            if isinstance(raw, bytes):
+                body = raw.decode("utf-8", errors="replace")
+            else:
+                body = raw if isinstance(raw, str) else ""
+            return _facebook_extract_canonical_id(body)
     except Exception:
         return None
 
-    return None
 
 def _protected_social_post(url):
     """Return True for public Telegram/Instagram post URLs protected by source identity gates."""
