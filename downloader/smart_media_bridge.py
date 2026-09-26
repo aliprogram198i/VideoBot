@@ -80,7 +80,23 @@ def _telegram_embed_urls(url):
     return variants
 
 
-def _facebook_embed_urls(url):
+def _facebook_resolved_id_from_error(url, error_text):
+    """Extract Facebook's canonical numeric media ID from yt-dlp diagnostics."""
+    if not isinstance(url, str) or not isinstance(error_text, str):
+        return None
+    parsed = urlparse(url.strip())
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 3 or parts[0].lower() != "share" or parts[1].lower() != "r":
+        return None
+    match = re.search(
+        r"\[facebook\]\s+(\d{5,30}):\s+Cannot parse data",
+        error_text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def _facebook_embed_urls(url, resolved_video_id=None):
     """Build deterministic Facebook embed variants for public video/reel URLs."""
     if not isinstance(url, str) or not url.strip():
         return []
@@ -90,26 +106,29 @@ def _facebook_embed_urls(url):
     if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
         return []
 
-    parts = [part for part in parsed.path.split('/') if part]
+    parts = [part for part in parsed.path.split("/") if part]
     if len(parts) == 2 and parts[0].lower() in {"reel", "videos"}:
         video_id = parts[1]
     elif parsed.path.rstrip("/").lower() == "/watch":
         from urllib.parse import parse_qs
         video_id = (parse_qs(parsed.query).get("v") or [""])[0]
     elif len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r":
-        # Facebook share/r links are opaque redirect URLs. Do not require a
-        # numeric video id here; the official plugin can resolve the shared
-        # resource from the exact href and preserves source identity.
-        video_id = ""
+        video_id = (
+            resolved_video_id
+            if isinstance(resolved_video_id, str)
+            and re.fullmatch(r"\d{5,30}", resolved_video_id)
+            else ""
+        )
+        if video_id:
+            canonical_url = f"https://www.facebook.com/reel/{video_id}/"
+            return _facebook_embed_urls(canonical_url)
     else:
         video_id = ""
 
     if video_id and not re.fullmatch(r"\d{5,30}", video_id):
         return []
 
-    if not video_id and not (
-        len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r"
-    ):
+    if not video_id:
         return []
 
     from urllib.parse import quote
@@ -119,15 +138,12 @@ def _facebook_embed_urls(url):
             "https://www.facebook.com/plugins/video.php"
             f"?href={encoded_source}&show_text=false&width=560"
         ),
+        (
+            "https://www.facebook.com/plugins/video.php"
+            f"?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{video_id}"
+            "&show_text=false&width=560"
+        ),
     ]
-    if video_id:
-        variants.append(
-            (
-                "https://www.facebook.com/plugins/video.php"
-                f"?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{video_id}"
-                "&show_text=false&width=560"
-            )
-        )
     return list(dict.fromkeys(variants))
 
 def _protected_social_post(url):
@@ -613,7 +629,19 @@ def install(bot_module) -> None:
             # "Cannot parse data" on public Reel URLs. Use the official Facebook
             # video plugin as a deterministic source-page variant before generic
             # fallbacks. The embed href remains the exact user-supplied URL.
-            facebook_variants = _facebook_embed_urls(url)
+            facebook_resolved_id = _facebook_resolved_id_from_error(
+                url,
+                str(kwargs.get("primary_error") or ""),
+            )
+            facebook_variants = _facebook_embed_urls(
+                url,
+                resolved_video_id=facebook_resolved_id,
+            )
+            if facebook_resolved_id:
+                print(
+                    f"📘 Facebook Source Resolver: canonical ID resolved to {facebook_resolved_id}",
+                    flush=True,
+                )
             if facebook_variants:
                 print(
                     f"📘 Facebook Source Resolver: trying {len(facebook_variants)} official embed variant(s)",
