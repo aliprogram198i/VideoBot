@@ -1,6 +1,10 @@
 import unittest
 
-from downloader.smart_media_bridge import (\n    _facebook_embed_urls,\n    _facebook_resolve_share_id,\n    _protected_social_post,\n)
+from downloader.smart_media_bridge import (
+    _facebook_embed_urls,
+    _facebook_resolve_share_id,
+    _protected_social_post,
+)
 
 
 class SmartMediaBridgeIdentityTests(unittest.TestCase):
