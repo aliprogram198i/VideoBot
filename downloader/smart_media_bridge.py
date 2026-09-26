@@ -179,7 +179,7 @@ def _facebook_extract_canonical_id(value):
     # structured metadata instead of an absolute canonical URL. Accept only
     # explicit video-ID fields so unrelated numeric IDs are never guessed.
     metadata_id = re.search(
-        r'(?:["'](?:video_id|videoId|videoID|legacy_video_id|story_fbid)["']|(?:video_id|videoId|videoID|legacy_video_id|story_fbid))\s*[:=]\s*["']?(\d{5,30})',
+        r"(?:[\"'](?:video_id|videoId|videoID|legacy_video_id|story_fbid)[\"']|(?:video_id|videoId|videoID|legacy_video_id|story_fbid))\s*[:=]\s*[\"']?(\d{5,30})",
         text,
         re.I,
     )
