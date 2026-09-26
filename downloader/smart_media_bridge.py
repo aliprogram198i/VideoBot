@@ -151,7 +151,7 @@ def _facebook_extract_canonical_id(value):
     candidates = [text]
     candidates.extend(
         re.findall(
-            r"https?://(?:www\.)?(?:m\.)?facebook\.com/[^\\"'<>\\s]+",
+            r"https?://(?:www\.)?(?:m\.)?facebook\.com/[^\s'<>]+",
             text,
             re.I,
         )
