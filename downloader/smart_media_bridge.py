@@ -183,6 +183,26 @@ def _facebook_resolve_share_id(bot_module, url):
                 candidate = (parse_qs(urlparse(final).query).get("v") or [""])[0]
                 if re.fullmatch(r"\d{5,30}", candidate):
                     return candidate
+
+            # Some Facebook share/r responses do not expose the redirect through
+            # response.geturl(); they return an HTML page containing the canonical
+            # Reel/Video URL instead. Parse only canonical Facebook URL patterns
+            # from that bounded response body.
+            try:
+                body = response.read()
+                if isinstance(body, bytes):
+                    body = body.decode("utf-8", errors="ignore")
+                if isinstance(body, str):
+                    canonical_patterns = (
+                        r"https?://(?:www\.)?facebook\.com/(?:reel|videos)/(\d{5,30})",
+                        r"https?://(?:www\.)?facebook\.com/watch\?v=(\d{5,30})",
+                    )
+                    for pattern in canonical_patterns:
+                        match = re.search(pattern, body, re.I)
+                        if match and re.fullmatch(r"\d{5,30}", match.group(1)):
+                            return match.group(1)
+            except Exception:
+                pass
     except Exception:
         return None
 
