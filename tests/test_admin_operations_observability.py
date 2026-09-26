@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 from plugins.admin_operations_observability import (
     _groups,
@@ -10,6 +11,10 @@ from plugins.admin_operations_observability import (
 
 def _db(path):
     conn = sqlite3.connect(path)
+    now = datetime.now()
+    download_at = (now - timedelta(minutes=1)).isoformat()
+    error_1_at = (now - timedelta(minutes=2)).isoformat()
+    error_2_at = (now - timedelta(minutes=3)).isoformat()
     conn.row_factory = sqlite3.Row
     conn.executescript(
         """
@@ -39,7 +44,7 @@ def _db(path):
         """
     )
     conn.execute(
-        "INSERT INTO downloads VALUES (1, 7, 'instagram', 'video', '720p', 'ok', '2026-09-25T09:00:00')"
+        "INSERT INTO downloads VALUES (1, 7, 'instagram', 'video', '720p', 'ok', download_at)"
     )
     conn.execute(
         "INSERT INTO error_logs VALUES "
