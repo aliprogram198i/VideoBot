@@ -134,6 +134,13 @@ def _facebook_embed_urls(url, *, resolved_id=None):
         variants.append(
             (
                 "https://www.facebook.com/plugins/video.php"
+                f"?href=https%3A%2F%2Fwww.facebook.com%2Freel%2F{video_id}%2F"
+                "&show_text=false&width=560"
+            )
+        )
+        variants.append(
+            (
+                "https://www.facebook.com/plugins/video.php"
                 f"?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{video_id}"
                 "&show_text=false&width=560"
             )
