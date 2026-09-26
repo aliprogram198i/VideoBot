@@ -123,6 +123,13 @@ def _facebook_embed_urls(url, *, resolved_id=None):
                 f"?href={encoded_source}&show_text=false&width=560"
             )
         )
+    elif not is_share_r:
+        variants.append(
+            (
+                "https://www.facebook.com/plugins/video.php"
+                f"?href={encoded_source}&show_text=false&width=560"
+            )
+        )
     if video_id:
         variants.append(
             (
