@@ -1,6 +1,10 @@
 import unittest
 
-from downloader.smart_media_bridge import _facebook_embed_urls, _protected_social_post
+from downloader.smart_media_bridge import (
+    _facebook_embed_urls,
+    _facebook_resolve_share_id,
+    _protected_social_post,
+)
 
 
 class SmartMediaBridgeIdentityTests(unittest.TestCase):
@@ -26,6 +30,68 @@ class SmartMediaBridgeIdentityTests(unittest.TestCase):
         self.assertEqual(len(variants), 1)
         self.assertIn("href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D2561442584302940", variants[0])
         self.assertNotIn("href=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fr%2F1BvGx4dCiQ%2F", variants[0])
+
+
+
+    def test_facebook_share_r_resolves_canonical_id_from_html(self):
+        class FakeResponse:
+            def geturl(self):
+                return "https://www.facebook.com/share/r/1BvGx4dCiQ/"
+
+            def read(self, _limit):
+                return (
+                    b'<link rel="canonical" '
+                    b'href="https://www.facebook.com/reel/2561442584302940/" />'
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class FakeBot:
+            Request = staticmethod(lambda *args, **kwargs: object())
+
+            @staticmethod
+            def safe_urlopen(*args, **kwargs):
+                return FakeResponse()
+
+        self.assertEqual(
+            _facebook_resolve_share_id(
+                FakeBot,
+                "https://www.facebook.com/share/r/1BvGx4dCiQ/",
+            ),
+            "2561442584302940",
+        )
+
+    def test_facebook_share_r_resolver_rejects_non_facebook_canonical_url(self):
+        class FakeResponse:
+            def geturl(self):
+                return "https://www.facebook.com/share/r/1BvGx4dCiQ/"
+
+            def read(self, _limit):
+                return b'<link rel="canonical" href="https://example.com/reel/2561442584302940/" />'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class FakeBot:
+            Request = staticmethod(lambda *args, **kwargs: object())
+
+            @staticmethod
+            def safe_urlopen(*args, **kwargs):
+                return FakeResponse()
+
+        self.assertIsNone(
+            _facebook_resolve_share_id(
+                FakeBot,
+                "https://www.facebook.com/share/r/1BvGx4dCiQ/",
+            )
+        )
 
     def test_facebook_reel_keeps_numeric_embed_variants(self):
         variants = _facebook_embed_urls("https://www.facebook.com/reel/1474514414731627/")
