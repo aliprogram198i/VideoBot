@@ -65,4 +65,6 @@ def test_facebook_share_resolved_id_drives_exact_embed_target():
     variants = _facebook_embed_urls(SHARE_URL, resolved_id=RESOLVED_ID)
 
     assert len(variants) == 2
-    assert RESOLVED_ID in variants[1]
+    assert f"href=https%3A%2F%2Fwww.facebook.com%2Freel%2F{RESOLVED_ID}%2F" in variants[0]
+    assert f"href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{RESOLVED_ID}" in variants[1]
+    assert f"href=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fr%2F1BvGx4dCiQ%2F" not in "\n".join(variants)
