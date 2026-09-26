@@ -183,6 +183,29 @@ def _facebook_resolve_share_id(bot_module, url):
                 candidate = (parse_qs(urlparse(final).query).get("v") or [""])[0]
                 if re.fullmatch(r"\d{5,30}", candidate):
                     return candidate
+
+            # Facebook share/r may return an HTML landing page instead of a
+            # redirect. Extract only canonical numeric resource IDs from
+            # platform-owned metadata; never treat the opaque share token as
+            # a media ID.
+            read = getattr(response, "read", None)
+            if callable(read):
+                html_body = read(512 * 1024)
+                if isinstance(html_body, bytes):
+                    html_body = html_body.decode("utf-8", errors="ignore")
+                if isinstance(html_body, str):
+                    patterns = (
+                        r'"videoID"\s*:\s*"(?P<id>\d{5,30})"',
+                        r'"video_id"\s*:\s*"(?P<id>\d{5,30})"',
+                        r'/(?:reel|videos)/(?P<id>\d{5,30})(?:[/?"]|\\u002F)',
+                        r'facebook\\.com/(?:watch/)?(?:\\?v=|watch\\?v=)(?P<id>\d{5,30})',
+                    )
+                    for pattern in patterns:
+                        match = re.search(pattern, html_body, re.I)
+                        if match:
+                            candidate = match.group("id")
+                            if re.fullmatch(r"\d{5,30}", candidate):
+                                return candidate
     except Exception:
         return None
 
