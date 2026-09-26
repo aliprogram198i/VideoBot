@@ -4581,46 +4581,6 @@ async def download_media(
             stderr_text = retry_stderr_text
             media_file = retry_media_file
 
-        # Facebook/Tahoe recovery: Facebook can reject the default HTTP
-        # fingerprint with a generic "Cannot parse data" error. yt-dlp documents
-        # curl_cffi impersonation as the compatible recovery for this failure.
-        # Keep it bounded to Facebook and only retry after the native extractor fails.
-        if (
-            not is_youtube
-            and hostname in {"facebook.com", "www.facebook.com", "m.facebook.com"}
-            and process.returncode != 0
-            and "Cannot parse data" in stderr_text
-        ):
-            retry_command = list(command)
-            source_index = retry_command.index(telegram_download_url)
-            retry_command.insert(source_index, "chrome-99")
-            retry_command.insert(source_index, "--impersonate")
-            print(
-                "🛡️ Facebook HTTP impersonation retry: Chrome-99",
-                flush=True,
-            )
-            retry_process = await asyncio.create_subprocess_exec(
-                *retry_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            retry_stdout, retry_stderr = await communicate_with_cleanup(
-                retry_process,
-                DOWNLOAD_TIMEOUT,
-            )
-            retry_stdout_text = retry_stdout.decode(errors="ignore")
-            retry_stderr_text = retry_stderr.decode(errors="ignore")
-            retry_media_file = final_output_from_yt_dlp(
-                retry_stdout_text,
-                temp_dir,
-                allowed_extensions,
-            )
-
-            process = retry_process
-            stdout_text = retry_stdout_text
-            stderr_text = retry_stderr_text
-            media_file = retry_media_file
-
         print("yt-dlp completed")
 
         if stderr_text:
