@@ -1,6 +1,11 @@
 import unittest
+from types import SimpleNamespace
 
-from downloader.smart_media_bridge import _facebook_embed_urls, _protected_social_post
+from downloader.smart_media_bridge import (
+    _facebook_embed_urls,
+    _facebook_resolve_share_id,
+    _protected_social_post,
+)
 
 
 class SmartMediaBridgeIdentityTests(unittest.TestCase):
@@ -19,6 +24,31 @@ class SmartMediaBridgeIdentityTests(unittest.TestCase):
         self.assertIn("plugins/video.php", variants[0])
         self.assertIn("1BvGx4dCiQ", variants[0])
         self.assertIn("href=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fr%2F1BvGx4dCiQ%2F", variants[0])
+
+    def test_facebook_share_r_resolves_numeric_id_from_landing_html(self):
+        url = "https://www.facebook.com/share/r/1BvGx4dCiQ/"
+
+        class FakeResponse:
+            def geturl(self):
+                return url
+
+            def read(self, _max_bytes):
+                return b'{"videoID":"2561442584302940"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        bot_module = SimpleNamespace(
+            Request=lambda *args, **kwargs: object(),
+            safe_urlopen=lambda *args, **kwargs: FakeResponse(),
+        )
+        self.assertEqual(
+            _facebook_resolve_share_id(bot_module, url),
+            "2561442584302940",
+        )
 
     def test_facebook_share_r_uses_resolved_numeric_id_for_canonical_embed(self):
         url = "https://www.facebook.com/share/r/1BvGx4dCiQ/"
