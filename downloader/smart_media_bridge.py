@@ -80,7 +80,7 @@ def _telegram_embed_urls(url):
     return variants
 
 
-def _facebook_embed_urls(url):
+def _facebook_embed_urls(url, *, resolved_id=None):
     """Build deterministic Facebook embed variants for public video/reel URLs."""
     if not isinstance(url, str) or not url.strip():
         return []
@@ -97,29 +97,39 @@ def _facebook_embed_urls(url):
         from urllib.parse import parse_qs
         video_id = (parse_qs(parsed.query).get("v") or [""])[0]
     elif len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r":
-        # Facebook share/r links are opaque redirect URLs. Do not require a
-        # numeric video id here; the official plugin can resolve the shared
-        # resource from the exact href and preserves source identity.
         video_id = ""
     else:
         video_id = ""
 
+    if resolved_id:
+        if not isinstance(resolved_id, str) or not re.fullmatch(r"\d{5,30}", resolved_id):
+            return []
+        video_id = resolved_id
+
     if video_id and not re.fullmatch(r"\d{5,30}", video_id):
         return []
 
-    if not video_id and not (
-        len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r"
-    ):
+    is_share_r = len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r"
+    if not video_id and not is_share_r:
         return []
 
     from urllib.parse import quote
     encoded_source = quote(url.strip(), safe='')
-    variants = [
-        (
-            "https://www.facebook.com/plugins/video.php"
-            f"?href={encoded_source}&show_text=false&width=560"
-        ),
-    ]
+    variants = []
+    if is_share_r and not video_id:
+        variants.append(
+            (
+                "https://www.facebook.com/plugins/video.php"
+                f"?href={encoded_source}&show_text=false&width=560"
+            )
+        )
+    elif not is_share_r:
+        variants.append(
+            (
+                "https://www.facebook.com/plugins/video.php"
+                f"?href={encoded_source}&show_text=false&width=560"
+            )
+        )
     if video_id:
         variants.append(
             (
@@ -129,6 +139,54 @@ def _facebook_embed_urls(url):
             )
         )
     return list(dict.fromkeys(variants))
+
+
+def _facebook_resolve_share_id(bot_module, url):
+    """Resolve a Facebook share/r URL to its canonical numeric resource ID."""
+    if not isinstance(url, str) or not url.strip():
+        return None
+
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower().rstrip(".")
+    parts = [part for part in parsed.path.split("/") if part]
+    if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+        return None
+    if not (len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r"):
+        return None
+
+    try:
+        request = bot_module.Request(
+            url.strip(),
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Linux; Android 10; K) "
+                    "AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with bot_module.safe_urlopen(
+            request,
+            timeout=12,
+            max_bytes=512 * 1024,
+        ) as response:
+            geturl = getattr(response, "geturl", None)
+            final_url = geturl() if callable(geturl) else ""
+            final = final_url if isinstance(final_url, str) else ""
+            final_parts = [part for part in urlparse(final).path.split("/") if part]
+            if len(final_parts) >= 2 and final_parts[0].lower() in {"reel", "videos"}:
+                candidate = final_parts[1]
+                if re.fullmatch(r"\d{5,30}", candidate):
+                    return candidate
+            if urlparse(final).path.rstrip("/").lower() == "/watch":
+                from urllib.parse import parse_qs
+                candidate = (parse_qs(urlparse(final).query).get("v") or [""])[0]
+                if re.fullmatch(r"\d{5,30}", candidate):
+                    return candidate
+    except Exception:
+        return None
+
+    return None
 
 def _protected_social_post(url):
     """Return True for public Telegram/Instagram post URLs protected by source identity gates."""
@@ -613,7 +671,16 @@ def install(bot_module) -> None:
             # "Cannot parse data" on public Reel URLs. Use the official Facebook
             # video plugin as a deterministic source-page variant before generic
             # fallbacks. The embed href remains the exact user-supplied URL.
-            facebook_variants = _facebook_embed_urls(url)
+            facebook_resolved_id = _facebook_resolve_share_id(bot_module, url)
+            facebook_variants = _facebook_embed_urls(
+                url,
+                resolved_id=facebook_resolved_id,
+            )
+            if facebook_resolved_id:
+                print(
+                    f"📘 Facebook Source Resolver: share/r resolved to canonical video id={facebook_resolved_id}",
+                    flush=True,
+                )
             if facebook_variants:
                 print(
                     f"📘 Facebook Source Resolver: trying {len(facebook_variants)} official embed variant(s)",
