@@ -180,10 +180,10 @@ def _facebook_extract_canonical_id(value):
     # a source-page identity signal, so accept only explicit video-id fields
     # and only when the value is a numeric Facebook media identifier.
     for pattern in (
-        r'["\\']video_id["\\']\\s*[:=]\\s*["\\'](\\d{5,30})["\\']',
-        r'["\\']videoId["\\']\\s*[:=]\\s*["\\'](\\d{5,30})["\\']',
-        r'["\\']videoID["\\']\\s*[:=]\\s*["\\'](\\d{5,30})["\\']',
-        r'\\bdata-video-id\\s*=\\s*["\\'](\\d{5,30})["\\']',
+        r"""["']video_id["']\\s*[:=]\\s*["'](\\d{5,30})["']""",
+        r"""["']videoId["']\\s*[:=]\\s*["'](\\d{5,30})["']""",
+        r"""["']videoID["']\\s*[:=]\\s*["'](\\d{5,30})["']""",
+        r"""\\bdata-video-id\\s*=\\s*["'](\\d{5,30})["']""",
     ):
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
