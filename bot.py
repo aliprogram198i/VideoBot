@@ -2200,6 +2200,7 @@ async def download_with_smart_extraction(
     is_audio=False,
     attempt_id=None,
     attempt_number=None,
+    primary_error=None,
 ):
     """
     Use the deterministic Smart Extraction stack to discover,
@@ -4778,6 +4779,8 @@ async def download_media(
                                 attempt_id=attempt_id,
 
                                 attempt_number=attempt_number,
+
+                                primary_error=stderr_text[-4000:],
 
                             )
             else:
