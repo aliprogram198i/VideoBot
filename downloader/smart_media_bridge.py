@@ -190,40 +190,56 @@ def _facebook_resolve_share_id(bot_module, url):
     if not (len(parts) == 3 and parts[0].lower() == "share" and parts[1].lower() == "r"):
         return None
 
-    try:
-        request = bot_module.Request(
-            url.strip(),
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Linux; Android 10; K) "
-                    "AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml",
-            },
+    # Facebook can reject one public hostname/user-agent combination while
+    # accepting another. Keep this bounded and deterministic: try the
+    # canonical host first, then the mobile host, without guessing IDs.
+    variants = [url.strip()]
+    if host != "m.facebook.com":
+        variants.append(
+            "https://m.facebook.com"
+            + parsed.path
+            + (f"?{parsed.query}" if parsed.query else "")
         )
-        with bot_module.safe_urlopen(
-            request,
-            timeout=12,
-            max_bytes=512 * 1024,
-        ) as response:
-            geturl = getattr(response, "geturl", None)
-            final_url = geturl() if callable(geturl) else ""
-            final = final_url if isinstance(final_url, str) else ""
-            candidate = _facebook_extract_canonical_id(final)
-            if candidate:
-                return candidate
 
-            try:
-                raw = response.read(512 * 1024)
-            except Exception:
-                raw = b""
-            if isinstance(raw, bytes):
-                body = raw.decode("utf-8", errors="replace")
-            else:
-                body = raw if isinstance(raw, str) else ""
-            return _facebook_extract_canonical_id(body)
-    except Exception:
-        return None
+    for candidate_url in dict.fromkeys(variants):
+        try:
+            request = bot_module.Request(
+                candidate_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Linux; Android 10; K) "
+                        "AppleWebKit/537.36 Chrome/139.0.0.0 Mobile Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+            )
+            with bot_module.safe_urlopen(
+                request,
+                timeout=12,
+                max_bytes=512 * 1024,
+            ) as response:
+                geturl = getattr(response, "geturl", None)
+                final_url = geturl() if callable(geturl) else ""
+                final = final_url if isinstance(final_url, str) else ""
+                canonical = _facebook_extract_canonical_id(final)
+                if canonical:
+                    return canonical
+
+                try:
+                    raw = response.read(512 * 1024)
+                except Exception:
+                    raw = b""
+                if isinstance(raw, bytes):
+                    body = raw.decode("utf-8", errors="replace")
+                else:
+                    body = raw if isinstance(raw, str) else ""
+                canonical = _facebook_extract_canonical_id(body)
+                if canonical:
+                    return canonical
+        except Exception:
+            continue
+
+    return None
 
 
 def _protected_social_post(url):
