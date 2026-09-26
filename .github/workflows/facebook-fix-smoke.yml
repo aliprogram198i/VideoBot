@@ -1,0 +1,25 @@
+name: facebook-fix-smoke
+
+on:
+  push:
+    branches:
+      - fix/facebook-impersonation-recovery
+
+jobs:
+  facebook-download-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install yt-dlp stack
+        run: python -m pip install -r requirements.txt
+      - name: Download known failing Facebook reel
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/facebook-smoke
+          yt-dlp --impersonate chrome-99 --no-playlist --max-filesize 49M             -o "/tmp/facebook-smoke/%(id)s.%(ext)s"             "https://www.facebook.com/reel/2115871489331970"
+          test -n "$(find /tmp/facebook-smoke -type f -size +1k -print -quit)"
+          ls -lh /tmp/facebook-smoke
