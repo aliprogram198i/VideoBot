@@ -15,7 +15,6 @@ from plugins.smart_search_pro import (
     _results_keyboard,
     _results_message,
     _results_from_state,
-    _title_window,
 )
 
 
@@ -65,24 +64,16 @@ def test_button_label_preserves_metadata_when_title_is_long():
     assert "👁 1.2M" in label
 
 
-def test_title_window_reveals_full_title_across_offsets():
-    title = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    windows = {_title_window(title, 8, offset) for offset in range(len(title) + 7)}
-    assert title[:8] in windows
-    assert title[-8:] in windows
-    assert any("IJKL" in window for window in windows)
-
-
-def test_marquee_button_changes_visible_title_but_keeps_metadata():
-    result = _result(title="عنوان طويل جدًا لاختبار الحركة داخل زر البحث")
+def test_long_title_is_stable_and_truncated_for_comparison():
+    result = _result(title="عنوان طويل جدًا لاختبار ثبات الزر وسهولة المقارنة")
     first = _button_label(0, result, 0)
     later = _button_label(0, result, 6)
-    assert first != later
-    for label in (first, later):
-        assert "📺 Test Channel" in label
-        assert "⏱ 1:02:03" in label
-        assert "👁 1.2M" in label
-        assert len(label) <= 64
+    assert first == later
+    assert "…" in first
+    assert "📺 Test Channel" in first
+    assert "⏱ 1:02:03" in first
+    assert "👁 1.2M" in first
+    assert len(first) <= 64
 
 
 def test_results_state_round_trips_dict_metadata():
@@ -113,19 +104,17 @@ def test_page_render_shows_only_visible_results_and_page_indicator():
     assert "11. Result 10" not in message
 
 
-def test_results_message_lists_full_titles_in_result_order_only():
+def test_results_message_keeps_page_context_without_duplicate_titles():
     results = [
         _result(title="First full result title"),
         _result(title="Second full result title", index=1, channel="Other Channel", duration=12, views=42),
         _result(title="Third <full> result title", index=2),
     ]
-    message = _results_message("ignored query", results)
-    assert message.index("1. First full result title") < message.index("2. Second full result title")
-    assert message.index("2. Second full result title") < message.index("3. Third &lt;full&gt; result title")
-    assert "Other Channel" not in message
-    assert "0:12" not in message
-    assert "42" not in message
-    assert "1.2M" not in message
+    message = _results_message("ignored query", results, language="en")
+    assert "Choose a result:" in message
+    assert "First full result title" not in message
+    assert "Second full result title" not in message
+    assert "Third &lt;full&gt; result title" not in message
     assert "ignored query" in message
 
 
