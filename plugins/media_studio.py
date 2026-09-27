@@ -866,7 +866,7 @@ def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|info_back|back|undo|busy):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|info_back|back|undo):|^studio:busy$",
         )
     )
     app.add_handler(
