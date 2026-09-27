@@ -4,7 +4,7 @@ LANGUAGES = ("ar", "en", "tr", "de")
 _MESSAGES = {
     "smart_search": {
         "ar": {
-            "title":"🔎 <b>البحث الذكي</b>","page":"📄 النتائج {start}–{end} من {total}  •  الصفحة {page}/{pages}",
+            "title":"🔎 <b>البحث الذكي</b>","page":"📄 النتائج {start}–{end} من {total}  •  الصفحة {page}/{pages}","choose_result":"اختر النتيجة المناسبة:",
             "previous":"⬅️ السابق","more":"➡️ المزيد","new":"🔎 بحث جديد","cancel":"❌ إلغاء",
             "invalid":"❌ اكتب عبارة بحث بين حرفين و160 حرفًا.",
             "searching":"🔎 جاري البحث الذكي الاحترافي...\n\n⚙️ يتم تحليل وترتيب النتائج خوارزميًا.",
@@ -15,7 +15,7 @@ _MESSAGES = {
             "new_prompt":"✏️ <b>بحث جديد</b>\n\nأرسل الآن اسم الفيديو أو الأغنية أو المحتوى الذي تريد البحث عنه.",
         },
         "en": {
-            "title":"🔎 <b>Smart Search</b>","page":"📄 Results {start}–{end} of {total}  •  Page {page}/{pages}",
+            "title":"🔎 <b>Smart Search</b>","page":"📄 Results {start}–{end} of {total}  •  Page {page}/{pages}","choose_result":"Choose a result:",
             "previous":"⬅️ Previous","more":"➡️ More","new":"🔎 New search","cancel":"❌ Cancel",
             "invalid":"❌ Enter a search phrase between 2 and 160 characters.",
             "searching":"🔎 Smart Search is working...\n\n⚙️ Results are being analyzed and ranked algorithmically.",
@@ -26,7 +26,7 @@ _MESSAGES = {
             "new_prompt":"✏️ <b>New search</b>\n\nSend the name of the video, song, or content you want to search for.",
         },
         "tr": {
-            "title":"🔎 <b>Akıllı Arama</b>","page":"📄 {total} sonuçtan {start}–{end}  •  Sayfa {page}/{pages}",
+            "title":"🔎 <b>Akıllı Arama</b>","page":"📄 {total} sonuçtan {start}–{end}  •  Sayfa {page}/{pages}","choose_result":"Uygun sonucu seçin:",
             "previous":"⬅️ Önceki","more":"➡️ Daha fazla","new":"🔎 Yeni arama","cancel":"❌ İptal",
             "invalid":"❌ 2 ile 160 karakter arasında bir arama ifadesi girin.",
             "searching":"🔎 Akıllı Arama çalışıyor...\n\n⚙️ Sonuçlar algoritmik olarak analiz edilip sıralanıyor.",
@@ -37,7 +37,7 @@ _MESSAGES = {
             "new_prompt":"✏️ <b>Yeni arama</b>\n\nAramak istediğiniz video, şarkı veya içeriğin adını gönderin.",
         },
         "de": {
-            "title":"🔎 <b>Intelligente Suche</b>","page":"📄 Ergebnisse {start}–{end} von {total}  •  Seite {page}/{pages}",
+            "title":"🔎 <b>Intelligente Suche</b>","page":"📄 Ergebnisse {start}–{end} von {total}  •  Seite {page}/{pages}","choose_result":"Wählen Sie ein Ergebnis:",
             "previous":"⬅️ Zurück","more":"➡️ Mehr","new":"🔎 Neue Suche","cancel":"❌ Abbrechen",
             "invalid":"❌ Geben Sie einen Suchbegriff mit 2 bis 160 Zeichen ein.",
             "searching":"🔎 Intelligente Suche läuft...\n\n⚙️ Die Ergebnisse werden algorithmisch analysiert und sortiert.",
