@@ -542,8 +542,9 @@ async def _probe_collection(url: str) -> list[dict]:
         process.kill()
         await process.communicate()
         return []
-    if process.returncode != 0:
-        return []
+    # Instagram carousels can return exit code 1 when one or more child
+    # items have no yt-dlp formats. The parent JSON can still be usable.
+    # Parse stdout first; the exit code is advisory for this collection probe.
     try:
         data = json.loads(stdout.decode("utf-8", errors="ignore"))
     except json.JSONDecodeError:
