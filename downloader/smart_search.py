@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
-SEARCH_COUNT = 25
+SEARCH_COUNT = 10
 RESULT_COUNT = SEARCH_COUNT
-TIMEOUT_SECONDS = 25
+TIMEOUT_SECONDS = 12
 MAX_QUERY_LENGTH = 160
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 
@@ -148,15 +148,22 @@ def search_sync(query: str) -> list[SearchResult]:
     if not query:
         return []
 
-    process = subprocess.run(
+    process = subprocess.Popen(
         _build_command(query),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=TIMEOUT_SECONDS,
-        check=False,
     )
+    try:
+        stdout, _stderr = process.communicate(timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, _stderr = process.communicate()
+        return []
 
-    stdout = process.stdout[:MAX_OUTPUT_BYTES]
+    if process.returncode != 0:
+        return []
+
+    stdout = stdout[:MAX_OUTPUT_BYTES]
     if process.returncode != 0 or not stdout:
         return []
 
