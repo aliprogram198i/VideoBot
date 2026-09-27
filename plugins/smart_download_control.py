@@ -883,6 +883,21 @@ async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         raise ApplicationHandlerStop
 
 
+async def _route_post_download(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Route collection posts to the multi-media selector before single-item download."""
+    query = update.callback_query
+    url = context.user_data.get("video_url")
+    if not query or not isinstance(url, str) or not is_collection_candidate(url):
+        return False
+    entries = await _probe_collection(url)
+    if len(entries) < 2:
+        return False
+    bot_module = __import__("bot")
+    language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
+    await _show_multi_control(query.message, context, entries, language)
+    return True
+
+
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data or ""
@@ -896,6 +911,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if data != "sdc_thumbnail":
         await query.answer()
+
+    if data == "post_download":
+        if await _route_post_download(update, context):
+            raise ApplicationHandlerStop
+        return
 
     if data == "sdc_cancel":
         context.user_data.pop("video_url", None)
@@ -929,7 +949,7 @@ def register_smart_download_control(app) -> None:
         group=-3,
     )
     app.add_handler(
-        CallbackQueryHandler(callback, pattern=r"^(sdc_thumbnail|sdc_cancel|sdc_more|main_menu)$"),
+        CallbackQueryHandler(callback, pattern=r"^(post_download|sdc_thumbnail|sdc_cancel|sdc_more|main_menu)$"),
         group=-2,
     )
     print("🎛️ Smart Download Control: ENABLED", flush=True)
