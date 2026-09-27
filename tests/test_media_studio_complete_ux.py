@@ -46,3 +46,15 @@ def test_studio_callback_ack_is_parallel_and_submenus_do_not_double_answer():
     assert "await asyncio.gather(" in STUDIO
     assert "await query.answer(prompt)" not in STUDIO
     assert "await _run_action(update, context, token, action, value)\n    await answer_task" in STUDIO
+
+
+def test_studio_replaces_previous_result_message():
+    assert 'STUDIO_RESULT_MESSAGE_KEY = "media_studio_result_message"' in STUDIO
+    assert "media_studio_previous_result_delete_failed" in STUDIO
+    assert "context.user_data[STUDIO_RESULT_MESSAGE_KEY] = {" in STUDIO
+    assert "context.user_data[STUDIO_MESSAGE_KEY] = {" in STUDIO
+
+
+def test_studio_undo_replaces_current_result_and_hides_undo():
+    assert "media_studio_previous_undo_result_delete_failed" in STUDIO
+    assert "can_undo=False" in STUDIO
