@@ -39,8 +39,15 @@ LOW_SCORE_THRESHOLD = 42.0
 SEARCH_TOTAL_TIMEOUT_SECONDS = 40
 RESULT_STATE_TTL_SECONDS = CACHE_TTL_SECONDS
 TELEGRAM_BUTTON_MAX_CHARS = 64
-MARQUEE_INTERVAL_SECONDS = 2.2
-MARQUEE_PADDING = "   •   "
+TITLE_MAX_CHARS = 42
+EXACT_TITLE_BONUS = 45.0
+PHRASE_TITLE_BONUS = 34.0
+TOKEN_COVERAGE_MAX = 35.0
+SEQUENCE_MAX = 20.0
+YEAR_MATCH_BONUS = 12.0
+INTENT_MATCH_BONUS = 8.0
+QUALITY_CHANNEL_BONUS = 4.0
+POPULARITY_CAP = 8.0
 
 _CACHE: dict[str, tuple[float, list[SearchResult]]] = {}
 _CACHE_LOCK = asyncio.Lock()
@@ -101,20 +108,24 @@ def _canonical_result_key(result: SearchResult) -> str:
 
 
 def _title_score(query: str, result: SearchResult) -> float:
+    """Score textual relevance independently from popularity."""
     q = _normalize(query)
     title = _normalize(result.title)
     if not q or not title:
         return 0.0
     score = 0.0
     if q == title:
-        score += 45.0
+        score += EXACT_TITLE_BONUS
     elif q in title:
-        score += 34.0
-    q_tokens = set(_tokens(query))
-    t_tokens = set(_tokens(result.title))
+        score += PHRASE_TITLE_BONUS
+
+    q_tokens = _tokens(query)
+    title_tokens = set(_tokens(result.title))
     if q_tokens:
-        score += (len(q_tokens & t_tokens) / len(q_tokens)) * 35.0
-    score += difflib.SequenceMatcher(None, q, title).ratio() * 20.0
+        coverage = sum(1 for token in q_tokens if token in title_tokens) / len(q_tokens)
+        score += coverage * TOKEN_COVERAGE_MAX
+
+    score += difflib.SequenceMatcher(None, q, title).ratio() * SEQUENCE_MAX
     return score
 
 
@@ -127,14 +138,43 @@ def _channel_score(query: str, result: SearchResult) -> float:
     return min(overlap * 12.0, 12.0)
 
 
-def _intent_score(intent: dict[str, Any], result: SearchResult) -> float:
+def _year_score(intent: dict[str, Any], result: SearchResult) -> float:
+    years = intent.get("years") or []
+    if not years:
+        return 0.0
     title = _normalize(result.title)
+    return YEAR_MATCH_BONUS if any(year in title.split() for year in years) else 0.0
+
+
+def _intent_score(intent: dict[str, Any], result: SearchResult) -> float:
+    title_tokens = set(_tokens(result.title))
+    channel_tokens = set(_tokens(result.channel))
     groups = {
-        "official": ("رسمي", "official"), "lyrics": ("كلمات", "lyrics", "lyric"),
-        "remix": ("ريمكس", "remix"), "live": ("حفله", "حفلة", "live", "concert"),
+        "official": ("رسمي", "official"),
+        "lyrics": ("كلمات", "lyrics", "lyric"),
+        "remix": ("ريمكس", "remix"),
+        "live": ("حفله", "حفلة", "live", "concert"),
         "short": ("short", "shorts", "قصير"),
     }
-    return sum(8.0 for name in intent.get("intents", []) if any(_normalize(t) in title for t in groups[name]))
+    score = 0.0
+    for name in intent.get("intents", []):
+        terms = {_normalize(term) for term in groups[name]}
+        if terms & title_tokens:
+            score += INTENT_MATCH_BONUS
+        elif name == "official" and terms & channel_tokens:
+            score += INTENT_MATCH_BONUS * 0.75
+    return score
+
+
+def _quality_score(result: SearchResult) -> float:
+    """Small bounded quality signal; popularity can never dominate relevance."""
+    score = 0.0
+    if result.channel:
+        score += QUALITY_CHANNEL_BONUS
+    if result.views is not None and result.views > 0:
+        import math
+        score += min(math.log10(max(result.views, 1)), POPULARITY_CAP)
+    return min(score, QUALITY_CHANNEL_BONUS + POPULARITY_CAP)
 
 
 def _duration_sanity_score(result: SearchResult) -> float:
@@ -156,10 +196,11 @@ def _dedupe_and_rank(query: str, candidates: list[SearchResult], limit: int = MA
         if not key or not title:
             continue
         candidate_score = (
-            max(result.score, 0.0)
-            + _title_score(query, result)
+            _title_score(query, result)
             + _channel_score(query, result)
+            + _year_score(intent, result)
             + _intent_score(intent, result)
+            + _quality_score(result)
             + _duration_sanity_score(result)
         )
         current = by_identity.get(key)
@@ -245,29 +286,24 @@ def _clean_title(title: str) -> str:
     return re.sub(r"\s+", " ", title).strip()
 
 
-def _title_window(title: str, width: int, offset: int = 0) -> str:
-    """Return a moving window that eventually exposes every title character."""
+def _truncate_title(title: str, width: int = TITLE_MAX_CHARS) -> str:
+    title = _clean_title(title)
     if width <= 0:
         return ""
-    title = _clean_title(title)
     if len(title) <= width:
         return title
-    stream = title + MARQUEE_PADDING + title
-    max_offset = len(title) + len(MARQUEE_PADDING)
-    start = offset % max_offset
-    return stream[start:start + width].rstrip()
+    return title[: max(width - 1, 1)].rstrip() + "…"
 
 
-def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> str:
-    """Build a distinctive multi-line button while respecting Telegram's 64-char limit."""
+def _button_label(index: int, result: SearchResult) -> str:
+    """Build a stable, comparable result label within Telegram's 64-char limit."""
     meta_text = _button_meta(result)
     prefix = f"{index + 1}️⃣  "
     suffix = f"\n{meta_text}" if meta_text else ""
     available = TELEGRAM_BUTTON_MAX_CHARS - len(prefix) - len(suffix)
-    title = _clean_title(result.title)
     if available < 1:
         return (prefix + suffix)[:TELEGRAM_BUTTON_MAX_CHARS]
-    visible_title = _title_window(title, available, title_offset)
+    visible_title = _truncate_title(result.title, min(available, TITLE_MAX_CHARS))
     return f"{prefix}{visible_title}{suffix}"
 
 
@@ -286,10 +322,8 @@ def _results_message(query: str, results: list[SearchResult], page: int = 0, lan
         f"🔤 <b>{html.escape(_clean_title(query))}</b>",
         t("smart_search", "page", language, start=start + 1, end=end, total=total, page=page + 1, pages=total_pages),
         "",
+        t("smart_search", "choose_result", language),
     ]
-    for index, result in enumerate(visible, start=start + 1):
-        title = html.escape(_clean_title(result.title))
-        lines.append(f"{index}. {title}")
     return "\n".join(lines)
 
 
@@ -316,7 +350,7 @@ def _results_from_state(items: list[Any]) -> list[SearchResult]:
     return [item for item in normalized if item.title and item.url]
 
 
-def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: int = 0, language: str = "ar") -> InlineKeyboardMarkup:
+def _results_keyboard(results: list[SearchResult], page: int = 0, language: str = "ar") -> InlineKeyboardMarkup:
     """Render a stable, bounded result page with explicit navigation."""
     language = normalize_language(language)
     total_pages = max((len(results) + PAGE_SIZE - 1) // PAGE_SIZE, 1)
@@ -327,7 +361,7 @@ def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: 
     keyboard = [
         [
             InlineKeyboardButton(
-                _button_label(start + index, result, title_offset),
+                _button_label(start + index, result),
                 callback_data=f"smart_pro_pick_{start + index}",
             )
         ]
@@ -351,37 +385,6 @@ def _results_keyboard(results: list[SearchResult], page: int = 0, title_offset: 
         InlineKeyboardButton(t("smart_search", "cancel", language), callback_data="smart_pro_cancel"),
     ])
     return InlineKeyboardMarkup(keyboard)
-
-
-async def _stop_marquee(context: ContextTypes.DEFAULT_TYPE) -> None:
-    task = context.user_data.pop("smart_search_marquee_task", None)
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-
-async def _animate_result_buttons(
-    message: Any,
-    results: list[SearchResult],
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """Animate only the keyboard; selection callbacks remain unchanged."""
-    if not any(len(_clean_title(result.title)) > 28 for result in results):
-        return
-    offset = 0
-    try:
-        while True:
-            await asyncio.sleep(MARQUEE_INTERVAL_SECONDS)
-            offset += 3
-            await message.edit_reply_markup(reply_markup=_results_keyboard(results, page=0, title_offset=offset, language=normalize_language(context.user_data.get("smart_search_language"))))
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        # A stale/deleted Telegram message must never affect the download pipeline.
-        return
 
 
 async def search_pro(query: str) -> list[SearchResult]:
@@ -417,7 +420,7 @@ async def search_pro(query: str) -> list[SearchResult]:
 
     results = _dedupe_and_rank(query, candidates, MAX_SEARCH_RESULTS)
     await _cache_put(key, results)
-    _telemetry("completed", query_hash, result_count=len(results), latency_ms=round((time.monotonic() - started) * 1000))
+    _telemetry("completed", query_hash, result_count=len(results), top_score=round(results[0].score, 2) if results else 0, latency_ms=round((time.monotonic() - started) * 1000))
     return results
 
 def _is_admin_workflow(context: ContextTypes.DEFAULT_TYPE, bot_module: Any, user_id: int) -> bool:
@@ -464,7 +467,6 @@ async def _search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bo
         await update.message.reply_text(t("smart_search", "invalid", language))
         raise ApplicationHandlerStop
 
-    await _stop_marquee(context)
     current_task = asyncio.current_task()
     previous_task = context.user_data.get("smart_search_task")
     if previous_task and previous_task is not current_task and not previous_task.done():
