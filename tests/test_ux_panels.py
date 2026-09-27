@@ -1,5 +1,5 @@
 from plugins.media_studio import _keyboard_trim, studio_keyboard
-from plugins.smart_download_control import _keyboard
+from plugins.smart_download_control import _keyboard, _more_keyboard
 from plugins.localization import t
 
 
