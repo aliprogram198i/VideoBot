@@ -278,7 +278,8 @@ def test_submenu_navigation_reuses_the_same_message():
     callback = source[source.index("async def media_studio_callback"):source.index("async def media_studio_text_handler")]
     assert "query.message.reply_text(prompt" not in callback
     assert "query.message.edit_reply_markup(reply_markup=builder(token, language))" in callback
-    assert "await query.answer(prompt)" in callback
+    assert "answer_task = asyncio.create_task(query.answer())" in callback
+    assert "await query.answer(prompt)" not in callback
 
 
 def test_media_studio_text_handler_has_explicit_early_routing_group():
