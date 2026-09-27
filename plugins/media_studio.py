@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import logging
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +21,7 @@ from telegram.ext import (
 )
 from delivery.policy import DeliveryPolicy
 from plugins.localization import t, language as normalize_language
+from downloader.user_experience import optimize_video_for_telegram
 from plugins.smart_download_control import _text as _download_control_text
 
 CACHE_DIR = Path(os.getenv("MEDIA_STUDIO_CACHE_DIR", "/app/data/media_studio"))
@@ -34,6 +37,12 @@ CUSTOM_TRIM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 delivery_policy = DeliveryPolicy()
+logger = logging.getLogger(__name__)
+STUDIO_LOCK_KEY = "media_studio_operation"
+STUDIO_HISTORY_KEY = "media_studio_history"
+STUDIO_CURRENT_TOKEN_KEY = "media_studio_current_token"
+STUDIO_MESSAGE_KEY = "media_studio_message"
+MAX_STUDIO_HISTORY = 3
 
 
 def _ensure_cache_dir() -> None:
@@ -98,10 +107,20 @@ def _cached_path(user_id: int, token: str) -> Path | None:
     return matches[0] if len(matches) == 1 and matches[0].is_file() else None
 
 
-def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+def studio_keyboard(
+    token: str,
+    language: str = "ar",
+    media_type: str | None = "video",
+    *,
+    can_undo: bool = False,
+) -> InlineKeyboardMarkup:
     language = normalize_language(language)
-    return InlineKeyboardMarkup(
-        [
+    media_type = (media_type or "video").lower()
+    rows = []
+    if media_type == "audio":
+        rows.append([InlineKeyboardButton(t("studio", "audio_formats", language), callback_data=f"studio:audio:{token}")])
+    elif media_type in {"video", "unknown"}:
+        rows.extend([
             [
                 InlineKeyboardButton(t("studio", "audio", language), callback_data=f"studio:audio:{token}"),
                 InlineKeyboardButton(t("studio", "trim", language), callback_data=f"studio:trim:{token}"),
@@ -114,14 +133,12 @@ def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
                 InlineKeyboardButton(t("studio", "resize", language), callback_data=f"studio:resize:{token}"),
                 InlineKeyboardButton(t("studio", "preset", language), callback_data=f"studio:preset:{token}"),
             ],
-            [
-                InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}"),
-            ],
-            [
-                InlineKeyboardButton(t("studio", "info", language), callback_data=f"studio:info:{token}"),
-            ],
-        ]
-    )
+            [InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}")],
+        ])
+    rows.append([InlineKeyboardButton(t("studio", "info", language), callback_data=f"studio:info:{token}")])
+    if can_undo:
+        rows.append([InlineKeyboardButton(t("studio", "undo", language), callback_data=f"studio:undo:{token}")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _keyboard_trim(token: str, language: str = "ar") -> InlineKeyboardMarkup:
@@ -272,10 +289,12 @@ async def _run_ffmpeg(*args: str) -> None:
         raise RuntimeError(f"media_studio_ffmpeg_failed:{detail[-500:]}")
 
 
-def _validate_result(path: Path) -> None:
+def _validate_result(path: Path, *, allow_video_optimization: bool = False) -> None:
     if not path.is_file() or path.stat().st_size <= 0:
         raise RuntimeError("media_studio_empty_result")
     if path.stat().st_size > MAX_RESULT_BYTES:
+        if allow_video_optimization and path.suffix.lower() == ".mp4":
+            return
         raise RuntimeError("media_studio_result_too_large")
 
 
@@ -449,6 +468,7 @@ async def _send_result(
     context: ContextTypes.DEFAULT_TYPE,
     output: Path,
     media_type: str,
+    source_token: str,
 ) -> None:
     chat_id = update.effective_chat.id
     bot_module = __import__("bot")
@@ -480,33 +500,114 @@ async def _send_result(
                 pool_timeout=60,
             )
     else:
-        with output.open("rb") as handle:
-            sent = await context.bot.send_video(
-                chat_id=chat_id,
-                video=handle,
-                caption=t("studio", "done_video", language),
-                supports_streaming=True,
-                read_timeout=600,
-                write_timeout=600,
-                connect_timeout=60,
-                pool_timeout=60,
-            )
-
-        # Keep the processed video as the new Studio source so users can
-        # continue editing the result without downloading it again.
-        try:
-            studio_token = cache_media_for_user(
-                update.effective_user.id,
+        delivery_path = output
+        temp_dir = None
+        if output.stat().st_size > MAX_RESULT_BYTES:
+            temp_dir = tempfile.TemporaryDirectory(prefix="alibot-studio-")
+            optimized, details = await optimize_video_for_telegram(
                 str(output),
+                temp_dir.name,
+                max_bytes=MAX_RESULT_BYTES,
+                timeout_seconds=FFMPEG_TIMEOUT_SECONDS,
+            )
+            if not optimized:
+                raise RuntimeError(
+                    f"media_studio_telegram_optimization_failed:{details.get('reason', 'unknown')}"
+                )
+            delivery_path = Path(optimized)
+
+        try:
+            _validate_result(delivery_path)
+            with delivery_path.open("rb") as handle:
+                sent = await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=handle,
+                    caption=t("studio", "done_video", language),
+                    supports_streaming=True,
+                    read_timeout=600,
+                    write_timeout=600,
+                    connect_timeout=60,
+                    pool_timeout=60,
+                )
+        finally:
+            if temp_dir is not None:
+                temp_dir.cleanup()
+
+        try:
+            studio_token = cache_media_for_user(update.effective_user.id, str(output))
+            history = list(context.user_data.get(STUDIO_HISTORY_KEY) or [])
+            history.append(source_token)
+            context.user_data[STUDIO_HISTORY_KEY] = history[-MAX_STUDIO_HISTORY:]
+            context.user_data[STUDIO_CURRENT_TOKEN_KEY] = studio_token
+            context.user_data["sdc_info"] = _studio_info(
+                context.user_data.get("sdc_info"), output, studio_token
             )
             await sent.edit_reply_markup(
-                reply_markup=studio_keyboard(studio_token, language),
+                reply_markup=studio_keyboard(
+                    studio_token,
+                    language,
+                    media_type="video",
+                    can_undo=True,
+                ),
             )
         except (FileNotFoundError, OSError, ValueError) as exc:
-            print(
-                "⚠️ Media Studio result cache unavailable: "
-                f"{type(exc).__name__}"
-            )
+            logger.debug("media_studio_result_cache_unavailable", exc_info=True)
+            raise RuntimeError(
+                f"media_studio_cache_unavailable:{type(exc).__name__}"
+            ) from exc
+
+
+def _studio_info(info: dict | None, path: Path, token: str) -> dict:
+    data = dict(info or {})
+    data.update({
+        "title": path.stem,
+        "source": data.get("source") or "AliBot Studio",
+        "ext": path.suffix.lstrip(".").lower(),
+        "filesize": path.stat().st_size if path.is_file() else None,
+        "studio_current": True,
+        "studio_token": token,
+    })
+    return data
+
+
+def _studio_info_message(info: dict, language: str) -> str:
+    text = _download_control_text(info, language)
+    if info.get("studio_current"):
+        text += f"\n\n{t('studio', 'current_version', language)}"
+    return text
+
+
+def _busy_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(t("studio", "busy", language), callback_data="studio:busy")]]
+    )
+
+
+async def _studio_heartbeat(message, base_text: str, language: str) -> None:
+    started = time.monotonic()
+    while True:
+        await asyncio.sleep(5)
+        elapsed = int(time.monotonic() - started)
+        try:
+            await message.edit_text(f"{base_text}\n\n⏱️ {elapsed}s")
+        except Exception:
+            logger.debug("studio_heartbeat_update_failed", exc_info=True)
+
+
+def _studio_busy(context: ContextTypes.DEFAULT_TYPE, token: str, action: str) -> bool:
+    lock = context.user_data.get(STUDIO_LOCK_KEY)
+    if lock:
+        return True
+    context.user_data[STUDIO_LOCK_KEY] = {
+        "token": token,
+        "action": action,
+        "started_at": time.time(),
+    }
+    return False
+
+
+def _studio_release(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop(STUDIO_LOCK_KEY, None)
 
 
 def _status_message(action: str, language: str = "ar") -> str | None:
@@ -552,28 +653,47 @@ async def _run_action(
     if not status:
         return
 
+    if _studio_busy(context, token, action):
+        await message.reply_text(t("studio", "busy", language))
+        return
+
     status_message = await message.reply_text(status)
+    heartbeat_task = asyncio.create_task(
+        _studio_heartbeat(status_message, status, language)
+    )
     output = None
     try:
+        try:
+            studio_message = context.user_data.get(STUDIO_MESSAGE_KEY)
+            if studio_message:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=studio_message["chat_id"],
+                    message_id=studio_message["message_id"],
+                    reply_markup=_busy_keyboard(language),
+                )
+        except Exception:
+            logger.debug("studio_busy_keyboard_update_failed", exc_info=True)
+
         output, media_type = await _create_result(source, action, value)
-        _validate_result(output)
-        await _send_result(update, context, output, media_type)
-        # The status message is only a transient progress indicator. Once the
-        # result has been delivered, remove it so the chat stays clean.
+        _validate_result(output, allow_video_optimization=media_type == "video")
+        await _send_result(update, context, output, media_type, token)
         try:
             await status_message.delete()
         except Exception:
-            __import__("logging").getLogger(__name__).debug(
-                "studio_status_message_delete_failed",
-                exc_info=True,
-            )
+            logger.debug("studio_status_message_delete_failed", exc_info=True)
     except (RuntimeError, ValueError, OSError) as exc:
-        print(f"⚠️ Media Studio failed: {type(exc).__name__}: {exc}")
+        logger.warning("media_studio_failed type=%s", type(exc).__name__)
         try:
             await status_message.edit_text(t("studio", "failed", language))
         except Exception:
             await message.reply_text(t("studio", "failed", language))
     finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        _studio_release(context)
         if output is not None:
             output.unlink(missing_ok=True)
 
@@ -596,8 +716,48 @@ async def media_studio_callback(
         return
 
     action = parts[1]
-    token = parts[2]
+    token = parts[2] if len(parts) >= 3 else ""
     value = parts[3] if len(parts) == 4 else None
+
+    if action == "busy":
+        return
+
+    if action == "undo":
+        history = list(context.user_data.get(STUDIO_HISTORY_KEY) or [])
+        if not history:
+            await query.message.reply_text(t("studio", "undo_unavailable", language))
+            return
+        previous_token = history.pop()
+        previous = _cached_path(user.id, previous_token)
+        if previous is None:
+            context.user_data[STUDIO_HISTORY_KEY] = history
+            await query.message.reply_text(t("studio", "expired", language))
+            return
+        context.user_data[STUDIO_HISTORY_KEY] = history
+        context.user_data[STUDIO_CURRENT_TOKEN_KEY] = previous_token
+        context.user_data["sdc_info"] = _studio_info(
+            context.user_data.get("sdc_info"), previous, previous_token
+        )
+        with previous.open("rb") as handle:
+            sent = await context.bot.send_video(
+                chat_id=query.message.chat_id,
+                video=handle,
+                caption=t("studio", "undo_done", language),
+                supports_streaming=True,
+                read_timeout=600,
+                write_timeout=600,
+                connect_timeout=60,
+                pool_timeout=60,
+            )
+        await sent.edit_reply_markup(
+            reply_markup=studio_keyboard(
+                previous_token,
+                language,
+                media_type="video",
+                can_undo=bool(history),
+            )
+        )
+        return
 
     if action == "back":
         await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
@@ -606,7 +766,7 @@ async def media_studio_callback(
     if action == "info" and value is None:
         info = context.user_data.get("sdc_info")
         text = (
-            _download_control_text(info, language)
+            _studio_info_message(info, language)
             if isinstance(info, dict)
             else t("studio", "info_expired", language)
         )
@@ -652,10 +812,15 @@ async def media_studio_callback(
         return
 
     if action == "trimcustom" and value is None:
+        context.user_data[STUDIO_MESSAGE_KEY] = {
+            "chat_id": query.message.chat_id,
+            "message_id": query.message.message_id,
+        }
         _remember_pending(context, token, action)
         await query.message.reply_text(t("studio", "custom_prompt", language))
         return
 
+    context.user_data[STUDIO_MESSAGE_KEY] = {"chat_id": query.message.chat_id, "message_id": query.message.message_id}
     await _run_action(update, context, token, action, value)
 
 
@@ -701,7 +866,7 @@ def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|info_back|back):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|info_back|back|undo):|^studio:busy$",
         )
     )
     app.add_handler(
