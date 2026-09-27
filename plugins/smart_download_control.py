@@ -27,8 +27,20 @@ _CARD_TEXTS = {
         "source": "المصدر",
         "uploader": "الناشر",
         "views": "المشاهدات",
+        "likes": "الإعجابات",
+        "comments": "التعليقات",
+        "content_type": "نوع المحتوى",
+        "video_type": "فيديو",
+        "image_type": "صورة",
+        "audio_type": "صوت",
+        "unknown_type": "غير محدد",
         "dimensions": "الأبعاد الأصلية",
         "quality": "أعلى جودة قابلة للتحميل",
+        "estimated_size": "الحجم التقريبي",
+        "format": "الصيغة",
+        "telegram": "Telegram",
+        "telegram_ready": "مناسب للإرسال",
+        "telegram_processing": "قد يحتاج معالجة",
         "status": "الحالة",
         "partial": "تم جلب الرابط، لكن بعض المعلومات غير متاحة.",
         "ready": "الرابط جاهز للتحميل.",
@@ -56,8 +68,20 @@ _CARD_TEXTS = {
         "source": "Source",
         "uploader": "Uploader",
         "views": "Views",
+        "likes": "Likes",
+        "comments": "Comments",
+        "content_type": "Content type",
+        "video_type": "Video",
+        "image_type": "Image",
+        "audio_type": "Audio",
+        "unknown_type": "Unknown",
         "dimensions": "Original dimensions",
         "quality": "Highest downloadable quality",
+        "estimated_size": "Estimated size",
+        "format": "Format",
+        "telegram": "Telegram",
+        "telegram_ready": "Ready to send",
+        "telegram_processing": "May need processing",
         "status": "Status",
         "partial": "The link was detected, but some information is unavailable.",
         "ready": "The link is ready to download.",
@@ -85,8 +109,20 @@ _CARD_TEXTS = {
         "source": "Kaynak",
         "uploader": "Yayıncı",
         "views": "Görüntülenme",
+        "likes": "Beğeniler",
+        "comments": "Yorumlar",
+        "content_type": "İçerik türü",
+        "video_type": "Video",
+        "image_type": "Görüntü",
+        "audio_type": "Ses",
+        "unknown_type": "Bilinmiyor",
         "dimensions": "Orijinal boyutlar",
         "quality": "En yüksek indirilebilir kalite",
+        "estimated_size": "Tahmini boyut",
+        "format": "Format",
+        "telegram": "Telegram",
+        "telegram_ready": "Gönderime uygun",
+        "telegram_processing": "İşleme gerekebilir",
         "status": "Durum",
         "partial": "Bağlantı algılandı, ancak bazı bilgiler alınamadı.",
         "ready": "Bağlantı indirmeye hazır.",
@@ -114,8 +150,20 @@ _CARD_TEXTS = {
         "source": "Quelle",
         "uploader": "Uploader",
         "views": "Aufrufe",
+        "likes": "Likes",
+        "comments": "Kommentare",
+        "content_type": "Inhaltstyp",
+        "video_type": "Video",
+        "image_type": "Bild",
+        "audio_type": "Audio",
+        "unknown_type": "Unbekannt",
         "dimensions": "Originalabmessungen",
         "quality": "Höchste herunterladbare Qualität",
+        "estimated_size": "Geschätzte Größe",
+        "format": "Format",
+        "telegram": "Telegram",
+        "telegram_ready": "Versandbereit",
+        "telegram_processing": "Kann Verarbeitung benötigen",
         "status": "Status",
         "partial": "Der Link wurde erkannt, aber einige Informationen sind nicht verfügbar.",
         "ready": "Der Link ist zum Download bereit.",
@@ -227,17 +275,13 @@ def _dimensions(data: dict, language: str = "ar") -> str:
     return labels["unavailable"]
 
 
-def _downloadable_quality(data: dict, language: str = "ar") -> str:
-    labels = _labels(language)
+def _video_formats(data: dict) -> list[dict]:
     formats = data.get("formats")
     if not isinstance(formats, list):
-        return labels["unavailable"]
-
-    candidates = []
+        return []
+    result = []
     for item in formats:
-        if not isinstance(item, dict):
-            continue
-        if not item.get("url"):
+        if not isinstance(item, dict) or not item.get("url"):
             continue
         vcodec = str(item.get("vcodec") or "none").lower()
         if vcodec == "none":
@@ -248,13 +292,105 @@ def _downloadable_quality(data: dict, language: str = "ar") -> str:
         except (TypeError, ValueError):
             continue
         if width and height:
-            candidates.append((width, height))
+            result.append(item)
+    return result
 
+
+def _best_video_format(data: dict) -> dict | None:
+    candidates = _video_formats(data)
     if not candidates:
-        return labels["unavailable"]
+        return None
+    return max(
+        candidates,
+        key=lambda item: (
+            int(item.get("width") or 0) * int(item.get("height") or 0),
+            int(item.get("height") or 0),
+            int(item.get("width") or 0),
+        ),
+    )
 
-    width, height = max(candidates, key=lambda item: (item[0] * item[1], item[1], item[0]))
-    return f"{width}×{height}"
+
+def _downloadable_quality(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    item = _best_video_format(data)
+    if not item:
+        return labels["unavailable"]
+    return f"{int(item['width'])}×{int(item['height'])}"
+
+
+def _format_name(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    item = _best_video_format(data)
+    if item:
+        ext = str(item.get("ext") or "").strip().lower()
+        return ext.upper() if ext else labels["unavailable"]
+    ext = str(data.get("ext") or "").strip().lower()
+    return ext.upper() if ext else labels["unavailable"]
+
+
+def _format_bytes(value, language: str = "ar") -> str:
+    labels = _labels(language)
+    try:
+        size = float(value)
+    except (TypeError, ValueError):
+        return labels["unavailable"]
+    if size < 0:
+        return labels["unavailable"]
+    units = ("B", "KB", "MB", "GB")
+    for unit in units:
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return labels["unavailable"]
+
+
+def _estimated_size(data: dict, language: str = "ar") -> str:
+    item = _best_video_format(data)
+    if item:
+        value = item.get("filesize")
+        if value is None:
+            value = item.get("filesize_approx")
+        if value is not None:
+            return _format_bytes(value, language)
+    value = data.get("filesize")
+    if value is None:
+        value = data.get("filesize_approx")
+    return _format_bytes(value, language)
+
+
+def _media_type(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    value = str(data.get("media_type") or "").lower()
+    return {
+        "video": labels["video_type"],
+        "image": labels["image_type"],
+        "audio": labels["audio_type"],
+    }.get(value, labels["unknown_type"])
+
+
+def _interaction_line(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    parts = []
+    for key, icon in (("like_count", "❤️"), ("comment_count", "💬")):
+        value = _views(data.get(key), language)
+        if value != labels["unavailable"]:
+            parts.append(f"{icon} {labels['likes' if key == 'like_count' else 'comments']}: {value}")
+    return "\n".join(parts)
+
+
+def _telegram_status(data: dict, language: str = "ar") -> str:
+    labels = _labels(language)
+    item = _best_video_format(data)
+    if not item:
+        return labels["unavailable"]
+    value = item.get("filesize")
+    if value is None:
+        value = item.get("filesize_approx")
+    try:
+        size = float(value)
+    except (TypeError, ValueError):
+        return labels["unavailable"]
+    return labels["telegram_ready"] if size <= 47 * 1024 * 1024 else labels["telegram_processing"]
 
 
 def _text(data: dict, language: str = "ar") -> str:
@@ -264,19 +400,30 @@ def _text(data: dict, language: str = "ar") -> str:
     duration = html.escape(_duration(data.get("duration"), language))
     uploader = html.escape(str(data.get("uploader") or labels["unknown"]))
     views = html.escape(_views(data.get("view_count"), language))
+    interactions = _interaction_line(data, language)
     dimensions = html.escape(_dimensions(data, language))
     quality = html.escape(_downloadable_quality(data, language))
+    content_type = html.escape(_media_type(data, language))
+    estimated_size = html.escape(_estimated_size(data, language))
+    format_name = html.escape(_format_name(data, language))
+    telegram_status = html.escape(_telegram_status(data, language))
     status = labels["partial"] if data.get("probe_error") else labels["ready"]
+    interaction_text = f"{interactions}\n" if interactions else ""
     return (
         f"{labels['title']}\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         f"🎬 <b>{title}</b>\n"
+        f"🧩 {labels['content_type']}: {content_type}\n"
         f"⏱ {labels['duration']}: {duration}\n"
         f"🌐 {labels['source']}: {source}\n"
         f"👤 {labels['uploader']}: {uploader}\n"
         f"👁 {labels['views']}: {views}\n"
+        f"{interaction_text}"
         f"📐 {labels['dimensions']}: {dimensions}\n"
-        f"🎚 {labels['quality']}: {quality}\n\n"
+        f"🎚 {labels['quality']}: {quality}\n"
+        f"💾 {labels['estimated_size']}: {estimated_size}\n"
+        f"📦 {labels['format']}: {format_name}\n"
+        f"📤 {labels['telegram']}: {telegram_status}\n\n"
         f"ℹ️ {html.escape(status)}\n\n"
         f"{labels['choose']}\n"
     )
@@ -285,18 +432,48 @@ def _text(data: dict, language: str = "ar") -> str:
 def _keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
     labels = _labels(language)
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(labels["video"], callback_data="video_menu")],
-        [InlineKeyboardButton(labels["post"], callback_data="post_download")],
+        [
+            InlineKeyboardButton(labels["video"], callback_data="video_menu"),
+            InlineKeyboardButton(labels["post"], callback_data="post_download"),
+        ],
         [InlineKeyboardButton(labels["audio"], callback_data="audio_menu")],
         [
             InlineKeyboardButton(labels["favorite"], callback_data="ux_favorite_current"),
             InlineKeyboardButton(labels["library"], callback_data="ux_library"),
         ],
+        [
+            InlineKeyboardButton(labels["thumbnail"], callback_data="sdc_thumbnail"),
+            InlineKeyboardButton(labels["open"], url=url),
+        ],
         [InlineKeyboardButton(labels["settings"], callback_data="ux_settings")],
-        [InlineKeyboardButton(labels["thumbnail"], callback_data="sdc_thumbnail")],
-        [InlineKeyboardButton(labels["open"], url=url)],
         [InlineKeyboardButton(labels["cancel"], callback_data="sdc_cancel")],
     ])
+
+
+def _detect_media_type(data: dict) -> str | None:
+    formats = data.get("formats")
+    if isinstance(formats, list):
+        if any(
+            isinstance(item, dict)
+            and str(item.get("vcodec") or "none").lower() != "none"
+            for item in formats
+        ):
+            return "video"
+        if any(
+            isinstance(item, dict)
+            and str(item.get("acodec") or "none").lower() != "none"
+            for item in formats
+        ):
+            return "audio"
+
+    ext = str(data.get("ext") or "").lower()
+    if ext in {"jpg", "jpeg", "png", "webp", "gif", "avif", "heic", "heif"}:
+        return "image"
+    if ext in {"mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"}:
+        return "audio"
+    if data.get("duration") is not None or data.get("vcodec"):
+        return "video"
+    return None
 
 
 async def _probe(url: str) -> dict:
@@ -323,8 +500,14 @@ async def _probe(url: str) -> dict:
         "thumbnail": data.get("thumbnail"),
         "source": _source(url),
         "view_count": data.get("view_count"),
+        "like_count": data.get("like_count"),
+        "comment_count": data.get("comment_count"),
         "width": data.get("width"),
         "height": data.get("height"),
+        "ext": data.get("ext"),
+        "filesize": data.get("filesize"),
+        "filesize_approx": data.get("filesize_approx"),
+        "media_type": _detect_media_type(data),
         "formats": data.get("formats") if isinstance(data.get("formats"), list) else [],
     }
 
@@ -363,8 +546,14 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
         "uploader": None,
         "thumbnail": None,
         "view_count": None,
+        "like_count": None,
+        "comment_count": None,
         "width": None,
         "height": None,
+        "ext": None,
+        "filesize": None,
+        "filesize_approx": None,
+        "media_type": None,
         "formats": [],
     }
     status_message = await message.reply_text(
