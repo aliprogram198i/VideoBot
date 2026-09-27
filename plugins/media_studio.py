@@ -703,7 +703,9 @@ async def media_studio_callback(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     query = update.callback_query
-    await query.answer()
+    # Acknowledge the callback immediately so Telegram clears the button spinner
+    # while the next UI operation continues.
+    answer_task = asyncio.create_task(query.answer())
 
     user = update.effective_user
     if not user:
@@ -760,7 +762,10 @@ async def media_studio_callback(
         return
 
     if action == "back":
-        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
+        await asyncio.gather(
+            answer_task,
+            query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language)),
+        )
         return
 
     if action == "info" and value is None:
@@ -807,8 +812,10 @@ async def media_studio_callback(
         # Submenus must replace the Studio keyboard on the same message.
         # Sending a new reply would leave the main Studio buttons underneath
         # and cause the keyboards to stack when the user presses Back.
-        await query.answer(prompt)
-        await query.message.edit_reply_markup(reply_markup=builder(token, language))
+        await asyncio.gather(
+            answer_task,
+            query.message.edit_reply_markup(reply_markup=builder(token, language)),
+        )
         return
 
     if action == "trimcustom" and value is None:
@@ -822,6 +829,7 @@ async def media_studio_callback(
 
     context.user_data[STUDIO_MESSAGE_KEY] = {"chat_id": query.message.chat_id, "message_id": query.message.message_id}
     await _run_action(update, context, token, action, value)
+    await answer_task
 
 
 async def media_studio_text_handler(

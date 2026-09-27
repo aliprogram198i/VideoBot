@@ -38,3 +38,10 @@ def test_link_info_reflects_current_studio_version():
     assert "def _studio_info_message(" in STUDIO
     assert '"studio_current": True' in STUDIO
     assert "current_version" in STUDIO
+
+
+def test_studio_callback_ack_is_parallel_and_submenus_do_not_double_answer():
+    assert "answer_task = asyncio.create_task(query.answer())" in STUDIO
+    assert "await asyncio.gather(" in STUDIO
+    assert "await query.answer(prompt)" not in STUDIO
+    assert "await _run_action(update, context, token, action, value)\n    await answer_task" in STUDIO
