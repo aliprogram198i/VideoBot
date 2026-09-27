@@ -658,6 +658,10 @@ class _BatchCallbackQueryProxy(_CallbackQueryProxy):
             return None
         return await message.edit_text(*args, **kwargs)
 
+    async def delete_message(self, *args, **kwargs):
+        # Keep the batch control message alive until every selected item finishes.
+        return None
+
 
 async def _download_multi_items(update: Update, context: ContextTypes.DEFAULT_TYPE, indexes: list[int]) -> None:
     query = update.callback_query
