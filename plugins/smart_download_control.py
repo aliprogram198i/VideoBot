@@ -44,10 +44,11 @@ _CARD_TEXTS = {
         "status": "الحالة",
         "partial": "تم جلب الرابط، لكن بعض المعلومات غير متاحة.",
         "ready": "الرابط جاهز للتحميل.",
-        "choose": "اختر ما تريد:",
-        "video": "🎥 فيديو",
+        "choose": "الإجراء الرئيسي:",
+        "more_options": "⚙️ خيارات أخرى",
+        "video": "🎥 تحميل الفيديو",
         "post": "📌 تحميل المنشور",
-        "audio": "🎵 MP3",
+        "audio": "🎵 تحميل الصوت",
         "favorite": "⭐ حفظ",
         "library": "📚 مكتبتي",
         "settings": "⚙️ الإعدادات",
@@ -126,9 +127,10 @@ _CARD_TEXTS = {
         "status": "Durum",
         "partial": "Bağlantı algılandı, ancak bazı bilgiler alınamadı.",
         "ready": "Bağlantı indirmeye hazır.",
-        "choose": "Bir işlem seçin:",
-        "video": "🎥 Video",
-        "audio": "🎵 MP3",
+        "choose": "Ana işlem:",
+        "more_options": "⚙️ Diğer seçenekler",
+        "video": "🎥 Videoyu indir",
+        "audio": "🎵 Sesi indir",
         "post": "📌 Gönderiyi indir",
         "favorite": "⭐ Kaydet",
         "library": "📚 Kitaplığım",
@@ -167,9 +169,10 @@ _CARD_TEXTS = {
         "status": "Status",
         "partial": "Der Link wurde erkannt, aber einige Informationen sind nicht verfügbar.",
         "ready": "Der Link ist zum Download bereit.",
-        "choose": "Aktion auswählen:",
-        "video": "🎥 Video",
-        "audio": "🎵 MP3",
+        "choose": "Hauptaktion:",
+        "more_options": "⚙️ Weitere Optionen",
+        "video": "🎥 Video herunterladen",
+        "audio": "🎵 Audio herunterladen",
         "post": "📌 Beitrag herunterladen",
         "favorite": "⭐ Speichern",
         "library": "📚 Bibliothek",
@@ -434,9 +437,17 @@ def _keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(labels["video"], callback_data="video_menu"),
-            InlineKeyboardButton(labels["post"], callback_data="post_download"),
+            InlineKeyboardButton(labels["audio"], callback_data="audio_menu"),
         ],
-        [InlineKeyboardButton(labels["audio"], callback_data="audio_menu")],
+        [InlineKeyboardButton(labels["post"], callback_data="post_download")],
+        [InlineKeyboardButton(labels["more_options"], callback_data="sdc_more")],
+        [InlineKeyboardButton(labels["cancel"], callback_data="sdc_cancel")],
+    ])
+
+
+def _more_keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
+    labels = _labels(language)
+    return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(labels["favorite"], callback_data="ux_favorite_current"),
             InlineKeyboardButton(labels["library"], callback_data="ux_library"),
@@ -446,7 +457,7 @@ def _keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
             InlineKeyboardButton(labels["open"], url=url),
         ],
         [InlineKeyboardButton(labels["settings"], callback_data="ux_settings")],
-        [InlineKeyboardButton(labels["cancel"], callback_data="sdc_cancel")],
+        [InlineKeyboardButton(labels["video"], callback_data="main_menu")],
     ])
 
 
@@ -688,6 +699,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.edit_message_text(_labels(language)["cancelled"])
         raise ApplicationHandlerStop
 
+    if data == "sdc_more":
+        await query.edit_message_reply_markup(reply_markup=_more_keyboard(context.user_data.get("video_url") or "", language))
+        raise ApplicationHandlerStop
+
     if data == "sdc_thumbnail":
         await _send_thumbnail(query, context)
         raise ApplicationHandlerStop
@@ -703,7 +718,7 @@ def register_smart_download_control(app) -> None:
         group=-1,
     )
     app.add_handler(
-        CallbackQueryHandler(callback, pattern=r"^(sdc_thumbnail|sdc_cancel|main_menu)$"),
+        CallbackQueryHandler(callback, pattern=r"^(sdc_thumbnail|sdc_cancel|sdc_more|main_menu)$"),
         group=-2,
     )
     print("🎛️ Smart Download Control: ENABLED", flush=True)
