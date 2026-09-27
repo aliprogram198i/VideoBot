@@ -287,3 +287,14 @@ def test_media_studio_text_handler_has_explicit_early_routing_group():
     registration = source[source.index("def register_media_studio"):]
     handler = registration[registration.index("media_studio_text_handler"):]
     assert "group=-3" in handler
+
+def test_initial_download_result_is_tracked_for_studio_undo():
+    source = Path(__file__).resolve().parents[1] / "bot.py"
+    text = source.read_text(encoding="utf-8")
+    marker = 'sent_video = await context.bot.send_video('
+    start = text.index(marker)
+    section = text[start:start + 4500]
+
+    assert 'context.user_data["media_studio_result_message"] = {' in section
+    assert '"message_id": sent_video.message_id' in section
+    assert 'context.user_data["media_studio_message"] = {' in section
