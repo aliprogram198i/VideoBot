@@ -174,6 +174,17 @@ def _facebook_extract_canonical_id(value):
             continue
         if re.fullmatch(r"\d{5,30}", candidate):
             return candidate
+
+    # Facebook share pages may expose the canonical numeric media ID only in
+    # structured metadata instead of an absolute canonical URL. Accept only
+    # explicit video-ID fields so unrelated numeric IDs are never guessed.
+    metadata_id = re.search(
+        r"(?:[\"'](?:video_id|videoId|videoID|legacy_video_id|story_fbid)[\"']|(?:video_id|videoId|videoID|legacy_video_id|story_fbid))\s*[:=]\s*[\"']?(\d{5,30})",
+        text,
+        re.I,
+    )
+    if metadata_id:
+        return metadata_id.group(1)
     return None
 
 
