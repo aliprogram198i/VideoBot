@@ -735,7 +735,10 @@ async def media_studio_callback(
             context.user_data[STUDIO_HISTORY_KEY] = history
             await query.message.reply_text(t("studio", "expired", language))
             return
-        context.user_data[STUDIO_HISTORY_KEY] = history
+        # Undo restores the immediately previous version and consumes the
+        # one-step undo state so the restored version does not advertise
+        # another undo action from the same operation.
+        context.user_data[STUDIO_HISTORY_KEY] = []
         context.user_data[STUDIO_CURRENT_TOKEN_KEY] = previous_token
         context.user_data["sdc_info"] = _studio_info(
             context.user_data.get("sdc_info"), previous, previous_token
