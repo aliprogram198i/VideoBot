@@ -41,3 +41,20 @@ def test_normalize_entries_caps_items():
     )
     assert len(result) == 5
     assert [item.index for item in result] == list(range(5))
+
+
+def test_normalize_instagram_flat_playlist_entries_builds_child_urls_and_detects_images():
+    entries = [
+        {"id": "CHILD_IMAGE", "title": "Photo"},
+        {"id": "CHILD_VIDEO", "title": "Video", "duration": 8, "vcodec": "h264"},
+    ]
+    result = normalize_entries(
+        entries,
+        url_validator=lambda value: value.startswith("https://www.instagram.com/p/"),
+        parent_url="https://www.instagram.com/p/PARENT/",
+    )
+    assert [item.url for item in result] == [
+        "https://www.instagram.com/p/CHILD_IMAGE/",
+        "https://www.instagram.com/p/CHILD_VIDEO/",
+    ]
+    assert [item.media_type for item in result] == ["image", "video"]
