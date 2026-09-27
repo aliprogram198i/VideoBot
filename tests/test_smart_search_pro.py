@@ -76,6 +76,16 @@ def test_long_title_is_stable_and_truncated_for_comparison():
     assert len(first) <= 64
 
 
+def test_search_timeout_contract_is_bounded_and_kills_child():
+    source = Path(__file__).resolve().parents[1] / "downloader" / "smart_search.py"
+    text = source.read_text(encoding="utf-8")
+    assert "SEARCH_COUNT = 10" in text
+    assert "TIMEOUT_SECONDS = 12" in text
+    assert "subprocess.Popen(" in text
+    assert "process.kill()" in text
+    assert "subprocess.TimeoutExpired" in text
+
+
 def test_entry_url_ignores_non_url_webpage_basename():
     from downloader.smart_search import _entry_url
 
