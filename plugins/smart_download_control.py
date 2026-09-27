@@ -591,10 +591,28 @@ def _multi_keyboard(entries: list[dict], selected: set[int], language: str) -> I
 
 
 async def _show_multi_control(message, context: ContextTypes.DEFAULT_TYPE, entries: list[dict], language: str) -> None:
-    selected = set(range(len(entries)))
+    selected = set()
     context.user_data["multi_media"] = entries
     context.user_data["multi_selected"] = selected
     await message.reply_text(_multi_text(entries, selected, language), parse_mode="HTML", reply_markup=_multi_keyboard(entries, selected, language))
+
+
+class _CallbackQueryProxy:
+    def __init__(self, query, data: str) -> None:
+        self._query = query
+        self.data = data
+
+    def __getattr__(self, name):
+        return getattr(self._query, name)
+
+
+class _UpdateProxy:
+    def __init__(self, update: Update, query: _CallbackQueryProxy) -> None:
+        self._update = update
+        self.callback_query = query
+
+    def __getattr__(self, name):
+        return getattr(self._update, name)
 
 
 async def _download_multi_items(update: Update, context: ContextTypes.DEFAULT_TYPE, indexes: list[int]) -> None:
@@ -606,14 +624,13 @@ async def _download_multi_items(update: Update, context: ContextTypes.DEFAULT_TY
         language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
         await query.answer(_multi_labels(language)["none"], show_alert=True)
         return
-    original_data = query.data
-    try:
-        for item in valid:
-            context.user_data["video_url"] = item["url"]
-            query.data = "post_download"
-            await bot_module.download_media(update, context)
-    finally:
-        query.data = original_data
+
+    for item in valid:
+        context.user_data["video_url"] = item["url"]
+        proxy_query = _CallbackQueryProxy(query, "post_download")
+        proxy_update = _UpdateProxy(update, proxy_query)
+        await bot_module.download_media(proxy_update, context)
+
     language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
     await query.answer(_multi_labels(language)["done"])
 
@@ -907,7 +924,7 @@ def register_smart_download_control(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             _multi_callback,
-            pattern=r"^mm:(?:t:\\d+|a|s|b)$",
+            pattern=r"^mm:(?:t:\d+|a|s|b)$",
         ),
         group=-3,
     )
