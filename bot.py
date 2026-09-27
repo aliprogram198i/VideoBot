@@ -252,15 +252,11 @@ TEXTS = {
             "📤 جاري إرسال الملف إليك...",
 
         "video_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎬 تم تحميل الفيديو بنجاح!\n"
+            "╭━━━ 🎬 تم تجهيز الفيديو بنجاح ━━━╮\n"
+            "✨ الجودة: {quality}\n"
+            "✅ الحالة: جاهز للمشاهدة\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 مرحباً {username} 🤍\n\n"
-            "🎚 الجودة: {quality}\n"
-            "📥 الحالة: جاهز ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🚀 استمتع بالفيديو!\n"
-            "🔗 أرسل رابطاً آخر لبدء تحميل جديد.",
+            "🚀 ماذا تريد أن تفعل الآن?",
 
         "audio_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\n"
@@ -400,15 +396,11 @@ TEXTS = {
             "📤 Sending the file...",
 
         "video_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎬 Video downloaded successfully!\n"
+            "╭━━━ 🎬 Video ready ━━━╮\n"
+            "✨ Quality: {quality}\n"
+            "✅ Status: Ready to watch\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 Welcome {username} 🤍\n\n"
-            "🎚 Quality: {quality}\n"
-            "📥 Status: Ready ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🚀 Enjoy your video!\n"
-            "🔗 Send another link to start a new download.",
+            "🚀 What would you like to do next?",
 
         "audio_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\n"
@@ -544,15 +536,11 @@ TEXTS = {
             "📤 Dosya gönderiliyor...",
 
         "video_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎬 Video başarıyla indirildi!\n"
+            "╭━━━ 🎬 Video hazır ━━━╮\n"
+            "✨ Kalite: {quality}\n"
+            "✅ Durum: İzlemeye hazır\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 Hoş geldin {username} 🤍\n\n"
-            "🎚 Kalite: {quality}\n"
-            "📥 Durum: Hazır ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🚀 Videonuzun keyfini çıkarın!\n"
-            "🔗 Yeni bir indirme için başka bir bağlantı gönderin.",
+            "🚀 Şimdi ne yapmak istersiniz?",
 
         "audio_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\n"
@@ -687,15 +675,11 @@ TEXTS = {
             "📤 Datei wird gesendet...",
 
         "video_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎬 Video erfolgreich heruntergeladen!\n"
+            "╭━━━ 🎬 Video bereit ━━━╮\n"
+            "✨ Qualität: {quality}\n"
+            "✅ Status: Wiedergabebereit\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 Willkommen {username} 🤍\n\n"
-            "🎚 Qualität: {quality}\n"
-            "📥 Status: Bereit ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🚀 Viel Spaß mit Ihrem Video!\n"
-            "🔗 Senden Sie einen weiteren Link für einen neuen Download.",
+            "🚀 Was möchten Sie als Nächstes tun?",
 
         "audio_done":
             "╭━━━━━━━━━━━━━━━━━━━━╮\n"
