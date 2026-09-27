@@ -5709,6 +5709,19 @@ async def download_media(
                         pool_timeout=60,
                     )
 
+                # Register the original download message as the active
+                # Smart Studio result. This makes the first Undo operation
+                # replace the original download result instead of leaving the
+                # initial success message/video visible underneath it.
+                context.user_data["media_studio_result_message"] = {
+                    "chat_id": sent_video.chat_id,
+                    "message_id": sent_video.message_id,
+                }
+                context.user_data["media_studio_message"] = {
+                    "chat_id": sent_video.chat_id,
+                    "message_id": sent_video.message_id,
+                }
+
                 # Media Studio works from the validated local artifact. The
                 # cache is best-effort and never blocks a successful download.
                 try:
