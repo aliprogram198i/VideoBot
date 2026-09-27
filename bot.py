@@ -256,19 +256,14 @@ TEXTS = {
             "✨ الجودة: {quality}\n"
             "✅ الحالة: جاهز للمشاهدة\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "🚀 ماذا تريد أن تفعل الآن؟",
-
+            "🚀 ماذا تريد أن تفعل الآن?",
         "audio_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎵 تم تحميل الصوت بنجاح!\n"
+            "╭━━━ 🎵 تم تجهيز الصوت بنجاح ━━━╮\n"
+            "✨ الجودة: {quality}\n"
+            "✅ الحالة: جاهز للاستماع\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 مرحباً {username} 🤍\n\n"
-            "🎚 الجودة: {quality}\n"
-            "📥 الحالة: جاهز ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
             "🎧 استمتع بالصوت!\n"
-            "🔗 أرسل رابطاً آخر لبدء تحميل جديد.",
-
+            "🔗 أرسل رابطاً جديداً لبدء تحميل آخر.",
         "download_error":
             "❌ تعذر تحميل هذا الرابط.\n\n"
             "قد يكون الرابط غير متاح حالياً، أو أن المنصة "
@@ -401,18 +396,13 @@ TEXTS = {
             "✅ Status: Ready to watch\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
             "🚀 What would you like to do next?",
-
         "audio_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎵 Audio downloaded successfully!\n"
+            "╭━━━ 🎵 Audio ready ━━━╮\n"
+            "✨ Quality: {quality}\n"
+            "✅ Status: Ready to listen\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 Welcome {username} 🤍\n\n"
-            "🎚 Quality: {quality}\n"
-            "📥 Status: Ready ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
             "🎧 Enjoy your audio!\n"
-            "🔗 Send another link to start a new download.",
-
+            "🔗 Send a new link to start another download.",
         "download_error":
             "❌ Unable to download this link.",
 
@@ -541,18 +531,13 @@ TEXTS = {
             "✅ Durum: İzlemeye hazır\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
             "🚀 Şimdi ne yapmak istersiniz?",
-
         "audio_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎵 Ses başarıyla indirildi!\n"
+            "╭━━━ 🎵 Ses hazır ━━━╮\n"
+            "✨ Kalite: {quality}\n"
+            "✅ Durum: Dinlemeye hazır\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 Hoş geldin {username} 🤍\n\n"
-            "🎚 Kalite: {quality}\n"
-            "📥 Durum: Hazır ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
             "🎧 Sesinizin keyfini çıkarın!\n"
-            "🔗 Yeni bir indirme için başka bir bağlantı gönderin.",
-
+            "🔗 Yeni bir indirme için yeni bir bağlantı gönderin.",
         "download_error":
             "❌ Bu bağlantı indirilemedi.",
 
@@ -677,21 +662,16 @@ TEXTS = {
         "video_done":
             "╭━━━ 🎬 Video bereit ━━━╮\n"
             "✨ Qualität: {quality}\n"
-            "✅ Status: Wiedergabebereit\n"
+            "✅ Status: Bereit zum Ansehen\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "🚀 Was möchten Sie als Nächstes tun?",
-
+            "🚀 Was möchten Sie jetzt tun?",
         "audio_done":
-            "╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            "       🎵 Audio erfolgreich heruntergeladen!\n"
+            "╭━━━ 🎵 Audio bereit ━━━╮\n"
+            "✨ Qualität: {quality}\n"
+            "✅ Status: Bereit zum Anhören\n"
             "╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "👤 Willkommen {username} 🤍\n\n"
-            "🎚 Qualität: {quality}\n"
-            "📥 Status: Bereit ✓\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
             "🎧 Viel Spaß mit Ihrem Audio!\n"
-            "🔗 Senden Sie einen weiteren Link für einen neuen Download.",
-
+            "🔗 Senden Sie einen neuen Link für einen weiteren Download.",
         "download_error":
             "❌ Dieser Link konnte nicht heruntergeladen werden.",
 
