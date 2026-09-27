@@ -32,6 +32,7 @@ def test_studio_preserves_bounded_version_history_and_undo():
     assert 'STUDIO_HISTORY_KEY = "media_studio_history"' in STUDIO
     assert 'callback_data=f"studio:undo:{token}"' in STUDIO
     assert 'action == "undo"' in STUDIO
+    assert 'context.user_data[STUDIO_HISTORY_KEY] = []' in STUDIO
 
 
 def test_link_info_reflects_current_studio_version():
