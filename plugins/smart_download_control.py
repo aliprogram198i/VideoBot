@@ -551,7 +551,7 @@ async def _probe_collection(url: str) -> list[dict]:
     if not isinstance(entries, list) or len(entries) < 2:
         return []
     try:
-        normalized = normalize_entries(entries, url_validator=_public_url, max_items=MAX_MULTI_MEDIA_ITEMS)
+        normalized = normalize_entries(entries, url_validator=_public_url, max_items=MAX_MULTI_MEDIA_ITEMS, parent_url=url)
     except Exception:
         return []
     return [
