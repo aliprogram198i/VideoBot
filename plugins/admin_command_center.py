@@ -15,25 +15,8 @@ from .admin_control_center import _home_text, admin_keyboard, audit
 
 
 def command_center_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("👥 المستخدمون", callback_data="admin_users_page_0"),
-            InlineKeyboardButton("📥 التنزيلات", callback_data="admin_records"),
-        ],
-        [
-            InlineKeyboardButton("🚨 المراقبة والحوادث", callback_data="admin_ops_dashboard"),
-            InlineKeyboardButton("⚙️ النظام والعمليات", callback_data="admin_health"),
-        ],
-        [
-            InlineKeyboardButton("🤖 العمليات الذكية", callback_data="admin_smart_operations"),
-            InlineKeyboardButton("👥 إدارة المجموعات", callback_data="admin_group_publisher"),
-        ],
-        [
-            InlineKeyboardButton("📢 التواصل", callback_data="admin_broadcast"),
-            InlineKeyboardButton("🛡️ الأمان والإدارة", callback_data="admin_roles"),
-        ],
-        [InlineKeyboardButton("➕ المزيد من الأدوات", callback_data="admin_more")],
-    ])
+    """Compatibility facade over the canonical top-level admin navigation."""
+    return admin_keyboard()
 
 
 async def command_center_callback(update: Update, context, get_db, owner_id: int) -> None:

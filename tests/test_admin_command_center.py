@@ -46,15 +46,18 @@ def test_command_center_has_all_current_domains_and_more():
     rows = command_center_keyboard().inline_keyboard
     callbacks = [button.callback_data for row in rows for button in row]
     assert callbacks == [
+        "admin_ops_dashboard",
         "admin_users_page_0",
         "admin_records",
-        "admin_ops_dashboard",
-        "admin_health",
         "admin_smart_operations",
-        "admin_group_publisher",
+        "admin_monitoring",
+        "admin_observability",
         "admin_broadcast",
+        "admin_health",
+        "admin_ai",
+        "admin_storage",
+        "admin_audit",
         "admin_roles",
-        "admin_more",
     ]
 
 
