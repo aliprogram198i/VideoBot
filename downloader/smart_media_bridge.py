@@ -156,6 +156,20 @@ def _facebook_extract_canonical_id(value):
             re.I,
         )
     )
+
+    # Facebook share/r pages can expose the canonical numeric resource only
+    # inside bounded structured metadata instead of a canonical URL.
+    # Accept only explicit video-id fields; never scrape arbitrary numbers.
+    structured_ids = []
+    for pattern in (
+        r'"video_id"\s*:\s*"?(\d{5,30})"?',
+        r'"videoID"\s*:\s*"?(\d{5,30})"?',
+        r'"videoId"\s*:\s*"?(\d{5,30})"?',
+    ):
+        structured_ids.extend(re.findall(pattern, text, re.I))
+    if structured_ids:
+        return structured_ids[0]
+
     for candidate_url in candidates:
         try:
             parsed = urlparse(candidate_url)
