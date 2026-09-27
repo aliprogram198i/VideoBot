@@ -5752,6 +5752,9 @@ async def download_media(
                         user.id,
                         media_file,
                     )
+                    media_context = context.user_data.get("media_context")
+                    if isinstance(media_context, dict):
+                        media_context["studio_token"] = studio_token
                     await sent_video.edit_reply_markup(
                         reply_markup=studio_keyboard(studio_token),
                     )
