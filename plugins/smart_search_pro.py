@@ -286,6 +286,17 @@ def _clean_title(title: str) -> str:
     return re.sub(r"\s+", " ", title).strip()
 
 
+def _title_window(title: str, width: int, offset: int = 0) -> str:
+    """Compatibility helper retained for callers; result buttons no longer animate."""
+    if width <= 0:
+        return ""
+    title = _clean_title(title)
+    if len(title) <= width:
+        return title
+    start = max(0, min(offset, len(title) - width))
+    return title[start:start + width]
+
+
 def _truncate_title(title: str, width: int = TITLE_MAX_CHARS) -> str:
     title = _clean_title(title)
     if width <= 0:
@@ -295,7 +306,7 @@ def _truncate_title(title: str, width: int = TITLE_MAX_CHARS) -> str:
     return title[: max(width - 1, 1)].rstrip() + "…"
 
 
-def _button_label(index: int, result: SearchResult) -> str:
+def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> str:
     """Build a stable, comparable result label within Telegram's 64-char limit."""
     meta_text = _button_meta(result)
     prefix = f"{index + 1}️⃣  "
