@@ -8,7 +8,8 @@ def test_processed_video_keeps_studio_workflow_available():
     """A processed video remains editable without another download."""
     assert "sent = await context.bot.send_video(" in STUDIO
     assert "studio_token = cache_media_for_user(" in STUDIO
-    assert "reply_markup=studio_keyboard(studio_token, language)" in STUDIO
+    assert "reply_markup=studio_keyboard(" in STUDIO
+    assert "can_undo=True" in STUDIO
 
 
 def test_single_download_studio_cache_behavior_is_preserved():
