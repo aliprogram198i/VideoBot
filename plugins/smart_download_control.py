@@ -648,6 +648,17 @@ class _UpdateProxy:
         return getattr(self._update, name)
 
 
+class _BatchCallbackQueryProxy(_CallbackQueryProxy):
+    async def answer(self, *args, **kwargs) -> None:
+        return None
+
+    async def edit_message_text(self, *args, **kwargs):
+        message = self._query.message
+        if message is None:
+            return None
+        return await message.edit_text(*args, **kwargs)
+
+
 async def _download_multi_items(update: Update, context: ContextTypes.DEFAULT_TYPE, indexes: list[int]) -> None:
     query = update.callback_query
     bot_module = __import__("bot")
@@ -658,10 +669,11 @@ async def _download_multi_items(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer(_multi_labels(language)["none"], show_alert=True)
         return
 
+    proxy_query = _BatchCallbackQueryProxy(query, "post_download")
+    proxy_update = _UpdateProxy(update, proxy_query)
+
     for item in valid:
         context.user_data["video_url"] = item["url"]
-        proxy_query = _CallbackQueryProxy(query, "post_download")
-        proxy_update = _UpdateProxy(update, proxy_query)
         await bot_module.download_media(proxy_update, context)
 
     language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
