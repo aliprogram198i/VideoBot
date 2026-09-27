@@ -552,17 +552,27 @@ async def _run_action(
     if not status:
         return
 
-    await message.reply_text(status)
+    status_message = await message.reply_text(status)
     output = None
     try:
         output, media_type = await _create_result(source, action, value)
         _validate_result(output)
         await _send_result(update, context, output, media_type)
+        # The status message is only a transient progress indicator. Once the
+        # result has been delivered, remove it so the chat stays clean.
+        try:
+            await status_message.delete()
+        except Exception:
+            __import__("logging").getLogger(__name__).debug(
+                "studio_status_message_delete_failed",
+                exc_info=True,
+            )
     except (RuntimeError, ValueError, OSError) as exc:
         print(f"⚠️ Media Studio failed: {type(exc).__name__}: {exc}")
-        await message.reply_text(
-            t("studio", "failed", language)
-        )
+        try:
+            await status_message.edit_text(t("studio", "failed", language))
+        except Exception:
+            await message.reply_text(t("studio", "failed", language))
     finally:
         if output is not None:
             output.unlink(missing_ok=True)
