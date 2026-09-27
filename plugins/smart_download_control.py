@@ -14,6 +14,12 @@ from urllib.request import Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
+from downloader.multi_media import (
+    MAX_MULTI_MEDIA_ITEMS,
+    is_collection_candidate,
+    normalize_entries,
+)
+
 PROBE_TIMEOUT = 25
 THUMBNAIL_TIMEOUT = 20
 THUMBNAIL_MAX_BYTES = 10 * 1024 * 1024
@@ -191,6 +197,18 @@ _CARD_TEXTS = {
         "cancelled": "✅ Vorgang abgebrochen.",
     },
 }
+
+
+_MULTI_LABELS = {
+    "ar": {"count": "📦 يحتوي هذا المنشور على {count} عناصر", "all": "⬇️ تحميل الكل", "select": "☑️ اختيار عناصر محددة", "selected": "تحميل المحدد ({count})", "item": "العنصر {index}", "video": "فيديو", "image": "صورة", "audio": "صوت", "none": "اختر عنصرًا واحدًا على الأقل.", "done": "✅ انتهت معالجة المجموعة.", "back": "🔙 رجوع"},
+    "en": {"count": "📦 This post contains {count} items", "all": "⬇️ Download all", "select": "☑️ Select items", "selected": "Download selected ({count})", "item": "Item {index}", "video": "video", "image": "image", "audio": "audio", "none": "Select at least one item.", "done": "✅ Collection processing finished.", "back": "🔙 Back"},
+    "tr": {"count": "📦 Bu gönderi {count} öğe içeriyor", "all": "⬇️ Tümünü indir", "select": "☑️ Öğe seç", "selected": "Seçilenleri indir ({count})", "item": "Öğe {index}", "video": "video", "image": "görüntü", "audio": "ses", "none": "En az bir öğe seçin.", "done": "✅ Koleksiyon işlemi tamamlandı.", "back": "🔙 Geri"},
+    "de": {"count": "📦 Dieser Beitrag enthält {count} Elemente", "all": "⬇️ Alle herunterladen", "select": "☑️ Elemente auswählen", "selected": "Ausgewählte herunterladen ({count})", "item": "Element {index}", "video": "Video", "image": "Bild", "audio": "Audio", "none": "Wählen Sie mindestens ein Element aus.", "done": "✅ Sammlung verarbeitet.", "back": "🔙 Zurück"},
+}
+
+
+def _multi_labels(language: str) -> dict:
+    return _MULTI_LABELS.get(language, _MULTI_LABELS["ar"])
 
 
 def _language(bot_module, user_id: int) -> str:
@@ -507,6 +525,142 @@ def _detect_media_type(data: dict) -> str | None:
     return None
 
 
+async def _probe_collection(url: str) -> list[dict]:
+    if not is_collection_candidate(url):
+        return []
+    command = [
+        "python", "-m", "yt_dlp", "--flat-playlist", "--skip-download",
+        "--dump-single-json", "--no-warnings", "--socket-timeout", "15", url,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=PROBE_TIMEOUT)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.communicate()
+        return []
+    if process.returncode != 0:
+        return []
+    try:
+        data = json.loads(stdout.decode("utf-8", errors="ignore"))
+    except json.JSONDecodeError:
+        return []
+    entries = data.get("entries")
+    if not isinstance(entries, list) or len(entries) < 2:
+        return []
+    try:
+        normalized = normalize_entries(entries, url_validator=_public_url, max_items=MAX_MULTI_MEDIA_ITEMS)
+    except Exception:
+        return []
+    return [
+        {"index": item.index, "url": item.url, "title": item.title, "media_type": item.media_type,
+         "duration": item.duration, "thumbnail": item.thumbnail}
+        for item in normalized
+    ]
+
+
+def _multi_text(entries: list[dict], selected: set[int], language: str) -> str:
+    labels = _multi_labels(language)
+    lines = [labels["count"].format(count=len(entries)), "━━━━━━━━━━━━━━━━━━", ""]
+    for item in entries:
+        index = int(item.get("index", 0))
+        mark = "✅" if index in selected else "▫️"
+        title = str(item.get("title") or labels["item"].format(index=index + 1))
+        media_type = str(item.get("media_type") or "video")
+        lines.append(f"{mark} {index + 1}. {html.escape(title[:70])} — {labels.get(media_type, media_type)}")
+    lines += ["", labels["select"]]
+    return "\n".join(lines)
+
+
+def _multi_keyboard(entries: list[dict], selected: set[int], language: str) -> InlineKeyboardMarkup:
+    labels = _multi_labels(language)
+    rows = []
+    for item in entries:
+        index = int(item.get("index", 0))
+        mark = "✅" if index in selected else "▫️"
+        title = str(item.get("title") or labels["item"].format(index=index + 1))
+        rows.append([InlineKeyboardButton(f"{mark} {index + 1} · {title[:24]}", callback_data=f"mm:t:{index}")])
+    rows.append([
+        InlineKeyboardButton(labels["all"], callback_data="mm:a"),
+        InlineKeyboardButton(labels["selected"].format(count=len(selected)), callback_data="mm:s"),
+    ])
+    rows.append([InlineKeyboardButton(labels["back"], callback_data="mm:b")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _show_multi_control(message, context: ContextTypes.DEFAULT_TYPE, entries: list[dict], language: str) -> None:
+    selected = set(range(len(entries)))
+    context.user_data["multi_media"] = entries
+    context.user_data["multi_selected"] = selected
+    await message.reply_text(_multi_text(entries, selected, language), parse_mode="HTML", reply_markup=_multi_keyboard(entries, selected, language))
+
+
+async def _download_multi_items(update: Update, context: ContextTypes.DEFAULT_TYPE, indexes: list[int]) -> None:
+    query = update.callback_query
+    bot_module = __import__("bot")
+    entries = context.user_data.get("multi_media") or []
+    valid = [entries[index] for index in indexes if isinstance(index, int) and 0 <= index < len(entries)]
+    if not valid:
+        language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
+        await query.answer(_multi_labels(language)["none"], show_alert=True)
+        return
+    original_data = query.data
+    try:
+        for item in valid:
+            context.user_data["video_url"] = item["url"]
+            query.data = "post_download"
+            await bot_module.download_media(update, context)
+    finally:
+        query.data = original_data
+    language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
+    await query.answer(_multi_labels(language)["done"])
+
+
+async def _multi_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    bot_module = __import__("bot")
+    language = _language(bot_module, query.from_user.id) if query.from_user else "ar"
+    entries = context.user_data.get("multi_media") or []
+    if not entries:
+        await query.answer(_labels(language)["expired"], show_alert=True)
+        raise ApplicationHandlerStop
+    data = query.data or ""
+    selected = set(context.user_data.get("multi_selected") or set())
+    if data.startswith("mm:t:"):
+        try:
+            index = int(data.rsplit(":", 1)[1])
+        except (TypeError, ValueError):
+            await query.answer()
+            raise ApplicationHandlerStop
+        if index in selected:
+            selected.remove(index)
+        else:
+            selected.add(index)
+        context.user_data["multi_selected"] = selected
+        await query.answer()
+        await query.edit_message_text(_multi_text(entries, selected, language), parse_mode="HTML", reply_markup=_multi_keyboard(entries, selected, language))
+        raise ApplicationHandlerStop
+    if data == "mm:a":
+        await query.answer()
+        await _download_multi_items(update, context, list(range(len(entries))))
+        raise ApplicationHandlerStop
+    if data == "mm:s":
+        await query.answer()
+        await _download_multi_items(update, context, sorted(selected))
+        raise ApplicationHandlerStop
+    if data == "mm:b":
+        context.user_data.pop("multi_media", None)
+        context.user_data.pop("multi_selected", None)
+        await query.answer()
+        await query.edit_message_text(_text(context.user_data.get("sdc_info") or {}, language), parse_mode="HTML",
+            reply_markup=_keyboard(context.user_data.get("video_url") or "", language, (context.user_data.get("sdc_info") or {}).get("media_type")))
+        raise ApplicationHandlerStop
+
+
 async def _probe(url: str) -> dict:
     command = [
         "python", "-m", "yt_dlp", "--no-playlist", "--skip-download",
@@ -598,6 +752,18 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
         data["probe_error"] = type(exc).__name__
     context.user_data["sdc_info"] = data
     context.user_data["media_context"] = {"url": url, "metadata": data, "studio_token": None}
+
+    try:
+        collection_entries = await _probe_collection(url)
+    except Exception:
+        collection_entries = []
+    if len(collection_entries) >= 2:
+        await _show_multi_control(message, context, collection_entries, language)
+        try:
+            await status_message.delete()
+        except Exception:
+            pass
+        return True
     try:
         await status_message.edit_text(
             _text(data, language),
@@ -737,6 +903,13 @@ def register_smart_download_control(app) -> None:
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"^https?://"), url_message),
         group=-1,
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            _multi_callback,
+            pattern=r"^mm:(?:t:\\d+|a|s|b)$",
+        ),
+        group=-3,
     )
     app.add_handler(
         CallbackQueryHandler(callback, pattern=r"^(sdc_thumbnail|sdc_cancel|sdc_more|main_menu)$"),
