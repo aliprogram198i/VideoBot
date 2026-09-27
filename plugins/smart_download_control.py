@@ -530,7 +530,8 @@ async def _probe_collection(url: str) -> list[dict]:
         return []
     command = [
         "python", "-m", "yt_dlp", "--flat-playlist", "--skip-download",
-        "--dump-single-json", "--no-warnings", "--socket-timeout", "15", url,
+        "--dump-single-json", "--ignore-errors", "--no-warnings",
+        "--socket-timeout", "15", url,
     ]
     process = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
