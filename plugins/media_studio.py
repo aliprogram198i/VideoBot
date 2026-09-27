@@ -121,6 +121,7 @@ def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
                 InlineKeyboardButton(t("studio", "info", language), callback_data=f"studio:info:{token}"),
             ],
         ]
+    )
 
 
 def _keyboard_trim(token: str, language: str = "ar") -> InlineKeyboardMarkup:
