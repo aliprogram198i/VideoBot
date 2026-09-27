@@ -174,6 +174,17 @@ def _facebook_extract_canonical_id(value):
             continue
         if re.fullmatch(r"\d{5,30}", candidate):
             return candidate
+
+    # Facebook share pages often expose the canonical object ID in JSON
+    # instead of a canonical/reel URL. Keep this deliberately narrow: only
+    # accept numeric values attached to known Facebook video identifiers.
+    for pattern in (
+        r"(?:video_id|videoID|video_fbid|story_fbid)\s*[=:]\s*[\"']?(\d{5,30})",
+        r"[\"'](?:video_id|videoID|video_fbid|story_fbid)[\"']?\s*:\s*[\"'](\d{5,30})",
+    ):
+        match = re.search(pattern, text, re.I)
+        if match:
+            return match.group(1)
     return None
 
 
