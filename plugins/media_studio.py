@@ -583,7 +583,7 @@ async def media_studio_callback(
         }
         builder, prompt = keyboards[action]
         if action == "audio":
-            prompt = f"{t(\"studio\", \"audio_formats\", language)} — {t(\"studio\", \"audio_prompt\", language)}"
+            prompt = f"{t('studio', 'audio_formats', language)} — {t('studio', 'audio_prompt', language)}"
         # Submenus must replace the Studio keyboard on the same message.
         # Sending a new reply would leave the main Studio buttons underneath
         # and cause the keyboards to stack when the user presses Back.
