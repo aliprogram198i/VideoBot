@@ -1,5 +1,5 @@
 from plugins.media_studio import _keyboard_trim, studio_keyboard
-from plugins.smart_download_control import _keyboard
+from plugins.smart_download_control import _keyboard, _more_keyboard
 from plugins.localization import t
 
 
@@ -52,3 +52,24 @@ def test_studio_labels_exist_in_all_languages():
         assert t("studio", "audio", lang)
         assert t("studio", "trim", lang)
         assert t("studio", "trim_prompt", lang)
+
+
+def test_link_panel_is_context_aware_for_media_type():
+    video = _button_data(_keyboard("https://example.com/video", "ar", "video"))
+    assert video[:3] == ["video_menu", "audio_menu", "post_download"]
+
+    image = _button_data(_keyboard("https://example.com/image.jpg", "ar", "image"))
+    assert image[:1] == ["post_download"]
+    assert "video_menu" not in image
+    assert "audio_menu" not in image
+
+    audio = _button_data(_keyboard("https://example.com/audio.mp3", "ar", "audio"))
+    assert audio[:2] == ["audio_menu", "post_download"]
+    assert "video_menu" not in audio
+
+
+def test_link_panel_more_back_label_is_localized():
+    markup = _more_keyboard("https://example.com/video", "ar")
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    back = next(button for button in buttons if button.callback_data == "main_menu")
+    assert back.text == "🔙 رجوع"

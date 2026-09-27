@@ -54,6 +54,7 @@ _CARD_TEXTS = {
         "settings": "⚙️ الإعدادات",
         "thumbnail": "🖼 الصورة المصغرة",
         "cancel": "❌ إلغاء",
+        "back": "🔙 رجوع",
         "open": "🔗 فتح الرابط",
         "analyzing": "🔎 جاري تحليل الرابط...",
         "thumbnail_unavailable": "الصورة المصغرة غير متاحة لهذا الرابط.",
@@ -95,6 +96,7 @@ _CARD_TEXTS = {
         "settings": "⚙️ Settings",
         "thumbnail": "🖼 Thumbnail",
         "cancel": "❌ Cancel",
+        "back": "🔙 Back",
         "open": "🔗 Open link",
         "analyzing": "🔎 Analyzing link...",
         "thumbnail_unavailable": "Thumbnail is not available for this link.",
@@ -137,6 +139,7 @@ _CARD_TEXTS = {
         "settings": "⚙️ Ayarlar",
         "thumbnail": "🖼 Küçük resim",
         "cancel": "❌ İptal",
+        "back": "🔙 Geri",
         "open": "🔗 Bağlantıyı aç",
         "analyzing": "🔎 Bağlantı analiz ediliyor...",
         "thumbnail_unavailable": "Bu bağlantı için küçük resim mevcut değil.",
@@ -179,6 +182,7 @@ _CARD_TEXTS = {
         "settings": "⚙️ Einstellungen",
         "thumbnail": "🖼 Vorschaubild",
         "cancel": "❌ Abbrechen",
+        "back": "🔙 Zurück",
         "open": "🔗 Link öffnen",
         "analyzing": "🔎 Link wird analysiert...",
         "thumbnail_unavailable": "Für diesen Link ist kein Vorschaubild verfügbar.",
@@ -432,17 +436,33 @@ def _text(data: dict, language: str = "ar") -> str:
     )
 
 
-def _keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
+def _keyboard(url: str, language: str = "ar", media_type: str | None = None) -> InlineKeyboardMarkup:
     labels = _labels(language)
-    return InlineKeyboardMarkup([
-        [
+    rows = []
+    if media_type == "video":
+        rows.append([
             InlineKeyboardButton(labels["video"], callback_data="video_menu"),
             InlineKeyboardButton(labels["audio"], callback_data="audio_menu"),
-        ],
-        [InlineKeyboardButton(labels["post"], callback_data="post_download")],
+        ])
+        rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
+    elif media_type == "audio":
+        rows.append([InlineKeyboardButton(labels["audio"], callback_data="audio_menu")])
+        rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
+    elif media_type == "image":
+        rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
+    else:
+        rows.extend([
+            [
+                InlineKeyboardButton(labels["video"], callback_data="video_menu"),
+                InlineKeyboardButton(labels["audio"], callback_data="audio_menu"),
+            ],
+            [InlineKeyboardButton(labels["post"], callback_data="post_download")],
+        ])
+    rows.extend([
         [InlineKeyboardButton(labels["more_options"], callback_data="sdc_more")],
         [InlineKeyboardButton(labels["cancel"], callback_data="sdc_cancel")],
     ])
+    return InlineKeyboardMarkup(rows)
 
 
 def _more_keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
@@ -457,7 +477,7 @@ def _more_keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
             InlineKeyboardButton(labels["open"], url=url),
         ],
         [InlineKeyboardButton(labels["settings"], callback_data="ux_settings")],
-        [InlineKeyboardButton(labels["video"], callback_data="main_menu")],
+        [InlineKeyboardButton(labels["back"], callback_data="main_menu")],
     ])
 
 
@@ -581,7 +601,7 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
         await status_message.edit_text(
             _text(data, language),
             parse_mode="HTML",
-            reply_markup=_keyboard(url, language),
+            reply_markup=_keyboard(url, language, data.get("media_type")),
         )
     except Exception:
         await message.reply_text(
@@ -663,7 +683,7 @@ async def _restore_control_from_quality_menu(update: Update, context: ContextTyp
     await query.edit_message_text(
         _text(context.user_data["sdc_info"], language),
         parse_mode="HTML",
-        reply_markup=_keyboard(context.user_data["video_url"], language),
+        reply_markup=_keyboard(context.user_data["video_url"], language, context.user_data["sdc_info"].get("media_type")),
     )
     return True
 
