@@ -116,7 +116,6 @@ def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}"),
             ],
-            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back_download:{token}")],
         ]
     )
 
@@ -574,11 +573,6 @@ async def media_studio_callback(
         await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
         return
 
-    if action == "back_download":
-        # Return to the canonical link panel without creating a new message.
-        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
-        return
-
     if action in {"audio", "trim", "resize", "preset", "volume"} and value is None:
         keyboards = {
             "audio": (_keyboard_audio, t("studio", "audio_prompt", language)),
@@ -645,7 +639,7 @@ def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|back|back_download):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|back):",
         )
     )
     app.add_handler(
