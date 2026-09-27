@@ -537,7 +537,7 @@ async def _probe_collection(url: str) -> list[dict]:
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=PROBE_TIMEOUT)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=PROBE_TIMEOUT)
     except asyncio.TimeoutError:
         process.kill()
         await process.communicate()
@@ -545,22 +545,53 @@ async def _probe_collection(url: str) -> list[dict]:
     # Instagram carousels can return exit code 1 when one or more child
     # items have no yt-dlp formats. The parent JSON can still be usable.
     # Parse stdout first; the exit code is advisory for this collection probe.
+    stdout_text = stdout.decode("utf-8", errors="ignore")
+    stderr_text = stderr.decode("utf-8", errors="ignore")
     try:
-        data = json.loads(stdout.decode("utf-8", errors="ignore"))
+        data = json.loads(stdout_text)
     except json.JSONDecodeError:
-        return []
-    entries = data.get("entries")
-    if not isinstance(entries, list) or len(entries) < 2:
-        return []
-    try:
-        normalized = normalize_entries(entries, url_validator=_public_url, max_items=MAX_MULTI_MEDIA_ITEMS, parent_url=url)
-    except Exception:
-        return []
-    return [
-        {"index": item.index, "url": item.url, "title": item.title, "media_type": item.media_type,
-         "duration": item.duration, "thumbnail": item.thumbnail}
-        for item in normalized
-    ]
+        data = {}
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if isinstance(entries, list):
+        try:
+            normalized = normalize_entries(
+                entries,
+                url_validator=_public_url,
+                max_items=MAX_MULTI_MEDIA_ITEMS,
+                parent_url=url,
+            )
+        except Exception:
+            normalized = []
+        if len(normalized) >= 2:
+            return [
+                {"index": item.index, "url": item.url, "title": item.title, "media_type": item.media_type,
+                 "duration": item.duration, "thumbnail": item.thumbnail}
+                for item in normalized
+            ]
+    if is_collection_candidate(url):
+        import re
+        child_ids = re.findall(r"ERROR: \[Instagram\] ([A-Za-z0-9_-]+):", stderr_text)
+        unique_ids = []
+        seen_ids = set()
+        for child_id in child_ids:
+            if child_id not in seen_ids:
+                seen_ids.add(child_id)
+                unique_ids.append(child_id)
+            if len(unique_ids) >= MAX_MULTI_MEDIA_ITEMS:
+                break
+        if len(unique_ids) >= 2:
+            return [
+                {
+                    "index": index,
+                    "url": f"https://www.instagram.com/p/{child_id}/",
+                    "title": f"Instagram item {index + 1}",
+                    "media_type": "video",
+                    "duration": None,
+                    "thumbnail": None,
+                }
+                for index, child_id in enumerate(unique_ids)
+            ]
+    return []
 
 
 def _multi_text(entries: list[dict], selected: set[int], language: str) -> str:
@@ -915,7 +946,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.answer()
 
     if data == "post_download":
-        if await _route_post_download(update, context):
+        if is_collection_candidate(context.user_data.get("video_url") or ""):
+            await query.answer()
+            entries = await _probe_collection(context.user_data["video_url"])
+            if len(entries) >= 2:
+                await _show_multi_control(query.message, context, entries, language)
+            else:
+                await bot_module.download_media(update, context)
             raise ApplicationHandlerStop
         return
 
