@@ -76,6 +76,28 @@ def test_long_title_is_stable_and_truncated_for_comparison():
     assert len(first) <= 64
 
 
+def test_entry_url_ignores_non_url_webpage_basename():
+    from downloader.smart_search import _entry_url
+
+    entry = {
+        "webpage_url_basename": "watch",
+        "url": "VIDEO_ID_123456",
+        "id": "VIDEO_ID_123456",
+    }
+    assert _entry_url(entry) == "https://www.youtube.com/watch?v=VIDEO_ID_123456"
+
+
+def test_entry_url_prefers_explicit_webpage_url():
+    from downloader.smart_search import _entry_url
+
+    entry = {
+        "webpage_url": "https://www.youtube.com/watch?v=EXPLICIT123",
+        "webpage_url_basename": "watch",
+        "id": "FALLBACK123",
+    }
+    assert _entry_url(entry) == "https://www.youtube.com/watch?v=EXPLICIT123"
+
+
 def test_results_state_round_trips_dict_metadata():
     stored = [{
         "url": "https://youtube.com/watch?v=abc123456",

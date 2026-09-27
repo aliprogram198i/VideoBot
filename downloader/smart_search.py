@@ -56,10 +56,15 @@ def _as_int(value: Any) -> int | None:
 
 
 def _entry_url(entry: dict[str, Any]) -> str:
-    for key in ("webpage_url", "webpage_url_basename"):
-        value = entry.get(key)
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            return value
+    """Return the canonical public webpage URL for a search entry.
+
+    Flat-playlist entries can expose helper fields such as
+    ``webpage_url_basename`` that are not the actual video URL. Never treat
+    those fields as a download target.
+    """
+    webpage_url = entry.get("webpage_url")
+    if isinstance(webpage_url, str) and webpage_url.startswith(("http://", "https://")):
+        return webpage_url
 
     value = entry.get("url")
     if isinstance(value, str) and value.startswith(("http://", "https://")):
@@ -70,8 +75,6 @@ def _entry_url(entry: dict[str, Any]) -> str:
         return f"https://www.youtube.com/watch?v={video_id}"
 
     return ""
-
-
 def _iter_entries(payload: Any, depth: int = 0):
     if depth > 4:
         return
