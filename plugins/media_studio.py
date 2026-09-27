@@ -102,25 +102,35 @@ def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("🎵 MP3", callback_data=f"studio:mp3:{token}"),
-                InlineKeyboardButton(t("studio", "audio_formats", language), callback_data=f"studio:audio:{token}"),
+                InlineKeyboardButton(t("studio", "audio", language), callback_data=f"studio:audio:{token}"),
+                InlineKeyboardButton(t("studio", "trim", language), callback_data=f"studio:trim:{token}"),
             ],
             [
                 InlineKeyboardButton(t("studio", "image", language), callback_data=f"studio:thumb:{token}"),
                 InlineKeyboardButton(t("studio", "compress", language), callback_data=f"studio:compress:{token}"),
             ],
             [
+                InlineKeyboardButton(t("studio", "resize", language), callback_data=f"studio:resize:{token}"),
+                InlineKeyboardButton(t("studio", "preset", language), callback_data=f"studio:preset:{token}"),
+            ],
+            [
+                InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}"),
+            ],
+            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back_download:{token}")],
+        ]
+    )
+
+
+def _keyboard_trim(token: str, language: str = "ar") -> InlineKeyboardMarkup:
+    language = normalize_language(language)
+    return InlineKeyboardMarkup(
+        [
+            [
                 InlineKeyboardButton(t("studio", "trim15", language), callback_data=f"studio:trim:{token}:15"),
                 InlineKeyboardButton(t("studio", "trim30", language), callback_data=f"studio:trim:{token}:30"),
             ],
-            [
-                InlineKeyboardButton(t("studio", "custom_trim", language), callback_data=f"studio:trimcustom:{token}"),
-                InlineKeyboardButton(t("studio", "resize", language), callback_data=f"studio:resize:{token}"),
-            ],
-            [
-                InlineKeyboardButton(t("studio", "preset", language), callback_data=f"studio:preset:{token}"),
-                InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}"),
-            ],
+            [InlineKeyboardButton(t("studio", "custom_trim", language), callback_data=f"studio:trimcustom:{token}")],
+            [InlineKeyboardButton(t("studio", "back", language), callback_data=f"studio:back:{token}")],
         ]
     )
 
@@ -564,9 +574,15 @@ async def media_studio_callback(
         await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
         return
 
-    if action in {"audio", "resize", "preset", "volume"} and value is None:
+    if action == "back_download":
+        # Return to the canonical link panel without creating a new message.
+        await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
+        return
+
+    if action in {"audio", "trim", "resize", "preset", "volume"} and value is None:
         keyboards = {
             "audio": (_keyboard_audio, t("studio", "audio_prompt", language)),
+            "trim": (_keyboard_trim, t("studio", "trim_prompt", language)),
             "resize": (_keyboard_resize, t("studio", "resize_prompt", language)),
             "preset": (_keyboard_presets, t("studio", "preset_prompt", language)),
             "volume": (_keyboard_volume, t("studio", "volume_prompt", language)),
@@ -629,7 +645,7 @@ def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|back):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|back|back_download):",
         )
     )
     app.add_handler(
