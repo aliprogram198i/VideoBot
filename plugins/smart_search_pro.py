@@ -319,13 +319,12 @@ def _button_label(index: int, result: SearchResult, title_offset: int = 0) -> st
 
 
 def _results_message(query: str, results: list[SearchResult], page: int = 0, language: str = "ar") -> str:
-    """Render only the visible page so navigation has immediate visual feedback."""
+    """Render search context and navigation prompt; titles stay inside result buttons."""
     total = len(results)
     total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
     page = max(0, min(page, total_pages - 1))
     start = page * PAGE_SIZE
-    visible = results[start:start + PAGE_SIZE]
-    end = start + len(visible)
+    end = min(start + PAGE_SIZE, total)
 
     language = normalize_language(language)
     lines = [
@@ -335,9 +334,6 @@ def _results_message(query: str, results: list[SearchResult], page: int = 0, lan
         "",
         t("smart_search", "choose_result", language),
     ]
-    for index, result in enumerate(visible, start=start + 1):
-        title = html.escape(_clean_title(result.title))
-        lines.append(f"{index}. {title}")
     return "\n".join(lines)
 
 
