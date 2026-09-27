@@ -32,6 +32,7 @@ from telegram.request import HTTPXRequest
 from plugins.smart_operations import register_smart_operations
 from plugins.smart_search_pro import register_smart_search_pro
 from plugins.media_studio import cache_media_for_user, register_media_studio, studio_keyboard
+from plugins.smart_download_control import register_smart_download_control
 from data_layer import get_db as _data_get_db, record_download as _record_download
 from downloader.telegram_identity import (
     candidate_matches_telegram_source,
@@ -8486,6 +8487,14 @@ def main():
     # ========================================================
 
     register_media_studio(app)
+
+    # ========================================================
+    # Canonical link information panel
+    # ========================================================
+    # Register before the legacy generic text/callback handlers so every
+    # direct URL enters one canonical metadata UX without changing the
+    # underlying download pipeline.
+    register_smart_download_control(app)
 
     # ========================================================
     # التحميل
