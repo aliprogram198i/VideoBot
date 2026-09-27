@@ -38,7 +38,7 @@ def is_collection_candidate(url: str) -> bool:
     return False
 
 
-def _media_type(entry: dict[str, Any]) -> str:
+def _media_type(entry: dict[str, Any], *, instagram_child: bool = False) -> str:
     value = str(entry.get("media_type") or "").lower()
     if value in {"video", "image", "audio"}:
         return value
@@ -48,6 +48,8 @@ def _media_type(entry: dict[str, Any]) -> str:
         return "image"
     if ext in {"mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"}:
         return "audio"
+    if instagram_child and entry.get("duration") is None and not entry.get("vcodec") and not entry.get("acodec"):
+        return "image"
     return "video"
 
 
@@ -56,6 +58,7 @@ def normalize_entries(
     *,
     url_validator: Callable[[str], bool],
     max_items: int = MAX_MULTI_MEDIA_ITEMS,
+    parent_url: str | None = None,
 ) -> list[MultiMediaItem]:
     """Normalize yt-dlp playlist entries and fail closed on unusable URLs."""
     if max_items <= 0:
@@ -73,6 +76,18 @@ def normalize_entries(
             or entry.get("original_url")
             or entry.get("url")
         )
+        instagram_child = False
+        if isinstance(parent_url, str) and is_collection_candidate(parent_url):
+            parsed_parent = urlparse(parent_url)
+            parent_host = (parsed_parent.hostname or "").lower().removeprefix("www.")
+            if parent_host == "instagram.com" or parent_host.endswith(".instagram.com"):
+                instagram_child = True
+                if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                    child_id = entry.get("id") or entry.get("display_id") or url
+                    if isinstance(child_id, str):
+                        child_id = child_id.strip().strip("/")
+                    if child_id:
+                        url = f"https://www.instagram.com/p/{child_id}/"
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             continue
         if url in seen or not url_validator(url):
@@ -90,7 +105,7 @@ def normalize_entries(
                 index=len(result),
                 url=url,
                 title=str(entry.get("title") or "").strip() or None,
-                media_type=_media_type(entry),
+                media_type=_media_type(entry, instagram_child=instagram_child),
                 duration=duration,
                 thumbnail=str(entry.get("thumbnail") or "").strip() or None,
             )
