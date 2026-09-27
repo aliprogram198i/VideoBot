@@ -136,7 +136,6 @@ def _keyboard_trim(token: str, language: str = "ar") -> InlineKeyboardMarkup:
 
 def _keyboard_audio(token: str, language: str = "ar") -> InlineKeyboardMarkup:
     language = normalize_language(language)
-    prompt = f"{t(\"studio\", \"audio_formats\", language)} — {t(\"studio\", \"audio_prompt\", language)}"
     return InlineKeyboardMarkup(
         [
             [
@@ -583,6 +582,8 @@ async def media_studio_callback(
             "volume": (_keyboard_volume, t("studio", "volume_prompt", language)),
         }
         builder, prompt = keyboards[action]
+        if action == "audio":
+            prompt = f"{t(\"studio\", \"audio_formats\", language)} — {t(\"studio\", \"audio_prompt\", language)}"
         # Submenus must replace the Studio keyboard on the same message.
         # Sending a new reply would leave the main Studio buttons underneath
         # and cause the keyboards to stack when the user presses Back.
