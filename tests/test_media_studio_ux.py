@@ -16,3 +16,15 @@ def test_single_download_studio_cache_behavior_is_preserved():
     bot = Path("bot.py").read_text(encoding="utf-8")
     assert "studio_token = cache_media_for_user(" in bot
     assert "reply_markup=studio_keyboard(studio_token)" in bot
+
+
+def test_transient_status_message_is_removed_after_success():
+    """Progress text is cleaned up after the result is delivered."""
+    assert "status_message = await message.reply_text(status)" in STUDIO
+    assert "await status_message.delete()" in STUDIO
+    assert "studio_status_message_delete_failed" in STUDIO
+
+
+def test_transient_status_message_becomes_failure_state_on_error():
+    """Failures update the existing progress message instead of leaving it stale."""
+    assert 'await status_message.edit_text(t("studio", "failed", language))' in STUDIO
