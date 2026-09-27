@@ -19,6 +19,7 @@ from telegram.ext import (
 )
 from delivery.policy import DeliveryPolicy
 from plugins.localization import t, language as normalize_language
+from plugins.smart_download_control import _text as _download_control_text
 
 CACHE_DIR = Path(os.getenv("MEDIA_STUDIO_CACHE_DIR", "/app/data/media_studio"))
 CACHE_TTL_SECONDS = 6 * 60 * 60
@@ -116,8 +117,10 @@ def studio_keyboard(token: str, language: str = "ar") -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(t("studio", "volume", language), callback_data=f"studio:volume:{token}"),
             ],
+            [
+                InlineKeyboardButton(t("studio", "info", language), callback_data=f"studio:info:{token}"),
+            ],
         ]
-    )
 
 
 def _keyboard_trim(token: str, language: str = "ar") -> InlineKeyboardMarkup:
@@ -573,6 +576,25 @@ async def media_studio_callback(
         await query.message.edit_reply_markup(reply_markup=studio_keyboard(token, language))
         return
 
+    if action == "info" and value is None:
+        info = context.user_data.get("sdc_info")
+        if not isinstance(info, dict):
+            await query.answer(t("studio", "info_expired", language), show_alert=True)
+            return
+        await query.message.edit_text(
+            _download_control_text(info, language),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                [[
+                    InlineKeyboardButton(
+                        t("studio", "back_to_studio", language),
+                        callback_data=f"studio:back:{token}",
+                    )
+                ]]
+            ),
+        )
+        return
+
     if action in {"audio", "trim", "resize", "preset", "volume"} and value is None:
         keyboards = {
             "audio": (_keyboard_audio, t("studio", "audio_prompt", language)),
@@ -642,7 +664,7 @@ def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|back):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|back):",
         )
     )
     app.add_handler(
