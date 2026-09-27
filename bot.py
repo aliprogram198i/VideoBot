@@ -48,6 +48,7 @@ from downloader.instagram_failure import (
 from downloader.resolver_admission import admit_local_media, admit_media_artifact
 from downloader.url_security import redact_url, validate_public_http_url, safe_urlopen, read_limited
 from downloader.process_utils import final_output_from_yt_dlp, communicate_with_cleanup
+from downloader.facebook_reel_variants import facebook_reel_variants
 from downloader.error_sanitizer import (
     sanitize_error_for_storage,
     sanitize_error_value as _sanitize_error_value,
@@ -4605,6 +4606,55 @@ async def download_media(
             if is_audio else (".mp4", ".mkv", ".webm", ".mov")
         )
         media_file = final_output_from_yt_dlp(stdout_text, temp_dir, allowed_extensions)
+
+        # Facebook Reel recovery: some /reel/<id> URLs fail inside the
+        # native extractor while the same exact id is exposed through a
+        # legacy /facebook/videos/<id>/ URL. Try only this deterministic
+        # same-id variant, with the same cookie/impersonation policy.
+        if (
+            is_facebook
+            and not media_file
+            and any(
+                marker in (stderr_text or "").lower()
+                for marker in (
+                    "no video formats found",
+                    "cannot parse data",
+                )
+            )
+        ):
+            for facebook_variant in facebook_reel_variants(url):
+                variant_command = list(command)
+                variant_command[-1] = facebook_variant
+                print(
+                    "🛡️ Facebook Reel recovery: trying same-id canonical video URL",
+                    flush=True,
+                )
+                variant_process = await asyncio.create_subprocess_exec(
+                    *variant_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                variant_stdout, variant_stderr = await communicate_with_cleanup(
+                    variant_process,
+                    DOWNLOAD_TIMEOUT,
+                )
+                variant_stdout_text = variant_stdout.decode(errors="ignore")
+                variant_stderr_text = variant_stderr.decode(errors="ignore")
+                variant_media_file = final_output_from_yt_dlp(
+                    variant_stdout_text,
+                    temp_dir,
+                    allowed_extensions,
+                )
+                if variant_media_file:
+                    process = variant_process
+                    stdout_text = variant_stdout_text
+                    stderr_text = variant_stderr_text
+                    media_file = variant_media_file
+                    print(
+                        "✅ Facebook Reel recovery: same-id canonical video URL succeeded",
+                        flush=True,
+                    )
+                    break
 
         # Facebook may expose public media without cookies while a supplied
         # authenticated session can suppress the media payload. Retry once
