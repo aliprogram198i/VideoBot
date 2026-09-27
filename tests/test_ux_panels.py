@@ -28,6 +28,17 @@ def test_link_panel_secondary_actions_are_hidden_behind_more():
     )
 
 
+def test_studio_main_menu_exposes_shared_link_info():
+    data = _button_data(studio_keyboard("0123456789abcdef", "ar"))
+    assert "studio:info:0123456789abcdef" in data
+
+
+def test_studio_info_labels_exist_in_all_languages():
+    for lang in ("ar", "en", "tr", "de"):
+        assert t("studio", "info", lang)
+        assert t("studio", "back_to_studio", lang)
+
+
 def test_studio_main_menu_is_category_first():
     data = _button_data(studio_keyboard("0123456789abcdef", "ar"))
     assert data[:4] == [
