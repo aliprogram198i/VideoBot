@@ -599,6 +599,14 @@ async def _pick_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_
         )
         return
 
+    # The canonical control opens a fresh status/panel message. Remove the
+    # temporary Smart Search selection message after a successful handoff so
+    # users are not left with a stale "selected/opening" message underneath.
+    try:
+        await query.message.delete()
+    except Exception:
+        logger.debug("smart_search_selection_message_delete_failed", exc_info=True)
+
     context.user_data.pop("smart_search_results", None)
     context.user_data.pop("smart_search_query", None)
     context.user_data.pop("smart_search_results_expires_at", None)
