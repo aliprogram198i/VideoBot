@@ -42,6 +42,7 @@ STUDIO_LOCK_KEY = "media_studio_operation"
 STUDIO_HISTORY_KEY = "media_studio_history"
 STUDIO_CURRENT_TOKEN_KEY = "media_studio_current_token"
 STUDIO_MESSAGE_KEY = "media_studio_message"
+STUDIO_RESULT_MESSAGE_KEY = "media_studio_result_message"
 MAX_STUDIO_HISTORY = 3
 
 
@@ -535,10 +536,27 @@ async def _send_result(
 
         try:
             studio_token = cache_media_for_user(update.effective_user.id, str(output))
+            previous_message = context.user_data.get(STUDIO_RESULT_MESSAGE_KEY)
+            if previous_message:
+                try:
+                    await context.bot.delete_message(
+                        chat_id=previous_message["chat_id"],
+                        message_id=previous_message["message_id"],
+                    )
+                except Exception:
+                    logger.debug("media_studio_previous_result_delete_failed", exc_info=True)
             history = list(context.user_data.get(STUDIO_HISTORY_KEY) or [])
             history.append(source_token)
             context.user_data[STUDIO_HISTORY_KEY] = history[-MAX_STUDIO_HISTORY:]
             context.user_data[STUDIO_CURRENT_TOKEN_KEY] = studio_token
+            context.user_data[STUDIO_RESULT_MESSAGE_KEY] = {
+                "chat_id": sent.chat_id,
+                "message_id": sent.message_id,
+            }
+            context.user_data[STUDIO_MESSAGE_KEY] = {
+                "chat_id": sent.chat_id,
+                "message_id": sent.message_id,
+            }
             context.user_data["sdc_info"] = _studio_info(
                 context.user_data.get("sdc_info"), output, studio_token
             )
@@ -754,14 +772,31 @@ async def media_studio_callback(
                 connect_timeout=60,
                 pool_timeout=60,
             )
+        previous_message = context.user_data.get(STUDIO_RESULT_MESSAGE_KEY)
+        if previous_message:
+            try:
+                await context.bot.delete_message(
+                    chat_id=previous_message["chat_id"],
+                    message_id=previous_message["message_id"],
+                )
+            except Exception:
+                logger.debug("media_studio_previous_undo_result_delete_failed", exc_info=True)
         await sent.edit_reply_markup(
             reply_markup=studio_keyboard(
                 previous_token,
                 language,
                 media_type="video",
-                can_undo=bool(history),
+                can_undo=False,
             )
         )
+        context.user_data[STUDIO_RESULT_MESSAGE_KEY] = {
+            "chat_id": sent.chat_id,
+            "message_id": sent.message_id,
+        }
+        context.user_data[STUDIO_MESSAGE_KEY] = {
+            "chat_id": sent.chat_id,
+            "message_id": sent.message_id,
+        }
         return
 
     if action == "back":
