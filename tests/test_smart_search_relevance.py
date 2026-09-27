@@ -54,7 +54,8 @@ def test_long_titles_are_static_and_truncated():
     assert len(label) <= 64
 
 
-def test_results_message_avoids_duplicate_title_list():
+def test_results_message_keeps_selection_prompt_and_titles():
     message = _results_message("test query", [result("A"), result("B")], language="en")
     assert "Choose a result" in message
-    assert "\n1. A" not in message
+    assert "1. A" in message
+    assert "2. B" in message
