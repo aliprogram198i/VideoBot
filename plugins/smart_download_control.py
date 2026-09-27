@@ -597,6 +597,7 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
     except Exception as exc:
         data["probe_error"] = type(exc).__name__
     context.user_data["sdc_info"] = data
+    context.user_data["media_context"] = {"url": url, "metadata": data, "studio_token": None}
     try:
         await status_message.edit_text(
             _text(data, language),
