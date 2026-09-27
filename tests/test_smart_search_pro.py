@@ -104,7 +104,7 @@ def test_page_render_shows_only_visible_results_and_page_indicator():
     assert "11. Result 10" not in message
 
 
-def test_results_message_keeps_page_context_without_duplicate_titles():
+def test_results_message_keeps_page_context_and_visible_titles():
     results = [
         _result(title="First full result title"),
         _result(title="Second full result title", index=1, channel="Other Channel", duration=12, views=42),
@@ -112,9 +112,11 @@ def test_results_message_keeps_page_context_without_duplicate_titles():
     ]
     message = _results_message("ignored query", results, language="en")
     assert "Choose a result:" in message
-    assert "First full result title" not in message
-    assert "Second full result title" not in message
-    assert "Third &lt;full&gt; result title" not in message
+    assert message.index("1. First full result title") < message.index("2. Second full result title")
+    assert message.index("2. Second full result title") < message.index("3. Third &lt;full&gt; result title")
+    assert "Other Channel" not in message
+    assert "0:12" not in message
+    assert "42" not in message
     assert "ignored query" in message
 
 
