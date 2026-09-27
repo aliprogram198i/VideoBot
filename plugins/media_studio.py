@@ -579,7 +579,12 @@ async def media_studio_callback(
     if action == "info" and value is None:
         info = context.user_data.get("sdc_info")
         if not isinstance(info, dict):
-            await query.answer(t("studio", "info_expired", language), show_alert=True)
+            await query.message.edit_text(
+                t("studio", "info_expired", language),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton(t("studio", "back_to_studio", language), callback_data=f"studio:back:{token}")]]
+                ),
+            )
             return
         await query.message.edit_text(
             _download_control_text(info, language),
