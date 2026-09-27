@@ -335,6 +335,9 @@ def _results_message(query: str, results: list[SearchResult], page: int = 0, lan
         "",
         t("smart_search", "choose_result", language),
     ]
+    for index, result in enumerate(visible, start=start + 1):
+        title = html.escape(_clean_title(result.title))
+        lines.append(f"{index}. {title}")
     return "\n".join(lines)
 
 
@@ -396,6 +399,17 @@ def _results_keyboard(results: list[SearchResult], page: int = 0, language: str 
         InlineKeyboardButton(t("smart_search", "cancel", language), callback_data="smart_pro_cancel"),
     ])
     return InlineKeyboardMarkup(keyboard)
+
+
+async def _stop_marquee(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel any legacy result-animation task without creating new animation work."""
+    task = context.user_data.pop("smart_search_marquee_task", None)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def search_pro(query: str) -> list[SearchResult]:
