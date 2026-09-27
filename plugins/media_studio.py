@@ -481,7 +481,7 @@ async def _send_result(
             )
     else:
         with output.open("rb") as handle:
-            await context.bot.send_video(
+            sent = await context.bot.send_video(
                 chat_id=chat_id,
                 video=handle,
                 caption=t("studio", "done_video", language),
@@ -490,6 +490,22 @@ async def _send_result(
                 write_timeout=600,
                 connect_timeout=60,
                 pool_timeout=60,
+            )
+
+        # Keep the processed video as the new Studio source so users can
+        # continue editing the result without downloading it again.
+        try:
+            studio_token = cache_media_for_user(
+                update.effective_user.id,
+                str(output),
+            )
+            await sent.edit_reply_markup(
+                reply_markup=studio_keyboard(studio_token, language),
+            )
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            print(
+                "⚠️ Media Studio result cache unavailable: "
+                f"{type(exc).__name__}"
             )
 
 
