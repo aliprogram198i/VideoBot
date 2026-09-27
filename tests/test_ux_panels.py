@@ -28,6 +28,11 @@ def test_link_panel_secondary_actions_are_hidden_behind_more():
     )
 
 
+def test_studio_info_uses_separate_message_and_back_callback():
+    data = _button_data(studio_keyboard("0123456789abcdef", "ar"))
+    assert "studio:info:0123456789abcdef" in data
+
+
 def test_studio_main_menu_exposes_shared_link_info():
     data = _button_data(studio_keyboard("0123456789abcdef", "ar"))
     assert "studio:info:0123456789abcdef" in data

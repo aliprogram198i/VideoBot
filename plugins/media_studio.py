@@ -579,26 +579,31 @@ async def media_studio_callback(
 
     if action == "info" and value is None:
         info = context.user_data.get("sdc_info")
-        if not isinstance(info, dict):
-            await query.message.edit_text(
-                t("studio", "info_expired", language),
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton(t("studio", "back_to_studio", language), callback_data=f"studio:back:{token}")]]
-                ),
-            )
-            return
-        await query.message.edit_text(
-            _download_control_text(info, language),
+        text = (
+            _download_control_text(info, language)
+            if isinstance(info, dict)
+            else t("studio", "info_expired", language)
+        )
+        await query.message.reply_text(
+            text,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(
                 [[
                     InlineKeyboardButton(
                         t("studio", "back_to_studio", language),
-                        callback_data=f"studio:back:{token}",
+                        callback_data=f"studio:info_back:{token}",
                     )
                 ]]
             ),
         )
+        return
+
+    if action == "info_back" and value is None:
+        try:
+            await query.message.delete()
+        except Exception:
+            logger = __import__("logging").getLogger(__name__)
+            logger.debug("studio_info_message_delete_failed", exc_info=True)
         return
 
     if action in {"audio", "trim", "resize", "preset", "volume"} and value is None:
@@ -670,7 +675,7 @@ def register_media_studio(app) -> None:
     app.add_handler(
         CallbackQueryHandler(
             media_studio_callback,
-            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|back):",
+            pattern=r"^studio:(mp3|audio|thumb|trim|trimcustom|compress|resize|preset|volume|info|info_back|back):",
         )
     )
     app.add_handler(
