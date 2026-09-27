@@ -4312,6 +4312,11 @@ async def download_media(
     # Resolve the platform before building the yt-dlp command. The YouTube
     # client/PO-token policy below is evaluated before process execution.
     hostname = (urlparse(url).hostname or "").lower()
+    is_facebook = hostname in {
+        "facebook.com",
+        "www.facebook.com",
+        "m.facebook.com",
+    }
     is_youtube = hostname in {
         "youtube.com",
         "www.youtube.com",
@@ -4543,6 +4548,12 @@ async def download_media(
                 "chrome-99",
             ])
             print("🛡️ Facebook authenticated session: cookies + HTTP impersonation enabled", flush=True)
+        elif is_facebook:
+            command.extend([
+                "--impersonate",
+                "chrome-99",
+            ])
+            print("🛡️ Facebook HTTP impersonation enabled", flush=True)
 
         command.append(telegram_download_url)
 
@@ -4594,6 +4605,59 @@ async def download_media(
             if is_audio else (".mp4", ".mkv", ".webm", ".mov")
         )
         media_file = final_output_from_yt_dlp(stdout_text, temp_dir, allowed_extensions)
+
+        # Facebook may expose public media without cookies while a supplied
+        # authenticated session can suppress the media payload. Retry once
+        # without the cookie jar, but keep HTTP impersonation. This is bounded
+        # and only runs after a Facebook extraction failure.
+        if (
+            is_facebook
+            and facebook_cookie_file
+            and (process.returncode != 0 or not media_file)
+            and any(
+                marker in (stderr_text or "").lower()
+                for marker in (
+                    "no video formats found",
+                    "cannot parse data",
+                )
+            )
+        ):
+            retry_command = list(command)
+            try:
+                cookies_index = retry_command.index("--cookies")
+                del retry_command[cookies_index:cookies_index + 2]
+            except ValueError:
+                pass
+
+            if "--impersonate" not in retry_command:
+                retry_command.extend(["--impersonate", "chrome-99"])
+
+            print(
+                "🛡️ Facebook retry: authenticated cookie session rejected "
+                "media; retrying once without cookies",
+                flush=True,
+            )
+            retry_process = await asyncio.create_subprocess_exec(
+                *retry_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            retry_stdout, retry_stderr = await communicate_with_cleanup(
+                retry_process,
+                DOWNLOAD_TIMEOUT,
+            )
+            retry_stdout_text = retry_stdout.decode(errors="ignore")
+            retry_stderr_text = retry_stderr.decode(errors="ignore")
+            retry_media_file = final_output_from_yt_dlp(
+                retry_stdout_text,
+                temp_dir,
+                allowed_extensions,
+            )
+
+            process = retry_process
+            stdout_text = retry_stdout_text
+            stderr_text = retry_stderr_text
+            media_file = retry_media_file
 
         # YouTube bot-check recovery is a bounded second yt-dlp attempt.
         # Do not broaden the fallback chain or bypass source/media admission.
