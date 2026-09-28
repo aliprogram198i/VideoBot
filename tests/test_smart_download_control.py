@@ -71,13 +71,15 @@ def test_smart_media_center_title_is_localized():
     assert _CARD_TEXTS["de"]["title"] == "🧩 Smart Media Center"
 
 
-def test_studio_callback_routes_through_existing_download_pipeline():
+def test_studio_callback_reuses_existing_download_artifact():
     import inspect
     from plugins.smart_download_control import callback
 
     source = inspect.getsource(callback)
-    assert 'studio_choice = "audio_best" if media_type == "audio" else "video_best"' in source
-    assert "_UpdateProxy(update, proxy_query)" in source
+    assert "media_context" in source
+    assert "_cached_path" in source
+    assert "studio_keyboard" in source
+    assert "await bot_module.download_media(proxy_update, context)" not in source
 
 
 def test_smart_studio_callback_is_registered():
