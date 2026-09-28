@@ -55,6 +55,7 @@ _CARD_TEXTS = {
         "video": "🎥 تحميل الفيديو",
         "post": "📌 تحميل المنشور",
         "audio": "🎵 تحميل الصوت",
+        "studio": "🎨 Smart Studio",
         "favorite": "⭐ حفظ",
         "library": "📚 مكتبتي",
         "settings": "⚙️ الإعدادات",
