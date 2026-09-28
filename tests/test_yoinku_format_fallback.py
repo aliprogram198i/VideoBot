@@ -6,7 +6,7 @@ BOT = Path("bot.py").read_text(encoding="utf-8")
 
 def test_yoinku_negotiates_alternate_formats_after_422():
     assert "format_candidates = [selected_format]" in BOT
-    assert '"format_candidates": format_candidates[:10]' in BOT
+    assert 'info_diagnostics["format_candidates"] = format_candidates[:10]' in BOT
     assert "max_attempts = min(3, max(1, len(format_candidates)))" in BOT
     assert "result = await asyncio.to_thread(fetch, format_id)" in BOT
     assert 'diagnostics["format_id"] = format_id' in BOT
