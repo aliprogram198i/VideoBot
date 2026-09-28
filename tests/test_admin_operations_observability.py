@@ -131,5 +131,5 @@ def test_admin_navigation_uses_unified_monitoring_path():
     assert 'callback_data="admin_resolver_monitor"' not in command_center
     assert 'callback_data="admin_alerts"' not in command_center
     assert 'callback_data="admin_monitoring"' in operations
-    assert 'callback_data="admin_ops_resolvers"' in monitoring
-    assert 'callback_data="admin_ops_timeline"' in monitoring
+    assert "admin_ops_resolvers" in monitoring
+    assert "admin_ops_timeline" not in monitoring
