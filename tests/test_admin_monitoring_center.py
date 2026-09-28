@@ -496,6 +496,45 @@ def test_last_error_snapshot_includes_correlated_attempt_timeline(tmp_path):
     assert "youtube_direct_fallback_not_applicable" in snapshot
 
 
+
+def test_last_error_snapshot_ignores_newer_intermediate_failure_after_terminal_incident(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    conn = get_db()
+    rows = [
+        ("download", "all_methods_failed", "terminal failure", "terminal-1", "2026-09-28T06:00:00"),
+        ("yt-dlp", "yt_dlp_failed", "intermediate diagnostic", "terminal-1", "2026-09-28T06:01:00"),
+    ]
+    for stage, error_type, message, attempt_id, created_at in rows:
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "https://example.com/video",
+                "YouTube",
+                "video",
+                stage,
+                error_type,
+                message,
+                attempt_id,
+                1,
+                "{}",
+                created_at,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = "\n".join(_render_last_error(get_db))
+    assert "terminal failure" in snapshot
+    assert "intermediate diagnostic" not in snapshot
+    assert "آخر حادث فشل نهائي" in snapshot
+
+
 def test_last_error_keyboard_exposes_refresh_and_navigation():
     callbacks = _callback_values(_last_error_keyboard())
     assert callbacks[0] == "admin_last_error_copy"
