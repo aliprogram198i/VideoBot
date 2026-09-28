@@ -14,7 +14,7 @@ def _button_data(markup):
 
 def test_link_panel_primary_actions_are_compact():
     data = _button_data(_keyboard("https://example.com/video", "ar"))
-    assert data[:3] == ["video_menu", "audio_menu", "post_download"]
+    assert data[:5] == ["video_menu", "audio_menu", "post_download", "sdc_more", "sdc_cancel"]
     assert "sdc_more" in data
     assert "ux_favorite_current" not in data
 
@@ -72,17 +72,18 @@ def test_studio_labels_exist_in_all_languages():
 
 def test_link_panel_is_context_aware_for_media_type():
     video = _button_data(_keyboard("https://example.com/video", "ar", "video"))
-    assert video[:4] == ["video_menu", "audio_menu", "sdc_studio", "post_download"]
+    assert video[:5] == ["video_menu", "audio_menu", "post_download", "sdc_more", "sdc_cancel"]
 
     image = _button_data(_keyboard("https://example.com/image.jpg", "ar", "image"))
-    assert image[:1] == ["post_download"]
+    assert image[:3] == ["post_download", "sdc_more", "sdc_cancel"]
     assert "video_menu" not in image
     assert "audio_menu" not in image
     assert "sdc_studio" not in image
 
     audio = _button_data(_keyboard("https://example.com/audio.mp3", "ar", "audio"))
-    assert audio[:3] == ["audio_menu", "sdc_studio", "post_download"]
+    assert audio[:4] == ["audio_menu", "post_download", "sdc_more", "sdc_cancel"]
     assert "video_menu" not in audio
+    assert "sdc_studio" not in audio
 
 
 def test_link_panel_more_back_label_is_localized():
