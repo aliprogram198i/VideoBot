@@ -21,6 +21,12 @@ def test_single_download_studio_cache_behavior_is_preserved():
     assert "studio_token" in bot
 
 
+def test_primary_ytdlp_download_explicitly_disables_simulation():
+    """The primary downloader must create an artifact even when --print is used."""
+    bot = Path("bot.py").read_text(encoding="utf-8")
+    assert '"--no-simulate"' in bot
+
+
 def test_transient_status_message_is_removed_after_success():
     """Progress text is cleaned up after the result is delivered."""
     assert "status_message = await message.reply_text(status)" in STUDIO
