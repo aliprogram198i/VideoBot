@@ -6,6 +6,8 @@ from plugins.admin_monitoring_center import (
     _counts,
     _refresh_alerts,
     _render_alerts,
+    _render_last_error,
+    _last_error_keyboard,
     _render_incidents,
     _home_keyboard,
     _incident_keyboard,
@@ -296,3 +298,57 @@ def test_legacy_incident_keyboard_no_longer_duplicates_alert_entry():
     assert callbacks.count("admin_alerts") == 1
     assert "admin_resolver_monitor" in callbacks
     assert "admin_home" in callbacks
+
+
+
+def test_last_error_snapshot_contains_all_available_fields_and_redacts_secrets(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO error_logs
+           (user_id,url,website,media_type,stage,error_type,error_message,
+            attempt_id,attempt_number,http_status,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            7,
+            "https://example.com/video?id=123",
+            "example",
+            "video",
+            "download",
+            "runtime_error",
+            "connection failed",
+            "attempt-last",
+            3,
+            502,
+            json.dumps({
+                "resolver": "example_resolver",
+                "traceback": "Traceback (most recent call last):\nRuntimeError: boom",
+                "authorization": "Bearer SUPER_SECRET",
+                "nested": {"duration_ms": 1234},
+            }),
+            "2026-09-28T04:20:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    chunks = _render_last_error(get_db)
+    snapshot = "\n".join(chunks)
+
+    assert "attempt-last" in snapshot
+    assert "connection failed" in snapshot
+    assert "example_resolver" in snapshot
+    assert "RuntimeError: boom" in snapshot
+    assert "duration_ms" in snapshot
+    assert "[REDACTED]" in snapshot
+    assert "SUPER_SECRET" not in snapshot
+
+
+def test_last_error_keyboard_exposes_refresh_and_navigation():
+    callbacks = _callback_values(_last_error_keyboard())
+    assert callbacks[0] == "admin_last_error"
+    assert "admin_alerts" in callbacks
+    assert "admin_resolver_monitor" in callbacks
