@@ -524,7 +524,7 @@ def test_last_error_compact_snapshot_is_copy_ready_and_sanitized(tmp_path):
                (url,website,media_type,stage,error_type,error_message,
                 attempt_id,attempt_number,http_status,details_json,created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (7, "https://www.youtube.com/watch?v=example", "YouTube", "video",
+            ("https://www.youtube.com/watch?v=example", "YouTube", "video",
              stage, error_type, message, "compact-attempt", 1, http_status,
              details, f"2026-09-28T06:0{index}:00"),
         )
