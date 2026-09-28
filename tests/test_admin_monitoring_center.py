@@ -417,6 +417,85 @@ def test_last_error_snapshot_preserves_nested_diagnostic_evidence(tmp_path):
 
 
 
+def test_last_error_snapshot_includes_correlated_attempt_timeline(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    conn = get_db()
+    rows = [
+        (
+            "yt-dlp",
+            "yt_dlp_failed",
+            "Sign in to confirm you are not a bot",
+            None,
+            json.dumps({
+                "resolver": "yt-dlp",
+                "candidate_count": 0,
+                "diagnostics": ["resolution_failed:bot_check"],
+            }),
+        ),
+        (
+            "yoinku",
+            "yoinku_failed",
+            "HTTP Error 422: Unprocessable Entity",
+            422,
+            json.dumps({
+                "provider": "yoinku",
+                "format_id": "v-720",
+                "internal_attempts": 3,
+            }),
+        ),
+        (
+            "download",
+            "all_methods_failed",
+            "All available download methods failed.",
+            None,
+            json.dumps({
+                "fallback": {
+                    "candidate_count": "0",
+                    "skipped": "youtube_direct_fallback_not_applicable",
+                }
+            }),
+        ),
+    ]
+    for index, (stage, error_type, message, http_status, details) in enumerate(rows, start=1):
+        conn.execute(
+            """INSERT INTO error_logs
+               (user_id,url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,http_status,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                7,
+                "https://www.youtube.com/watch?v=example",
+                "YouTube",
+                "video",
+                stage,
+                error_type,
+                message,
+                "same-attempt",
+                1,
+                http_status,
+                details,
+                f"2026-09-28T05:0{index}:00",
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = "\n".join(_render_last_error(get_db))
+
+    assert "=== ATTEMPT TIMELINE / CORRELATED EVIDENCE ===" in snapshot
+    assert "events_in_same_attempt: 3" in snapshot
+    assert "yt_dlp_failed" in snapshot
+    assert "bot_check" in snapshot
+    assert "yoinku_failed" in snapshot
+    assert "422" in snapshot
+    assert "internal_attempts" in snapshot
+    assert "all_methods_failed" in snapshot
+    assert "youtube_direct_fallback_not_applicable" in snapshot
+
+
 def test_last_error_keyboard_exposes_refresh_and_navigation():
     callbacks = _callback_values(_last_error_keyboard())
     assert callbacks[0] == "admin_last_error"
