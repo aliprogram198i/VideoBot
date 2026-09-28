@@ -164,15 +164,64 @@ async def message_user_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int) -> None:
-    if not _authorized(update, owner_id) or not update.message or not context.user_data.get("waiting_user_message"):
+    """Deliver the selected admin message without converting media."""
+    if (
+        not _authorized(update, owner_id)
+        or not update.message
+        or not context.user_data.get("waiting_user_message")
+    ):
         return
+
     target_id = context.user_data.get("message_target")
-    context.user_data["waiting_user_message"] = False
+    message = update.message
+    if not target_id:
+        return
+
     try:
-        await context.bot.send_message(chat_id=target_id, text=update.message.text or "")
-        await update.message.reply_text("✅ تم إرسال الرسالة بنجاح.")
-    except Exception:
-        await update.message.reply_text("❌ تعذر إرسال الرسالة.")
+        if message.text is not None:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=message.text,
+            )
+        elif message.voice:
+            await context.bot.send_voice(
+                chat_id=target_id,
+                voice=message.voice.file_id,
+                caption=message.caption,
+            )
+        elif message.audio:
+            await context.bot.send_audio(
+                chat_id=target_id,
+                audio=message.audio.file_id,
+                caption=message.caption,
+            )
+        elif message.photo or message.video or message.document:
+            await context.bot.copy_message(
+                chat_id=target_id,
+                from_chat_id=message.chat_id,
+                message_id=message.message_id,
+            )
+        else:
+            await message.reply_text(
+                "⚠️ هذا النوع غير مدعوم حاليًا. "
+                "أرسل نصًا أو صورة أو فيديو أو ملفًا أو صوتًا."
+            )
+            return
+
+        context.user_data["waiting_user_message"] = False
+        context.user_data.pop("message_target", None)
+        await message.reply_text("✅ تم إرسال المحتوى إلى المستخدم بنجاح.")
+    except Exception as exc:
+        logger = getattr(__import__("logging"), "getLogger")(__name__)
+        logger.exception(
+            "Admin user media delivery failed: type=%s detail=%s",
+            type(exc).__name__,
+            str(exc),
+        )
+        await message.reply_text(
+            "❌ تعذر إرسال المحتوى إلى المستخدم. "
+            "يمكنك المحاولة مرة أخرى دون إعادة اختيار المستخدم."
+        )
 
 
 async def search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int) -> None:
