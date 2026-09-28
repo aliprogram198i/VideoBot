@@ -5601,20 +5601,9 @@ async def download_media(
                         )
                     )
 
-                with open(part_file, "rb") as audio:
-                    sent_audio = await context.bot.send_audio(
-                        chat_id=update.effective_chat.id,
-                        audio=audio,
-                        caption=caption,
-                        read_timeout=600,
-                        write_timeout=600,
-                        connect_timeout=60,
-                        pool_timeout=60,
-                    )
-
-                # Every delivered audio part gets its own Studio source token.
-                # The original audio is cached unchanged so Studio can operate
-                # on the exact part the user selected.
+                # Attach a dedicated Studio keyboard in the original
+                # send call so every split audio part is independently
+                # addressable without relying on a follow-up edit request.
                 try:
                     studio_token = cache_media_for_user(
                         user.id,
@@ -5624,17 +5613,25 @@ async def download_media(
                         "media_studio_message_by_token",
                         {},
                     )
+                    with open(part_file, "rb") as audio:
+                        sent_audio = await context.bot.send_audio(
+                            chat_id=update.effective_chat.id,
+                            audio=audio,
+                            caption=caption,
+                            reply_markup=studio_keyboard(
+                                studio_token,
+                                language,
+                                media_type="audio",
+                            ),
+                            read_timeout=600,
+                            write_timeout=600,
+                            connect_timeout=60,
+                            pool_timeout=60,
+                        )
                     studio_messages[studio_token] = {
                         "chat_id": sent_audio.chat_id,
                         "message_id": sent_audio.message_id,
                     }
-                    await sent_audio.edit_reply_markup(
-                        reply_markup=studio_keyboard(
-                            studio_token,
-                            language,
-                            media_type="audio",
-                        ),
-                    )
                 except (FileNotFoundError, OSError, ValueError) as exc:
                     print(
                         "⚠️ Media Studio cache unavailable for audio part: "
@@ -5809,23 +5806,10 @@ async def download_media(
                         f"{video_caption}"
                     )
 
-                    with open(
-                        part_file,
-                        "rb",
-                    ) as video_part:
-                        sent_part = await context.bot.send_video(
-                            chat_id=update.effective_chat.id,
-                            video=video_part,
-                            caption=part_caption,
-                            read_timeout=600,
-                            write_timeout=600,
-                            connect_timeout=60,
-                            pool_timeout=60,
-                        )
-
-                    # Each split part is an independent Smart Studio source.
-                    # No re-encoding occurs before caching, so Studio starts
-                    # from the original-quality part delivered to the user.
+                    # Cache first so the per-part Studio token can be
+                    # attached directly to the Telegram message. This avoids
+                    # a second edit request and guarantees every split part
+                    # receives its own independent Studio keyboard.
                     try:
                         studio_token = cache_media_for_user(
                             user.id,
@@ -5835,17 +5819,28 @@ async def download_media(
                             "media_studio_message_by_token",
                             {},
                         )
+                        with open(
+                            part_file,
+                            "rb",
+                        ) as video_part:
+                            sent_part = await context.bot.send_video(
+                                chat_id=update.effective_chat.id,
+                                video=video_part,
+                                caption=part_caption,
+                                reply_markup=studio_keyboard(
+                                    studio_token,
+                                    language,
+                                    media_type="video",
+                                ),
+                                read_timeout=600,
+                                write_timeout=600,
+                                connect_timeout=60,
+                                pool_timeout=60,
+                            )
                         studio_messages[studio_token] = {
                             "chat_id": sent_part.chat_id,
                             "message_id": sent_part.message_id,
                         }
-                        await sent_part.edit_reply_markup(
-                            reply_markup=studio_keyboard(
-                                studio_token,
-                                language,
-                                media_type="video",
-                            ),
-                        )
                     except (FileNotFoundError, OSError, ValueError) as exc:
                         print(
                             "⚠️ Media Studio cache unavailable for video part: "
