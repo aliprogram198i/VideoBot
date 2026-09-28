@@ -466,7 +466,6 @@ def _keyboard(url: str, language: str = "ar", media_type: str | None = None) -> 
             InlineKeyboardButton(labels["video"], callback_data="video_menu"),
             InlineKeyboardButton(labels["audio"], callback_data="audio_menu"),
         ])
-        rows.append([InlineKeyboardButton(labels["studio"], callback_data="sdc_studio")])
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
     elif media_type == "audio":
         rows.append([InlineKeyboardButton(labels["audio"], callback_data="audio_menu")])
@@ -492,6 +491,7 @@ def _keyboard(url: str, language: str = "ar", media_type: str | None = None) -> 
 def _more_keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
     labels = _labels(language)
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton(labels["studio"], callback_data="sdc_studio")],
         [
             InlineKeyboardButton(labels["favorite"], callback_data="ux_favorite_current"),
             InlineKeyboardButton(labels["library"], callback_data="ux_library"),
@@ -1021,7 +1021,7 @@ def register_smart_download_control(app) -> None:
         group=-3,
     )
     app.add_handler(
-        CallbackQueryHandler(callback, pattern=r"^(post_download|sdc_thumbnail|sdc_cancel|sdc_more|main_menu)$"),
+        CallbackQueryHandler(callback, pattern=r"^(post_download|sdc_thumbnail|sdc_studio|sdc_cancel|sdc_more|main_menu)$"),
         group=-2,
     )
     print("🎛️ Smart Download Control: ENABLED", flush=True)
