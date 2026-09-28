@@ -600,11 +600,11 @@ async def _send_result(
                 ) from exc
         return
 
-    delivery_policy.validate_telegram_upload(
-        output,
-        media_type={"photo": "image"}.get(media_type, media_type),
-    )
-    elif media_type == "photo":
+    if media_type == "photo":
+        delivery_policy.validate_telegram_upload(
+            output,
+            media_type="image",
+        )
         with output.open("rb") as handle:
             await context.bot.send_photo(
                 chat_id=chat_id,
@@ -616,6 +616,10 @@ async def _send_result(
                 pool_timeout=60,
             )
     else:
+        delivery_policy.validate_telegram_upload(
+            output,
+            media_type="video",
+        ) if output.stat().st_size <= MAX_RESULT_BYTES else None
         delivery_path = output
         temp_dir = None
         if output.stat().st_size > MAX_RESULT_BYTES:
