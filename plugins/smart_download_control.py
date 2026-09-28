@@ -8,6 +8,7 @@ import ipaddress
 import json
 from io import BytesIO
 import socket
+import time
 from urllib.parse import urlparse
 from urllib.request import Request
 
@@ -22,6 +23,7 @@ from downloader.multi_media import (
 
 PROBE_TIMEOUT = 25
 THUMBNAIL_TIMEOUT = 20
+METADATA_CACHE_TTL_SECONDS = 10 * 60
 THUMBNAIL_MAX_BYTES = 10 * 1024 * 1024
 
 _CARD_TEXTS = {
@@ -732,6 +734,43 @@ async def _multi_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         raise ApplicationHandlerStop
 
 
+def _metadata_cache_key(url: str) -> str:
+    return url.strip()
+
+
+def _metadata_cache_get(context: ContextTypes.DEFAULT_TYPE, url: str) -> tuple[dict | None, list[dict]]:
+    cache = context.user_data.get("sdc_metadata_cache") or {}
+    entry = cache.get(_metadata_cache_key(url))
+    if not isinstance(entry, dict):
+        return None, []
+    try:
+        if time.monotonic() - float(entry.get("created_at", 0)) > METADATA_CACHE_TTL_SECONDS:
+            cache.pop(_metadata_cache_key(url), None)
+            return None, []
+    except (TypeError, ValueError):
+        cache.pop(_metadata_cache_key(url), None)
+        return None, []
+    metadata = entry.get("metadata")
+    collection = entry.get("collection_entries")
+    if not isinstance(metadata, dict):
+        return None, []
+    return dict(metadata), list(collection) if isinstance(collection, list) else []
+
+
+def _metadata_cache_put(
+    context: ContextTypes.DEFAULT_TYPE,
+    url: str,
+    metadata: dict,
+    collection_entries: list[dict] | None = None,
+) -> None:
+    cache = context.user_data.setdefault("sdc_metadata_cache", {})
+    cache[_metadata_cache_key(url)] = {
+        "created_at": time.monotonic(),
+        "metadata": dict(metadata),
+        "collection_entries": list(collection_entries or []),
+    }
+
+
 async def _probe(url: str) -> dict:
     command = [
         "python", "-m", "yt_dlp", "--no-playlist", "--skip-download",
@@ -817,17 +856,22 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
     )
-    try:
-        data.update(await _probe(url))
-    except Exception as exc:
-        data["probe_error"] = type(exc).__name__
+    cached_data, cached_collection_entries = _metadata_cache_get(context, url)
+    if cached_data is not None:
+        data.update(cached_data)
+        collection_entries = cached_collection_entries
+    else:
+        try:
+            data.update(await _probe(url))
+        except Exception as exc:
+            data["probe_error"] = type(exc).__name__
+        try:
+            collection_entries = await _probe_collection(url)
+        except Exception:
+            collection_entries = []
+        _metadata_cache_put(context, url, data, collection_entries)
     context.user_data["sdc_info"] = data
     context.user_data["media_context"] = {"url": url, "metadata": data, "studio_token": None}
-
-    try:
-        collection_entries = await _probe_collection(url)
-    except Exception:
-        collection_entries = []
     if len(collection_entries) >= 2:
         await _show_multi_control(message, context, collection_entries, language)
         try:
