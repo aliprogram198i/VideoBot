@@ -58,7 +58,6 @@ from downloader.source_detection import detect_website
 from downloader.user_experience import (
     RETRY_CALLBACK,
     link_preview_text,
-    optimize_video_for_telegram,
     progress_text,
     retry_keyboard,
 )
@@ -5377,54 +5376,10 @@ async def download_media(
             return
 
         # ----------------------------------------------------
-        # P0 Smart Size Handling.
-        # Oversized video -> bounded H.264 optimization -> existing split fallback.
-        # The optimized artifact still passes the universal admission/delivery gates.
+        # Smart Size Handling.
+        # Oversized video is split without re-encoding so delivery is fast
+        # and the original media quality is preserved.
         # ----------------------------------------------------
-        if (
-            media_file
-            and not is_audio
-            and not is_image
-            and os.path.isfile(media_file)
-            and os.path.getsize(media_file) > MAX_TELEGRAM_VIDEO_BYTES
-        ):
-            await query.edit_message_text(
-                (
-                    "🗜️ الملف أكبر من حد Telegram الآمن.\n\n"
-                    "⚙️ AliBot يحاول ضغطه تلقائياً مع الحفاظ على جودة مناسبة..."
-                )
-                if language == "ar"
-                else (
-                    "🗜️ The file is above Telegram's safe limit.\n\n"
-                    "⚙️ AliBot is optimizing it automatically..."
-                )
-            )
-            optimized_file, optimization_diagnostics = (
-                await optimize_video_for_telegram(
-                    media_file,
-                    temp_dir,
-                    max_bytes=47 * 1024 * 1024,
-                )
-            )
-            fallback_diagnostics = {
-                **fallback_diagnostics,
-                "delivery_optimizer": optimization_diagnostics,
-            }
-            if optimized_file:
-                media_file = optimized_file
-                fallback_diagnostics["resolver"] = "delivery_optimizer"
-                print(
-                    "🗜️ Delivery optimizer: SUCCESS | "
-                    f"bytes={optimization_diagnostics.get('optimized_bytes')}",
-                    flush=True,
-                )
-            else:
-                print(
-                    "🗜️ Delivery optimizer did not reach the safe limit; "
-                    "existing split delivery remains active.",
-                    flush=True,
-                )
-
         await query.edit_message_text(
             progress_text(language, "delivery", website, quality_name)
         )
@@ -5816,7 +5771,7 @@ async def download_media(
                         part_file,
                         "rb",
                     ) as video_part:
-                        await context.bot.send_video(
+                        sent_part = await context.bot.send_video(
                             chat_id=update.effective_chat.id,
                             video=video_part,
                             caption=part_caption,
@@ -5824,6 +5779,26 @@ async def download_media(
                             write_timeout=600,
                             connect_timeout=60,
                             pool_timeout=60,
+                        )
+
+                    # Every split part is an independent Smart Studio source.
+                    # Cache failures never block delivery of an otherwise valid part.
+                    try:
+                        part_token = cache_media_for_user(
+                            user.id,
+                            part_file,
+                        )
+                        await sent_part.edit_reply_markup(
+                            reply_markup=studio_keyboard(
+                                part_token,
+                                language=language,
+                                media_type="video",
+                            ),
+                        )
+                    except (FileNotFoundError, OSError, ValueError) as exc:
+                        print(
+                            "⚠️ Media Studio cache unavailable for video part: "
+                            f"{type(exc).__name__}"
                         )
         # حفظ التحميل
         # ----------------------------------------------------
