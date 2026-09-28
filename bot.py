@@ -7568,42 +7568,54 @@ async def process_user_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
+    """Deliver text or supported media to the selected user."""
     if update.effective_user.id != ADMIN_ID:
         return
 
-    if not context.user_data.get(
-        "waiting_user_message"
-    ):
+    if not context.user_data.get("waiting_user_message"):
         return
 
-    target_id = context.user_data.get(
-        "message_target"
-    )
+    target_id = context.user_data.get("message_target")
+    message = update.message
+    if not target_id or message is None:
+        return
 
-    message = update.message.text
-
-    context.user_data[
-        "waiting_user_message"
-    ] = False
+    # Consume the pending state before delivery to avoid duplicate sends.
+    context.user_data["waiting_user_message"] = False
+    context.user_data.pop("message_target", None)
 
     try:
+        if message.text is not None:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=message.text,
+            )
+        elif (
+            message.photo
+            or message.video
+            or message.document
+            or message.audio
+        ):
+            await context.bot.copy_message(
+                chat_id=target_id,
+                from_chat_id=ADMIN_ID,
+                message_id=message.message_id,
+            )
+        else:
+            await message.reply_text(
+                "⚠️ هذا النوع غير مدعوم حاليًا. "
+                "أرسل نصًا أو صورة أو فيديو أو ملفًا أو صوتًا."
+            )
+            return
 
-        await context.bot.send_message(
-            chat_id=target_id,
-            text=message,
+        await message.reply_text(
+            "✅ تم إرسال المحتوى إلى المستخدم بنجاح."
         )
-
-        await update.message.reply_text(
-            "✅ تم إرسال الرسالة بنجاح."
-        )
-
     except Exception as e:
-
-        print(e)
-
-        await update.message.reply_text(
-            "❌ تعذر إرسال الرسالة."
+        print(f"Admin user message delivery error: {e!r}")
+        await message.reply_text(
+            "❌ تعذر إرسال المحتوى إلى المستخدم. "
+            "لم تتم إعادة المحاولة تلقائيًا."
         )
 
 
@@ -8641,6 +8653,19 @@ def main():
         MessageHandler(
             filters.LOCATION,
             handle_location
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            (
+                filters.PHOTO
+                | filters.VIDEO
+                | filters.Document.ALL
+                | filters.AUDIO
+            )
+            & filters.User(ADMIN_ID),
+            process_user_message
         )
     )
 
