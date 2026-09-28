@@ -672,8 +672,8 @@ def _alerts_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
 
 def _last_error_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 نسخة مختصرة للنسخ", callback_data="admin_last_error_compact")],
         [InlineKeyboardButton("🧾 تحديث آخر خطأ", callback_data=_LAST_ERROR)],
+        [InlineKeyboardButton("📋 نسخة مختصرة للنسخ", callback_data="admin_last_error_compact")],
         [InlineKeyboardButton("🚨 الحوادث والتنبيهات", callback_data=_ALERTS)],
         [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS),
          InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
