@@ -7,6 +7,7 @@ from plugins.admin_monitoring_center import (
     _refresh_alerts,
     _render_alerts,
     _render_last_error,
+    _render_last_error_compact,
     _last_error_keyboard,
     _render_incidents,
     _home_keyboard,
@@ -501,3 +502,48 @@ def test_last_error_keyboard_exposes_refresh_and_navigation():
     assert callbacks[0] == "admin_last_error"
     assert "admin_alerts" in callbacks
     assert "admin_resolver_monitor" in callbacks
+
+
+def test_last_error_compact_snapshot_is_copy_ready_and_sanitized(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    conn = get_db()
+    rows = [
+        ("yt-dlp", "yt_dlp_failed", "Sign in to confirm you are not a bot", None,
+         json.dumps({"resolver": "yt-dlp", "authorization": "Bearer SECRET"})),
+        ("yoinku", "yoinku_failed", "HTTP Error 422: Unprocessable Entity", 422,
+         json.dumps({"provider": "yoinku", "format_id": "v-720"})),
+        ("download", "all_methods_failed", "All available download methods failed.", None,
+         json.dumps({"fallback": {"skipped": "youtube_direct_fallback_not_applicable"}})),
+    ]
+    for index, (stage, error_type, message, http_status, details) in enumerate(rows, start=1):
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,http_status,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (7, "https://www.youtube.com/watch?v=example", "YouTube", "video",
+             stage, error_type, message, "compact-attempt", 1, http_status,
+             details, f"2026-09-28T06:0{index}:00"),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = _render_last_error_compact(get_db)
+    assert "incident" in snapshot
+    assert "events_in_same_attempt" in snapshot
+    assert "yt_dlp_failed" in snapshot
+    assert "yoinku_failed" in snapshot
+    assert "422" in snapshot
+    assert "all_methods_failed" in snapshot
+    assert "v-720" in snapshot
+    assert "[REDACTED]" in snapshot
+    assert "Bearer SECRET" not in snapshot
+
+
+def test_last_error_keyboard_exposes_compact_copy_action():
+    callbacks = _callback_values(_last_error_keyboard())
+    assert callbacks[0] == "admin_last_error_compact"
+    assert callbacks[1] == "admin_last_error"
