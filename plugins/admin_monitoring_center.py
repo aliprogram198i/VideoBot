@@ -413,8 +413,7 @@ def _incident_keyboard() -> InlineKeyboardMarkup:
 
 def _resolver_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚨 الحوادث", callback_data=_INCIDENTS),
-         InlineKeyboardButton("🔔 التنبيهات", callback_data=_ALERTS)],
+        [InlineKeyboardButton("🚨 الحوادث والتنبيهات", callback_data=_ALERTS)],
         [InlineKeyboardButton("🔄 تحديث", callback_data=_RESOLVERS),
          InlineKeyboardButton("📡 المراقبة الذكية", callback_data="admin_observability")],
         [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
@@ -627,7 +626,7 @@ def register_admin_monitoring(app: Any, get_db, owner_id: int) -> None:
     app.add_handler(
         CallbackQueryHandler(
             lambda u, c: resolver_callback(u, c, get_db, owner_id),
-            pattern=rf"^(?:{_RESOLVERS}|admin_ops_platforms)$",
+            pattern=rf"^(?:{_RESOLVERS}|admin_ops_platforms|admin_ops_resolvers)$",
         ),
         group=-210,
     )
