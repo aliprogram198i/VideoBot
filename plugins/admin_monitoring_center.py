@@ -109,8 +109,35 @@ def _table_columns(conn, table: str) -> set[str]:
         return set()
 
 
+
+def _latest_studio_error_row(get_db) -> Any | None:
+    """Return the newest Smart Studio failure only."""
+    conn = get_db()
+    try:
+        columns = _table_columns(conn, "error_logs")
+        if "details_json" not in columns or "created_at" not in columns:
+            return None
+        return conn.execute(
+            "SELECT * FROM error_logs "
+            "WHERE error_type = 'media_studio_failed' "
+            
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+
 def _latest_error_row(get_db) -> Any | None:
-    """Return the newest raw error telemetry row for the admin diagnostic snapshot."""
+    """Return the newest terminal error incident for the diagnostic snapshot.
+
+    Intermediate resolver/fallback failures are correlated telemetry, not
+    standalone incidents. Selecting only terminal outcomes prevents the
+    diagnostic view from pointing at an older intermediate row when the
+    attempt has already reached a later terminal state.
+    """
     conn = get_db()
     try:
         tables = {str(row[0]) for row in conn.execute(
@@ -121,6 +148,21 @@ def _latest_error_row(get_db) -> Any | None:
         columns = _table_columns(conn, "error_logs")
         if "created_at" not in columns:
             return None
+
+        where = ""
+        params: tuple[Any, ...] = ()
+        if "error_type" in columns:
+            where = "WHERE error_type IN ('all_methods_failed', 'download_failed')"
+
+        row = conn.execute(
+            "SELECT * FROM error_logs "
+            f"{where} ORDER BY created_at DESC, id DESC LIMIT 1",
+            params,
+        ).fetchone()
+        if row is not None:
+            return row
+
+        # Preserve legacy diagnostic behavior when no terminal incident exists.
         return conn.execute(
             "SELECT * FROM error_logs ORDER BY created_at DESC, id DESC LIMIT 1"
         ).fetchone()
@@ -238,6 +280,38 @@ def _render_attempt_timeline(rows: list[Any]) -> list[dict[str, Any]]:
     return events
 
 
+
+def _render_studio_error(get_db) -> list[str]:
+    row = _latest_studio_error_row(get_db)
+    if row is None:
+        return ["<pre>🟢 لا يوجد فشل مسجل في Smart Studio.</pre>"]
+    details = _json(row["details_json"]) if "details_json" in row.keys() else {}
+    safe = _sanitize_diagnostic_value(details or {}, "details_json")
+    summary = {
+        "operation": "media_studio",
+        "error_type": row["error_type"],
+        "created_at": row["created_at"],
+        "studio_attempt_id": safe.get("studio_attempt_id") if isinstance(safe, dict) else None,
+        "source_token": safe.get("source_token") if isinstance(safe, dict) else None,
+        "studio_token": safe.get("studio_token") if isinstance(safe, dict) else None,
+        "studio_action": safe.get("studio_action") if isinstance(safe, dict) else None,
+        "media_type": safe.get("media_type") if isinstance(safe, dict) else None,
+        "duration_ms": row["duration_ms"] if "duration_ms" in row.keys() else None,
+        "return_code": row["return_code"] if "return_code" in row.keys() else None,
+    }
+    text = (
+        "🧩 <b>آخر فشل Smart Studio — Diagnostic Snapshot</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "هذا التشخيص مستقل عن أخطاء التحميل العامة.\n\n"
+        "<b>=== STUDIO INCIDENT SUMMARY ===</b>\n"
+        + json.dumps(_sanitize_diagnostic_value(summary), ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n\n<b>=== STUDIO DETAILS ===</b>\n"
+        + json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True)
+    )
+    return [f"<pre>{html.escape(text)}</pre>"]
+
+
+
 def _render_last_error(get_db) -> list[str]:
     """Build a bounded, copy-friendly diagnostic snapshot from existing telemetry only."""
     row = _latest_error_row(get_db)
@@ -268,8 +342,9 @@ def _render_last_error(get_db) -> list[str]:
     timeline = _render_attempt_timeline(correlated_rows)
 
     lines = [
-        "🧾 <b>آخر خطأ بالتفصيل — Diagnostic Snapshot</b>",
+        "🧾 <b>آخر حادث فشل نهائي — Diagnostic Snapshot</b>",
         "━━━━━━━━━━━━━━━━━━━━",
+        "هذه الشاشة تعرض <b>آخر حادث فشل نهائي مسجل</b>، وليس آخر خطوة وسيطة داخل سلسلة fallback.",
         "انسخ <b>كل الأجزاء</b> من هذه الرسالة وأرسلها للتحليل.",
         "<b>مصدر البيانات:</b> telemetry الحالية فقط؛ لا يتم اختراع معلومات غير مسجلة.",
         "<b>الأمان:</b> تم إخفاء credentials وcookies وtokens وsession values وsigned query values.",
@@ -781,6 +856,19 @@ async def alerts_callback(update: Update, context, get_db, owner_id: int) -> Non
     raise ApplicationHandlerStop
 
 
+
+async def studio_error_callback(update: Update, context, get_db, owner_id: int) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id):
+        return
+    await query.edit_message_text(
+        _render_studio_error(get_db)[0],
+        parse_mode="HTML",
+    )
+
+
+
 async def last_error_callback(update: Update, context, get_db, owner_id: int) -> None:
     """Show a copy-friendly snapshot of the newest raw error telemetry."""
     query = update.callback_query
@@ -863,6 +951,13 @@ async def alert_action_callback(update: Update, context, get_db, owner_id: int) 
 def register_admin_monitoring(app: Any, get_db, owner_id: int) -> None:
     """Install the single owner for the three monitoring capabilities."""
     ensure_schema(get_db)
+    app.add_handler(
+        CallbackQueryHandler(
+            lambda u, c: studio_error_callback(u, c, get_db, owner_id),
+            pattern=r"^admin_studio_error$",
+        ),
+        group=-210,
+    )
     app.add_handler(
         CallbackQueryHandler(
             lambda u, c: monitoring_callback(u, c, get_db, owner_id),

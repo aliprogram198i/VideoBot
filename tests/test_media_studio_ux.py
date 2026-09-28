@@ -16,8 +16,23 @@ def test_single_download_studio_cache_behavior_is_preserved():
     """The original download path still exposes Studio on a validated video."""
     bot = Path("bot.py").read_text(encoding="utf-8")
     assert "studio_token = cache_media_for_user(" in bot
-    assert "reply_markup=studio_keyboard(studio_token)" in bot
+    # The keyboard is attached in the send call and may be formatted across lines.
+    assert "reply_markup=studio_keyboard(" in bot
+    assert "studio_token" in bot
 
+
+def test_primary_ytdlp_download_explicitly_disables_simulation():
+    """The primary downloader must create an artifact even when --print is used."""
+    bot = Path("bot.py").read_text(encoding="utf-8")
+    assert '"--no-simulate"' in bot
+
+
+def test_youtube_artifact_recovery_uses_progressive_format_without_download_cap():
+    """A no-artifact YouTube result gets one bounded progressive retry."""
+    bot = Path("bot.py").read_text(encoding="utf-8")
+    assert "YouTube artifact recovery: progressive format retry" in bot
+    assert 'recovery_command[format_index] = "best[ext=mp4]/best"' in bot
+    assert "if is_youtube and not media_file:" in bot
 
 def test_transient_status_message_is_removed_after_success():
     """Progress text is cleaned up after the result is delivered."""

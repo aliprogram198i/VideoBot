@@ -496,6 +496,46 @@ def test_last_error_snapshot_includes_correlated_attempt_timeline(tmp_path):
     assert "youtube_direct_fallback_not_applicable" in snapshot
 
 
+
+def test_last_error_snapshot_ignores_newer_intermediate_failure_after_terminal_incident(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    conn = get_db()
+    rows = [
+        ("download", "all_methods_failed", "terminal failure", "terminal-1", "2026-09-28T06:00:00"),
+        ("yt-dlp", "yt_dlp_failed", "intermediate diagnostic", "terminal-1", "2026-09-28T06:01:00"),
+    ]
+    for stage, error_type, message, attempt_id, created_at in rows:
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "https://example.com/video",
+                "YouTube",
+                "video",
+                stage,
+                error_type,
+                message,
+                attempt_id,
+                1,
+                "{}",
+                created_at,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = "\n".join(_render_last_error(get_db))
+    assert "terminal failure" in snapshot
+    assert "error_type: all_methods_failed" in snapshot
+    assert "error_message: terminal failure" in snapshot
+    assert "آخر حادث فشل نهائي" in snapshot
+
+
 def test_last_error_keyboard_exposes_refresh_and_navigation():
     callbacks = _callback_values(_last_error_keyboard())
     assert callbacks[0] == "admin_last_error_copy"
@@ -508,3 +548,43 @@ def test_last_error_keyboard_exposes_copy_action_before_refresh():
     callbacks = _callback_values(_last_error_keyboard())
     assert callbacks[0] == "admin_last_error_copy"
     assert callbacks[1] == "admin_last_error"
+
+
+def test_studio_error_snapshot_is_operation_scoped(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO error_logs
+           (url,website,media_type,stage,error_type,error_message,attempt_id,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("", "YouTube", "video", "download", "all_methods_failed",
+         "old youtube failure", "download-attempt",
+         json.dumps({"resolver":"yt-dlp"}), "2026-09-28T06:00:00"),
+    )
+    conn.execute(
+        """INSERT INTO error_logs
+           (url,website,media_type,stage,error_type,error_message,attempt_id,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("", "AliBot Studio", "audio", "media_studio", "media_studio_failed",
+         "studio failure", "studio-attempt",
+         json.dumps({
+             "operation":"media_studio",
+             "studio_attempt_id":"studio-attempt",
+             "source_token":"source-token",
+             "studio_token":"studio-token",
+             "studio_action":"audio",
+             "media_type":"audio",
+             "ffmpeg_stderr_tail":"codec error",
+         }), "2026-09-28T07:00:00"),
+    )
+    conn.commit()
+    conn.close()
+    from plugins.admin_monitoring_center import _render_studio_error
+    snapshot = "\n".join(_render_studio_error(get_db))
+    assert "media_studio_failed" in snapshot
+    assert "studio-attempt" in snapshot
+    assert "audio" in snapshot
+    assert "codec error" in snapshot
+    assert "old youtube failure" not in snapshot

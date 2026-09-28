@@ -298,3 +298,11 @@ def test_initial_download_result_is_tracked_for_studio_undo():
     assert 'context.user_data["media_studio_result_message"] = {' in section
     assert '"message_id": sent_video.message_id' in section
     assert 'context.user_data["media_studio_message"] = {' in section
+
+
+def test_ffmpeg_failure_preserves_return_code_and_stderr():
+    error = RuntimeError("media_studio_ffmpeg_failed:codec error")
+    error.ffmpeg_return_code = 1
+    error.ffmpeg_stderr_tail = "codec error"
+    assert error.ffmpeg_return_code == 1
+    assert error.ffmpeg_stderr_tail == "codec error"

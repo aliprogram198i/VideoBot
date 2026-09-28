@@ -58,7 +58,6 @@ from downloader.source_detection import detect_website
 from downloader.user_experience import (
     RETRY_CALLBACK,
     link_preview_text,
-    optimize_video_for_telegram,
     progress_text,
     retry_keyboard,
 )
@@ -86,7 +85,7 @@ LOCAL_DB_FILE = "bot_stats.db"
 DB_FILE = _data_get_db.__globals__["DB_FILE"]
 print(f"🗄️ Database path: {DB_FILE}")
 
-DOWNLOAD_TIMEOUT = 900
+DOWNLOAD_TIMEOUT = 300
 YOINKU_DOWNLOAD_TIMEOUT = 300
 GEMINI_TIMEOUT_SECONDS = 30
 PROCESS_SHUTDOWN_TIMEOUT = 10
@@ -863,6 +862,38 @@ def log_download_error(
             type(exc).__name__,
         )
 
+
+
+def log_media_studio_error(
+    *,
+    user=None, user_id=None, username=None,
+    studio_attempt_id=None, source_token=None, studio_token=None,
+    studio_action=None, media_type=None, error_message=None,
+    exception_type=None, return_code=None, duration_ms=None,
+    output_size=None, details=None,
+):
+    """Persist Smart Studio failures in the canonical error telemetry."""
+    studio_details = dict(details or {})
+    studio_details.update({
+        "operation": "media_studio",
+        "studio_attempt_id": studio_attempt_id,
+        "source_token": source_token,
+        "studio_token": studio_token,
+        "studio_action": studio_action,
+        "media_type": media_type,
+        "output_size": output_size,
+    })
+    log_download_error(
+        user=user, user_id=user_id, username=username,
+        url=None, website="AliBot Studio",
+        media_type=media_type or "unknown",
+        stage="media_studio",
+        error_type="media_studio_failed",
+        error_message=error_message or "Smart Studio operation failed.",
+        attempt_id=studio_attempt_id, duration_ms=duration_ms,
+        return_code=return_code, exception_type=exception_type,
+        bytes_downloaded=output_size, details=studio_details,
+    )
 
 def get_ai_errors_data(days=30):
     """Return aggregated error information for Gemini.
@@ -4387,6 +4418,10 @@ async def download_media(
 
             "--no-warnings",
 
+            # Explicitly disable simulation: --print is used only to obtain the
+            # post-processing filepath, and this process must always download.
+            "--no-simulate",
+
             "--max-filesize",
             str(MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES),
 
@@ -4577,6 +4612,52 @@ async def download_media(
             stdout_text = retry_stdout_text
             stderr_text = retry_stderr_text
             media_file = retry_media_file
+
+        # Bounded artifact-recovery retry for YouTube: some yt-dlp/provider
+        # combinations can exit with code 0 without producing a final artifact.
+        # Retry once with a progressive format and without --print/--max-filesize;
+        # the shared post-download admission gate remains the authoritative size
+        # and media validation boundary.
+        if is_youtube and not media_file:
+            recovery_command = []
+            skip_next = False
+            for token in command:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if token in ("--print", "--max-filesize"):
+                    skip_next = True
+                    continue
+                recovery_command.append(token)
+
+            format_index = recovery_command.index("-f") + 1
+            recovery_command[format_index] = "best[ext=mp4]/best"
+
+            print(
+                "🛡️ YouTube artifact recovery: progressive format retry",
+                flush=True,
+            )
+            recovery_process = await asyncio.create_subprocess_exec(
+                *recovery_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            recovery_stdout, recovery_stderr = await communicate_with_cleanup(
+                recovery_process,
+                DOWNLOAD_TIMEOUT,
+            )
+            recovery_stdout_text = recovery_stdout.decode(errors="ignore")
+            recovery_stderr_text = recovery_stderr.decode(errors="ignore")
+            recovery_media_file = final_output_from_yt_dlp(
+                recovery_stdout_text,
+                temp_dir,
+                allowed_extensions,
+            )
+
+            process = recovery_process
+            stdout_text = recovery_stdout_text
+            stderr_text = recovery_stderr_text
+            media_file = recovery_media_file
 
         print("yt-dlp completed")
 
@@ -5377,53 +5458,10 @@ async def download_media(
             return
 
         # ----------------------------------------------------
-        # P0 Smart Size Handling.
-        # Oversized video -> bounded H.264 optimization -> existing split fallback.
-        # The optimized artifact still passes the universal admission/delivery gates.
+        # Preserve the downloaded artifact exactly. Telegram-size handling
+        # happens only in the delivery stage below: oversized media is split
+        # with FFmpeg stream copy, never re-encoded automatically.
         # ----------------------------------------------------
-        if (
-            media_file
-            and not is_audio
-            and not is_image
-            and os.path.isfile(media_file)
-            and os.path.getsize(media_file) > MAX_TELEGRAM_VIDEO_BYTES
-        ):
-            await query.edit_message_text(
-                (
-                    "🗜️ الملف أكبر من حد Telegram الآمن.\n\n"
-                    "⚙️ AliBot يحاول ضغطه تلقائياً مع الحفاظ على جودة مناسبة..."
-                )
-                if language == "ar"
-                else (
-                    "🗜️ The file is above Telegram's safe limit.\n\n"
-                    "⚙️ AliBot is optimizing it automatically..."
-                )
-            )
-            optimized_file, optimization_diagnostics = (
-                await optimize_video_for_telegram(
-                    media_file,
-                    temp_dir,
-                    max_bytes=47 * 1024 * 1024,
-                )
-            )
-            fallback_diagnostics = {
-                **fallback_diagnostics,
-                "delivery_optimizer": optimization_diagnostics,
-            }
-            if optimized_file:
-                media_file = optimized_file
-                fallback_diagnostics["resolver"] = "delivery_optimizer"
-                print(
-                    "🗜️ Delivery optimizer: SUCCESS | "
-                    f"bytes={optimization_diagnostics.get('optimized_bytes')}",
-                    flush=True,
-                )
-            else:
-                print(
-                    "🗜️ Delivery optimizer did not reach the safe limit; "
-                    "existing split delivery remains active.",
-                    flush=True,
-                )
 
         await query.edit_message_text(
             progress_text(language, "delivery", website, quality_name)
@@ -5645,15 +5683,41 @@ async def download_media(
                         )
                     )
 
-                with open(part_file, "rb") as audio:
-                    await context.bot.send_audio(
-                        chat_id=update.effective_chat.id,
-                        audio=audio,
-                        caption=caption,
-                        read_timeout=600,
-                        write_timeout=600,
-                        connect_timeout=60,
-                        pool_timeout=60,
+                # Attach a dedicated Studio keyboard in the original
+                # send call so every split audio part is independently
+                # addressable without relying on a follow-up edit request.
+                try:
+                    studio_token = cache_media_for_user(
+                        user.id,
+                        part_file,
+                    )
+                    studio_messages = context.user_data.setdefault(
+                        "media_studio_message_by_token",
+                        {},
+                    )
+                    with open(part_file, "rb") as audio:
+                        sent_audio = await context.bot.send_audio(
+                            chat_id=update.effective_chat.id,
+                            audio=audio,
+                            caption=caption,
+                            reply_markup=studio_keyboard(
+                                studio_token,
+                                language,
+                                media_type="audio",
+                            ),
+                            read_timeout=600,
+                            write_timeout=600,
+                            connect_timeout=60,
+                            pool_timeout=60,
+                        )
+                    studio_messages[studio_token] = {
+                        "chat_id": sent_audio.chat_id,
+                        "message_id": sent_audio.message_id,
+                    }
+                except (FileNotFoundError, OSError, ValueError) as exc:
+                    print(
+                        "⚠️ Media Studio cache unavailable for audio part: "
+                        f"{type(exc).__name__}"
                     )
 
             print("==========================")
@@ -5764,8 +5828,20 @@ async def download_media(
                     media_context = context.user_data.get("media_context")
                     if isinstance(media_context, dict):
                         media_context["studio_token"] = studio_token
+                    studio_messages = context.user_data.setdefault(
+                        "media_studio_message_by_token",
+                        {},
+                    )
+                    studio_messages[studio_token] = {
+                        "chat_id": sent_video.chat_id,
+                        "message_id": sent_video.message_id,
+                    }
                     await sent_video.edit_reply_markup(
-                        reply_markup=studio_keyboard(studio_token),
+                        reply_markup=studio_keyboard(
+                            studio_token,
+                            language,
+                            media_type="video",
+                        ),
                     )
                 except (FileNotFoundError, OSError, ValueError) as exc:
                     print(
@@ -5812,18 +5888,45 @@ async def download_media(
                         f"{video_caption}"
                     )
 
-                    with open(
-                        part_file,
-                        "rb",
-                    ) as video_part:
-                        await context.bot.send_video(
-                            chat_id=update.effective_chat.id,
-                            video=video_part,
-                            caption=part_caption,
-                            read_timeout=600,
-                            write_timeout=600,
-                            connect_timeout=60,
-                            pool_timeout=60,
+                    # Cache first so the per-part Studio token can be
+                    # attached directly to the Telegram message. This avoids
+                    # a second edit request and guarantees every split part
+                    # receives its own independent Studio keyboard.
+                    try:
+                        studio_token = cache_media_for_user(
+                            user.id,
+                            part_file,
+                        )
+                        studio_messages = context.user_data.setdefault(
+                            "media_studio_message_by_token",
+                            {},
+                        )
+                        with open(
+                            part_file,
+                            "rb",
+                        ) as video_part:
+                            sent_part = await context.bot.send_video(
+                                chat_id=update.effective_chat.id,
+                                video=video_part,
+                                caption=part_caption,
+                                reply_markup=studio_keyboard(
+                                    studio_token,
+                                    language,
+                                    media_type="video",
+                                ),
+                                read_timeout=600,
+                                write_timeout=600,
+                                connect_timeout=60,
+                                pool_timeout=60,
+                            )
+                        studio_messages[studio_token] = {
+                            "chat_id": sent_part.chat_id,
+                            "message_id": sent_part.message_id,
+                        }
+                    except (FileNotFoundError, OSError, ValueError) as exc:
+                        print(
+                            "⚠️ Media Studio cache unavailable for video part: "
+                            f"{type(exc).__name__}"
                         )
         # حفظ التحميل
         # ----------------------------------------------------

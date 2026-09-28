@@ -43,6 +43,7 @@ STUDIO_HISTORY_KEY = "media_studio_history"
 STUDIO_CURRENT_TOKEN_KEY = "media_studio_current_token"
 STUDIO_MESSAGE_KEY = "media_studio_message"
 STUDIO_RESULT_MESSAGE_KEY = "media_studio_result_message"
+STUDIO_MESSAGES_BY_TOKEN_KEY = "media_studio_message_by_token"
 MAX_STUDIO_HISTORY = 3
 
 
@@ -287,7 +288,10 @@ async def _run_ffmpeg(*args: str) -> None:
 
     if process.returncode != 0:
         detail = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"media_studio_ffmpeg_failed:{detail[-500:]}")
+        exc = RuntimeError(f"media_studio_ffmpeg_failed:{detail[-500:]}")
+        setattr(exc, "ffmpeg_return_code", process.returncode)
+        setattr(exc, "ffmpeg_stderr_tail", detail[-500:])
+        raise exc
 
 
 def _validate_result(path: Path, *, allow_video_optimization: bool = False) -> None:
@@ -480,7 +484,7 @@ async def _send_result(
     )
     if media_type == "audio":
         with output.open("rb") as handle:
-            await context.bot.send_audio(
+            sent = await context.bot.send_audio(
                 chat_id=chat_id,
                 audio=handle,
                 caption=t("studio", "done_audio", language),
@@ -489,6 +493,25 @@ async def _send_result(
                 connect_timeout=60,
                 pool_timeout=60,
             )
+        try:
+            studio_token = cache_media_for_user(update.effective_user.id, str(output))
+            studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
+            studio_messages[studio_token] = {
+                "chat_id": sent.chat_id,
+                "message_id": sent.message_id,
+            }
+            await sent.edit_reply_markup(
+                reply_markup=studio_keyboard(
+                    studio_token,
+                    language,
+                    media_type="audio",
+                ),
+            )
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            logger.debug("media_studio_audio_result_cache_unavailable", exc_info=True)
+            raise RuntimeError(
+                f"media_studio_cache_unavailable:{type(exc).__name__}"
+            ) from exc
     elif media_type == "photo":
         with output.open("rb") as handle:
             await context.bot.send_photo(
@@ -536,7 +559,8 @@ async def _send_result(
 
         try:
             studio_token = cache_media_for_user(update.effective_user.id, str(output))
-            previous_message = context.user_data.get(STUDIO_RESULT_MESSAGE_KEY)
+            studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
+            previous_message = studio_messages.get(source_token)
             if previous_message:
                 try:
                     await context.bot.delete_message(
@@ -549,14 +573,13 @@ async def _send_result(
             history.append(source_token)
             context.user_data[STUDIO_HISTORY_KEY] = history[-MAX_STUDIO_HISTORY:]
             context.user_data[STUDIO_CURRENT_TOKEN_KEY] = studio_token
-            context.user_data[STUDIO_RESULT_MESSAGE_KEY] = {
+            result_message = {
                 "chat_id": sent.chat_id,
                 "message_id": sent.message_id,
             }
-            context.user_data[STUDIO_MESSAGE_KEY] = {
-                "chat_id": sent.chat_id,
-                "message_id": sent.message_id,
-            }
+            studio_messages[studio_token] = result_message
+            context.user_data[STUDIO_RESULT_MESSAGE_KEY] = result_message
+            context.user_data[STUDIO_MESSAGE_KEY] = result_message
             context.user_data["sdc_info"] = _studio_info(
                 context.user_data.get("sdc_info"), output, studio_token
             )
@@ -680,9 +703,15 @@ async def _run_action(
         _studio_heartbeat(status_message, status, language)
     )
     output = None
+    studio_attempt_id = uuid.uuid4().hex[:16]
+    started_at = time.monotonic()
+    generated_media_type = None
     try:
         try:
-            studio_message = context.user_data.get(STUDIO_MESSAGE_KEY)
+            studio_messages = context.user_data.get(STUDIO_MESSAGES_BY_TOKEN_KEY) or {}
+            studio_message = studio_messages.get(token)
+            if studio_message is None:
+                studio_message = context.user_data.get(STUDIO_MESSAGE_KEY)
             if studio_message:
                 await context.bot.edit_message_reply_markup(
                     chat_id=studio_message["chat_id"],
@@ -693,6 +722,7 @@ async def _run_action(
             logger.debug("studio_busy_keyboard_update_failed", exc_info=True)
 
         output, media_type = await _create_result(source, action, value)
+        generated_media_type = media_type
         _validate_result(output, allow_video_optimization=media_type == "video")
         await _send_result(update, context, output, media_type, token)
         try:
@@ -700,7 +730,37 @@ async def _run_action(
         except Exception:
             logger.debug("studio_status_message_delete_failed", exc_info=True)
     except (RuntimeError, ValueError, OSError) as exc:
-        logger.warning("media_studio_failed type=%s", type(exc).__name__)
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        try:
+            bot_module.log_media_studio_error(
+                user=user,
+                studio_attempt_id=studio_attempt_id,
+                source_token=token,
+                studio_token=token,
+                studio_action=action,
+                media_type=generated_media_type,
+                error_message=str(exc),
+                exception_type=type(exc).__name__,
+                return_code=getattr(exc, "ffmpeg_return_code", None),
+                duration_ms=elapsed_ms,
+                output_size=(
+                    output.stat().st_size
+                    if output is not None and output.is_file()
+                    else None
+                ),
+                details={
+                    "ffmpeg_stderr_tail": getattr(exc, "ffmpeg_stderr_tail", None),
+                    "input_size": source.stat().st_size if source.is_file() else None,
+                    "requested_value": value,
+                },
+            )
+        except Exception:
+            logger.exception("media_studio_error_telemetry_failed")
+        logger.warning(
+            "media_studio_failed type=%s attempt=%s",
+            type(exc).__name__,
+            studio_attempt_id,
+        )
         try:
             await status_message.edit_text(t("studio", "failed", language))
         except Exception:
@@ -857,15 +917,22 @@ async def media_studio_callback(
         return
 
     if action == "trimcustom" and value is None:
-        context.user_data[STUDIO_MESSAGE_KEY] = {
+        studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
+        studio_messages[token] = {
             "chat_id": query.message.chat_id,
             "message_id": query.message.message_id,
         }
+        context.user_data[STUDIO_MESSAGE_KEY] = studio_messages[token]
         _remember_pending(context, token, action)
         await query.message.reply_text(t("studio", "custom_prompt", language))
         return
 
-    context.user_data[STUDIO_MESSAGE_KEY] = {"chat_id": query.message.chat_id, "message_id": query.message.message_id}
+    studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
+    studio_messages[token] = {
+        "chat_id": query.message.chat_id,
+        "message_id": query.message.message_id,
+    }
+    context.user_data[STUDIO_MESSAGE_KEY] = studio_messages[token]
     await _run_action(update, context, token, action, value)
     await answer_task
 
