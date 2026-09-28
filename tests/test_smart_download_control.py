@@ -86,3 +86,35 @@ def test_smart_studio_callback_is_registered():
 
     source = inspect.getsource(register_smart_download_control)
     assert "sdc_studio" in source
+
+
+def test_metadata_cache_reuses_fresh_probe_and_collection_data():
+    import plugins.smart_download_control as sdc
+
+    class Context:
+        user_data = {}
+
+    context = Context()
+    metadata = {"title": "cached", "media_type": "video"}
+    entries = [{"index": 0, "url": "https://example.com/a", "media_type": "video"}]
+    sdc._metadata_cache_put(context, " https://example.com/source ", metadata, entries)
+
+    cached_metadata, cached_entries = sdc._metadata_cache_get(context, "https://example.com/source")
+    assert cached_metadata == metadata
+    assert cached_entries == entries
+
+
+def test_metadata_cache_expires_stale_entries(monkeypatch):
+    import plugins.smart_download_control as sdc
+
+    class Context:
+        user_data = {}
+
+    context = Context()
+    sdc._metadata_cache_put(context, "https://example.com/source", {"title": "old"}, [])
+    monkeypatch.setattr(sdc, "METADATA_CACHE_TTL_SECONDS", 1)
+    monkeypatch.setattr(sdc.time, "monotonic", lambda: 10**9)
+
+    cached_metadata, cached_entries = sdc._metadata_cache_get(context, "https://example.com/source")
+    assert cached_metadata is None
+    assert cached_entries == []
