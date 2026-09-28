@@ -210,6 +210,37 @@ def _diagnostic_phase(details: Any, row: Any) -> str:
     return stage[:120] or "unknown"
 
 
+def _latest_error_log_context(get_db, selected_row: Any) -> dict[str, Any]:
+    """Describe snapshot freshness using only persisted error telemetry."""
+    conn = get_db()
+    try:
+        columns = _table_columns(conn, "error_logs")
+        if "created_at" not in columns:
+            return {"status": "unknown"}
+        selected_attempt = (
+            str(selected_row["attempt_id"] or "").strip()
+            if "attempt_id" in selected_row.keys() else ""
+        )
+        latest = conn.execute(
+            "SELECT created_at, attempt_id, error_type FROM error_logs "
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+        if latest is None:
+            return {"status": "unknown"}
+        latest_attempt = str(latest["attempt_id"] or "").strip() if "attempt_id" in latest.keys() else ""
+        latest_type = str(latest["error_type"] or "").strip() if "error_type" in latest.keys() else ""
+        return {
+            "status": "same_attempt" if selected_attempt and latest_attempt == selected_attempt else "newer_telemetry",
+            "latest_created_at": latest["created_at"],
+            "latest_attempt_id": latest_attempt,
+            "latest_error_type": latest_type,
+        }
+    except Exception:
+        return {"status": "unknown"}
+    finally:
+        conn.close()
+
+
 def _diagnostic_summary(row: Any, details: Any) -> dict[str, Any]:
     """Build deterministic facts from the existing error row and details_json."""
     summary: dict[str, Any] = {
@@ -340,6 +371,7 @@ def _render_last_error(get_db) -> list[str]:
     attempt_id = str(row["attempt_id"] or "").strip() if "attempt_id" in row.keys() else ""
     correlated_rows = _attempt_error_rows(get_db, attempt_id)
     timeline = _render_attempt_timeline(correlated_rows)
+    freshness = _latest_error_log_context(get_db, row)
 
     lines = [
         "🧾 <b>آخر حادث فشل نهائي — Diagnostic Snapshot</b>",
@@ -347,6 +379,8 @@ def _render_last_error(get_db) -> list[str]:
         "هذه الشاشة تعرض <b>آخر حادث فشل نهائي مسجل</b>، وليس آخر خطوة وسيطة داخل سلسلة fallback.",
         "انسخ <b>كل الأجزاء</b> من هذه الرسالة وأرسلها للتحليل.",
         "<b>مصدر البيانات:</b> telemetry الحالية فقط؛ لا يتم اختراع معلومات غير مسجلة.",
+        "<b>حالة الحداثة:</b> " + ("نفس محاولة الحادث" if freshness.get("status") == "same_attempt" else "توجد telemetry فشل أحدث من الحادث المعروض" if freshness.get("status") == "newer_telemetry" else "غير محددة") + ".",
+        "<b>آخر telemetry مسجلة:</b> " + str(freshness.get("latest_created_at") or "غير متاحة") + " | " + str(freshness.get("latest_error_type") or "غير متاح"),
         "<b>الأمان:</b> تم إخفاء credentials وcookies وtokens وsession values وsigned query values.",
         "",
         "<b>=== INCIDENT SUMMARY ===</b>",
