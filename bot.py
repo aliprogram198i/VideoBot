@@ -7580,10 +7580,6 @@ async def process_user_message(
     if not target_id or message is None:
         return
 
-    # Consume the pending state before delivery to avoid duplicate sends.
-    context.user_data["waiting_user_message"] = False
-    context.user_data.pop("message_target", None)
-
     try:
         if message.text is not None:
             await context.bot.send_message(
@@ -7615,14 +7611,21 @@ async def process_user_message(
             )
             return
 
+        # Clear the pending state only after Telegram confirms delivery.
+        context.user_data["waiting_user_message"] = False
+        context.user_data.pop("message_target", None)
         await message.reply_text(
             "✅ تم إرسال المحتوى إلى المستخدم بنجاح."
         )
     except Exception as e:
-        print(f"Admin user message delivery error: {e!r}")
+        logger.exception(
+            "Admin user message delivery failed: type=%s detail=%s",
+            type(e).__name__,
+            str(e),
+        )
         await message.reply_text(
             "❌ تعذر إرسال المحتوى إلى المستخدم. "
-            "لم تتم إعادة المحاولة تلقائيًا."
+            "يمكنك المحاولة مرة أخرى دون إعادة اختيار المستخدم."
         )
 
 
