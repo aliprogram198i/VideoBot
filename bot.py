@@ -7595,6 +7595,7 @@ async def process_user_message(
             or message.video
             or message.document
             or message.audio
+            or message.voice
         ):
             await context.bot.copy_message(
                 chat_id=target_id,
@@ -8663,6 +8664,7 @@ def main():
                 | filters.VIDEO
                 | filters.Document.ALL
                 | filters.AUDIO
+                | filters.VOICE
             )
             & filters.User(ADMIN_ID),
             process_user_message
