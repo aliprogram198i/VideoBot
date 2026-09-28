@@ -71,13 +71,15 @@ def test_smart_media_center_title_is_localized():
     assert _CARD_TEXTS["de"]["title"] == "🧩 Smart Media Center"
 
 
-def test_studio_callback_routes_through_existing_download_pipeline():
+def test_studio_callback_reuses_existing_download_artifact():
     import inspect
     from plugins.smart_download_control import callback
 
     source = inspect.getsource(callback)
-    assert 'studio_choice = "audio_best" if media_type == "audio" else "video_best"' in source
-    assert "_UpdateProxy(update, proxy_query)" in source
+    assert "media_context" in source
+    assert "_cached_path" in source
+    assert "studio_keyboard" in source
+    assert "await bot_module.download_media(proxy_update, context)" not in source
 
 
 def test_smart_studio_callback_is_registered():
@@ -118,3 +120,16 @@ def test_metadata_cache_expires_stale_entries(monkeypatch):
     cached_metadata, cached_entries = sdc._metadata_cache_get(context, "https://example.com/source")
     assert cached_metadata is None
     assert cached_entries == []
+
+
+def test_studio_action_reuses_cached_artifact_instead_of_download_pipeline():
+    source = __import__("pathlib").Path(__file__).resolve().parents[1] / "plugins" / "smart_download_control.py"
+    text = source.read_text(encoding="utf-8")
+    start = text.index('    if data == "sdc_studio":')
+    end = text.index('    if data == "sdc_cancel":', start)
+    section = text[start:end]
+    assert "media_context" in section
+    assert "_cached_path" in section
+    assert "studio_keyboard" in section
+    assert "await bot_module.download_media" not in section
+    assert "sdc_studio" in section
