@@ -133,3 +133,138 @@ def test_resolver_prefers_nested_resolver_name():
         "stage": "download",
     })
     assert _resolver(row) == "instagram_graphql"
+
+
+def test_intermediate_resolver_failures_do_not_create_admin_alert(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    ensure_schema(get_db)
+
+    conn = get_db()
+    for stage, error_type in (
+        ("yt-dlp", "yt_dlp_failed"),
+        ("yoinku", "yoinku_failed"),
+    ):
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,datetime('now'))""",
+            (
+                "https://www.tiktok.com/@demo/video/123456",
+                "tiktok",
+                "video",
+                stage,
+                error_type,
+                f"{error_type} during fallback chain",
+                "successful-attempt",
+                json.dumps({"resolver": stage}),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    assert _refresh_alerts(get_db) == 0
+    assert _counts(get_db)["open_count"] == 0
+    assert _render_alerts(get_db)[0].count("tiktok") == 0
+
+
+def test_terminal_failure_collapses_attempt_to_one_admin_alert(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    ensure_schema(get_db)
+
+    conn = get_db()
+    for stage, error_type in (
+        ("yt-dlp", "yt_dlp_failed"),
+        ("yoinku", "yoinku_failed"),
+        ("direct_fallback", "fallback_failed"),
+        ("download", "all_methods_failed"),
+    ):
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,datetime('now'))""",
+            (
+                "https://www.tiktok.com/@demo/video/123456",
+                "tiktok",
+                "video",
+                stage,
+                error_type,
+                f"{error_type} for the same attempt",
+                "failed-attempt",
+                json.dumps({"resolver": stage}),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    assert _refresh_alerts(get_db) == 1
+    counts = _counts(get_db)
+    assert counts["open_count"] == 1
+    assert counts["critical"] == 1
+
+    conn = get_db()
+    row = conn.execute("SELECT title, resolver, event_count FROM admin_alerts").fetchone()
+    conn.close()
+
+    assert row["title"] == "tiktok / download — all_methods_failed"
+    assert row["resolver"] == "download"
+    assert row["event_count"] == 1
+
+
+def test_previous_intermediate_alerts_are_converged_to_resolved(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    ensure_schema(get_db)
+
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO admin_alerts
+           (fingerprint,category,severity,status,title,details,platform,resolver,
+            event_count,first_seen,last_seen)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "legacy-fp",
+            "incident",
+            "medium",
+            "open",
+            "tiktok / yoinku — yoinku_failed",
+            "legacy intermediate failure",
+            "tiktok",
+            "yoinku",
+            2,
+            "2026-09-27T20:00:00",
+            "2026-09-27T20:01:00",
+        ),
+    )
+    conn.execute(
+        """INSERT INTO error_logs
+           (url,website,media_type,stage,error_type,error_message,
+            attempt_id,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,datetime('now'))""",
+        (
+            "https://www.tiktok.com/@demo/video/123456",
+            "tiktok",
+            "video",
+            "yt-dlp",
+            "yt_dlp_failed",
+            "primary failed but fallback succeeded",
+            "successful-attempt",
+            json.dumps({"resolver": "yt-dlp"}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    assert _refresh_alerts(get_db) == 0
+    conn = get_db()
+    row = conn.execute(
+        "SELECT status FROM admin_alerts WHERE fingerprint='legacy-fp'"
+    ).fetchone()
+    conn.close()
+    assert row["status"] == "resolved"
