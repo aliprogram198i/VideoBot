@@ -4581,6 +4581,52 @@ async def download_media(
             stderr_text = retry_stderr_text
             media_file = retry_media_file
 
+        # Bounded artifact-recovery retry for YouTube: some yt-dlp/provider
+        # combinations can exit with code 0 without producing a final artifact.
+        # Retry once with a progressive format and without --print/--max-filesize;
+        # the shared post-download admission gate remains the authoritative size
+        # and media validation boundary.
+        if is_youtube and not media_file:
+            recovery_command = []
+            skip_next = False
+            for token in command:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if token in ("--print", "--max-filesize"):
+                    skip_next = True
+                    continue
+                recovery_command.append(token)
+
+            format_index = recovery_command.index("-f") + 1
+            recovery_command[format_index] = "best[ext=mp4]/best"
+
+            print(
+                "🛡️ YouTube artifact recovery: progressive format retry",
+                flush=True,
+            )
+            recovery_process = await asyncio.create_subprocess_exec(
+                *recovery_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            recovery_stdout, recovery_stderr = await communicate_with_cleanup(
+                recovery_process,
+                DOWNLOAD_TIMEOUT,
+            )
+            recovery_stdout_text = recovery_stdout.decode(errors="ignore")
+            recovery_stderr_text = recovery_stderr.decode(errors="ignore")
+            recovery_media_file = final_output_from_yt_dlp(
+                recovery_stdout_text,
+                temp_dir,
+                allowed_extensions,
+            )
+
+            process = recovery_process
+            stdout_text = recovery_stdout_text
+            stderr_text = recovery_stderr_text
+            media_file = recovery_media_file
+
         print("yt-dlp completed")
 
         if stderr_text:
