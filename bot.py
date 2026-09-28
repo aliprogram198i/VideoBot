@@ -4386,6 +4386,10 @@ async def download_media(
 
             "--no-warnings",
 
+            # Explicitly disable simulation: --print is used only to obtain the
+            # post-processing filepath, and this process must always download.
+            "--no-simulate",
+
             "--max-filesize",
             str(MAX_AUDIO_DOWNLOAD_BYTES if is_audio else MAX_VIDEO_DOWNLOAD_BYTES),
 
