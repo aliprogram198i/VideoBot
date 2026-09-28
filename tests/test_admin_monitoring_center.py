@@ -531,7 +531,8 @@ def test_last_error_snapshot_ignores_newer_intermediate_failure_after_terminal_i
 
     snapshot = "\n".join(_render_last_error(get_db))
     assert "terminal failure" in snapshot
-    assert "intermediate diagnostic" not in snapshot
+    assert '"error_type": "all_methods_failed"' in snapshot
+    assert '"error_message": "terminal failure"' in snapshot
     assert "آخر حادث فشل نهائي" in snapshot
 
 
