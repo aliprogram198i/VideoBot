@@ -33,34 +33,12 @@ async def command_center_callback(update: Update, context, get_db, owner_id: int
     raise ApplicationHandlerStop
 
 
-async def more_callback(update: Update, context, get_db, owner_id: int) -> None:
-    query = update.callback_query
-    await query.answer()
-    if not authorize(update, get_db, owner_id, "center.view"):
-        return
-    audit(get_db, int(update.effective_user.id), "open_admin_tools")
-    await query.edit_message_text(
-        "🧰 <b>الأدوات الإدارية الكاملة</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "الأدوات المتقدمة متاحة هنا دون إزالة أي وظيفة موجودة.",
-        parse_mode="HTML",
-        reply_markup=admin_keyboard(),
-    )
-    raise ApplicationHandlerStop
-
 
 def register_admin_command_center(app, get_db, owner_id: int) -> None:
     app.add_handler(
         __import__("telegram.ext", fromlist=["CallbackQueryHandler"]).CallbackQueryHandler(
             lambda u, c: command_center_callback(u, c, get_db, owner_id),
             pattern=r"^admin_home$|^admin_control_center$",
-        ),
-        group=-300,
-    )
-    app.add_handler(
-        __import__("telegram.ext", fromlist=["CallbackQueryHandler"]).CallbackQueryHandler(
-            lambda u, c: more_callback(u, c, get_db, owner_id),
-            pattern=r"^admin_more$",
         ),
         group=-300,
     )
