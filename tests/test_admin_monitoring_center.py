@@ -498,6 +498,13 @@ def test_last_error_snapshot_includes_correlated_attempt_timeline(tmp_path):
 
 def test_last_error_keyboard_exposes_refresh_and_navigation():
     callbacks = _callback_values(_last_error_keyboard())
-    assert callbacks[0] == "admin_last_error"
+    assert callbacks[0] == "admin_last_error_copy"
+    assert "admin_last_error" in callbacks
     assert "admin_alerts" in callbacks
     assert "admin_resolver_monitor" in callbacks
+
+
+def test_last_error_keyboard_exposes_copy_action_before_refresh():
+    callbacks = _callback_values(_last_error_keyboard())
+    assert callbacks[0] == "admin_last_error_copy"
+    assert callbacks[1] == "admin_last_error"
