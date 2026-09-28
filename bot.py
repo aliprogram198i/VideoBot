@@ -2671,6 +2671,12 @@ async def download_with_yoinku(
     selected_format = "a-mp3" if is_audio else "v-720"
     info_diagnostics = {}
 
+    # One bounded deadline covers both /info negotiation and /download.
+    fetch_deadline = (
+        time.monotonic()
+        + YOINKU_DOWNLOAD_TIMEOUT
+    )
+
     def fetch_info():
         request = Request(
             info_url,
@@ -2783,11 +2789,6 @@ async def download_with_yoinku(
         temp_dir,
         "yoinku_download"
         + (".mp3" if is_audio else ".mp4"),
-    )
-
-    fetch_deadline = (
-        time.monotonic()
-        + YOINKU_DOWNLOAD_TIMEOUT
     )
 
     def fetch():
