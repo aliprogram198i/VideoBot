@@ -29,3 +29,45 @@ def test_keyboard_exposes_post_download_action():
     post_buttons = [button for button in buttons if button.callback_data == "post_download"]
     assert len(post_buttons) == 1
     assert post_buttons[0].text == "📌 تحميل المنشور"
+
+
+def _callbacks(markup):
+    return [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+        if button.callback_data
+    ]
+
+
+def test_smart_media_center_exposes_studio_for_video_and_audio():
+    from plugins.smart_download_control import _keyboard
+
+    for media_type in ("video", "audio"):
+        callbacks = _callbacks(_keyboard("https://example.com/media", "ar", media_type))
+        assert "sdc_studio" in callbacks
+
+
+def test_smart_media_center_keeps_primary_actions():
+    from plugins.smart_download_control import _keyboard
+
+    callbacks = _callbacks(_keyboard("https://example.com/media", "ar", "video"))
+    assert {"video_menu", "audio_menu", "sdc_studio", "post_download", "sdc_more", "sdc_cancel"} <= set(callbacks)
+
+
+def test_smart_media_center_title_is_localized():
+    from plugins.smart_download_control import _CARD_TEXTS
+
+    assert _CARD_TEXTS["ar"]["title"] == "🧩 مركز الوسائط الذكي"
+    assert _CARD_TEXTS["en"]["title"] == "🧩 Smart Media Center"
+    assert _CARD_TEXTS["tr"]["title"] == "🧩 Akıllı Medya Merkezi"
+    assert _CARD_TEXTS["de"]["title"] == "🧩 Smart Media Center"
+
+
+def test_studio_callback_routes_through_existing_download_pipeline():
+    import inspect
+    from plugins.smart_download_control import callback
+
+    source = inspect.getsource(callback)
+    assert 'studio_choice = "audio_best" if media_type == "audio" else "video_best"' in source
+    assert "_UpdateProxy(update, proxy_query)" in source

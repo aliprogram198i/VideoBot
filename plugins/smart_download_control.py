@@ -26,7 +26,7 @@ THUMBNAIL_MAX_BYTES = 10 * 1024 * 1024
 
 _CARD_TEXTS = {
     "ar": {
-        "title": "🎛️ معلومات الرابط",
+        "title": "🧩 مركز الوسائط الذكي",
         "unknown": "غير معروف",
         "unavailable": "غير متاحة",
         "duration": "المدة",
@@ -55,6 +55,7 @@ _CARD_TEXTS = {
         "video": "🎥 تحميل الفيديو",
         "post": "📌 تحميل المنشور",
         "audio": "🎵 تحميل الصوت",
+        "studio": "🎨 Smart Studio",
         "favorite": "⭐ حفظ",
         "library": "📚 مكتبتي",
         "settings": "⚙️ الإعدادات",
@@ -69,7 +70,7 @@ _CARD_TEXTS = {
         "cancelled": "✅ تم إلغاء العملية.",
     },
     "en": {
-        "title": "🎛️ Link information",
+        "title": "🧩 Smart Media Center",
         "unknown": "Unknown",
         "unavailable": "Unavailable",
         "duration": "Duration",
@@ -97,6 +98,7 @@ _CARD_TEXTS = {
         "video": "🎥 Video",
         "post": "📌 Download post",
         "audio": "🎵 MP3",
+        "studio": "🎨 Smart Studio",
         "favorite": "⭐ Save",
         "library": "📚 Library",
         "settings": "⚙️ Settings",
@@ -111,7 +113,7 @@ _CARD_TEXTS = {
         "cancelled": "✅ Operation cancelled.",
     },
     "tr": {
-        "title": "🎛️ Bağlantı bilgileri",
+        "title": "🧩 Akıllı Medya Merkezi",
         "unknown": "Bilinmiyor",
         "unavailable": "Mevcut değil",
         "duration": "Süre",
@@ -139,6 +141,7 @@ _CARD_TEXTS = {
         "more_options": "⚙️ Diğer seçenekler",
         "video": "🎥 Videoyu indir",
         "audio": "🎵 Sesi indir",
+        "studio": "🎨 Smart Studio",
         "post": "📌 Gönderiyi indir",
         "favorite": "⭐ Kaydet",
         "library": "📚 Kitaplığım",
@@ -154,7 +157,7 @@ _CARD_TEXTS = {
         "cancelled": "✅ İşlem iptal edildi.",
     },
     "de": {
-        "title": "🎛️ Linkinformationen",
+        "title": "🧩 Smart Media Center",
         "unknown": "Unbekannt",
         "unavailable": "Nicht verfügbar",
         "duration": "Dauer",
@@ -182,6 +185,7 @@ _CARD_TEXTS = {
         "more_options": "⚙️ Weitere Optionen",
         "video": "🎥 Video herunterladen",
         "audio": "🎵 Audio herunterladen",
+        "studio": "🎨 Smart Studio",
         "post": "📌 Beitrag herunterladen",
         "favorite": "⭐ Speichern",
         "library": "📚 Bibliothek",
@@ -462,9 +466,11 @@ def _keyboard(url: str, language: str = "ar", media_type: str | None = None) -> 
             InlineKeyboardButton(labels["video"], callback_data="video_menu"),
             InlineKeyboardButton(labels["audio"], callback_data="audio_menu"),
         ])
+        rows.append([InlineKeyboardButton(labels["studio"], callback_data="sdc_studio")])
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
     elif media_type == "audio":
         rows.append([InlineKeyboardButton(labels["audio"], callback_data="audio_menu")])
+        rows.append([InlineKeyboardButton(labels["studio"], callback_data="sdc_studio")])
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
     elif media_type == "image":
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
@@ -958,7 +964,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             raise ApplicationHandlerStop
         return
 
-    if data != "sdc_thumbnail":
+    if data not in {"sdc_thumbnail", "sdc_studio"}:
         await query.answer()
 
     if data == "post_download":
@@ -971,6 +977,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await bot_module.download_media(update, context)
             raise ApplicationHandlerStop
         return
+
+    if data == "sdc_studio":
+        media_type = (context.user_data.get("sdc_info") or {}).get("media_type")
+        if media_type not in {"video", "audio"}:
+            await query.answer("Smart Studio غير متاح لهذا النوع من المحتوى.", show_alert=True)
+            raise ApplicationHandlerStop
+        studio_choice = "audio_best" if media_type == "audio" else "video_best"
+        proxy_query = _CallbackQueryProxy(query, studio_choice)
+        proxy_update = _UpdateProxy(update, proxy_query)
+        await bot_module.download_media(proxy_update, context)
+        raise ApplicationHandlerStop
 
     if data == "sdc_cancel":
         context.user_data.pop("video_url", None)
