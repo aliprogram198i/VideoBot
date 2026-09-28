@@ -288,7 +288,10 @@ async def _run_ffmpeg(*args: str) -> None:
 
     if process.returncode != 0:
         detail = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"media_studio_ffmpeg_failed:{detail[-500:]}")
+        exc = RuntimeError(f"media_studio_ffmpeg_failed:{detail[-500:]}")
+        setattr(exc, "ffmpeg_return_code", process.returncode)
+        setattr(exc, "ffmpeg_stderr_tail", detail[-500:])
+        raise exc
 
 
 def _validate_result(path: Path, *, allow_video_optimization: bool = False) -> None:
@@ -700,6 +703,9 @@ async def _run_action(
         _studio_heartbeat(status_message, status, language)
     )
     output = None
+    studio_attempt_id = uuid.uuid4().hex[:16]
+    started_at = time.monotonic()
+    generated_media_type = None
     try:
         try:
             studio_messages = context.user_data.get(STUDIO_MESSAGES_BY_TOKEN_KEY) or {}
@@ -716,6 +722,7 @@ async def _run_action(
             logger.debug("studio_busy_keyboard_update_failed", exc_info=True)
 
         output, media_type = await _create_result(source, action, value)
+        generated_media_type = media_type
         _validate_result(output, allow_video_optimization=media_type == "video")
         await _send_result(update, context, output, media_type, token)
         try:
@@ -723,7 +730,37 @@ async def _run_action(
         except Exception:
             logger.debug("studio_status_message_delete_failed", exc_info=True)
     except (RuntimeError, ValueError, OSError) as exc:
-        logger.warning("media_studio_failed type=%s", type(exc).__name__)
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        try:
+            bot_module.log_media_studio_error(
+                user=user,
+                studio_attempt_id=studio_attempt_id,
+                source_token=token,
+                studio_token=token,
+                studio_action=action,
+                media_type=generated_media_type,
+                error_message=str(exc),
+                exception_type=type(exc).__name__,
+                return_code=getattr(exc, "ffmpeg_return_code", None),
+                duration_ms=elapsed_ms,
+                output_size=(
+                    output.stat().st_size
+                    if output is not None and output.is_file()
+                    else None
+                ),
+                details={
+                    "ffmpeg_stderr_tail": getattr(exc, "ffmpeg_stderr_tail", None),
+                    "input_size": source.stat().st_size if source.is_file() else None,
+                    "requested_value": value,
+                },
+            )
+        except Exception:
+            logger.exception("media_studio_error_telemetry_failed")
+        logger.warning(
+            "media_studio_failed type=%s attempt=%s",
+            type(exc).__name__,
+            studio_attempt_id,
+        )
         try:
             await status_message.edit_text(t("studio", "failed", language))
         except Exception:
