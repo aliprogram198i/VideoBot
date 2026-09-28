@@ -804,6 +804,9 @@ async def _probe(url: str) -> dict:
         "filesize_approx": data.get("filesize_approx"),
         "media_type": _detect_media_type(data),
         "formats": data.get("formats") if isinstance(data.get("formats"), list) else [],
+        "categories": data.get("categories") if isinstance(data.get("categories"), list) else [],
+        "description": data.get("description"),
+        "age_limit": data.get("age_limit"),
     }
 
 
@@ -850,6 +853,9 @@ async def show_control_for_url(message, context: ContextTypes.DEFAULT_TYPE, url:
         "filesize_approx": None,
         "media_type": None,
         "formats": [],
+        "categories": [],
+        "description": None,
+        "age_limit": None,
     }
     status_message = await message.reply_text(
         _labels(language)["analyzing"],
