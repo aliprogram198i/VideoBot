@@ -294,13 +294,94 @@ async def _run_ffmpeg(*args: str) -> None:
         raise exc
 
 
-def _validate_result(path: Path, *, allow_video_optimization: bool = False) -> None:
+def _validate_result(
+    path: Path,
+    *,
+    allow_video_optimization: bool = False,
+    allow_audio_split: bool = False,
+) -> None:
     if not path.is_file() or path.stat().st_size <= 0:
         raise RuntimeError("media_studio_empty_result")
     if path.stat().st_size > MAX_RESULT_BYTES:
         if allow_video_optimization and path.suffix.lower() == ".mp4":
             return
+        if allow_audio_split and path.suffix.lower() in {".mp3", ".m4a", ".opus"}:
+            return
         raise RuntimeError("media_studio_result_too_large")
+
+
+async def _split_audio_for_telegram(source: Path) -> list[Path]:
+    """Split an oversized Studio audio result without re-encoding."""
+    source_size = source.stat().st_size
+    if source_size <= MAX_RESULT_BYTES:
+        return [source]
+
+    probe = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(source),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await probe.communicate()
+    if probe.returncode != 0:
+        raise RuntimeError(
+            "media_studio_audio_probe_failed:"
+            + stderr.decode("utf-8", errors="replace").strip()[-500:]
+        )
+    try:
+        duration = float(stdout.decode("utf-8", errors="replace").strip())
+    except ValueError as exc:
+        raise RuntimeError("media_studio_audio_invalid_duration") from exc
+    if duration <= 0:
+        raise RuntimeError("media_studio_audio_invalid_duration")
+
+    output_dir = source.parent / f"{source.stem}_parts"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    parts: list[Path] = []
+
+    async def create_part(start: float, length: float, index: int) -> Path:
+        output = output_dir / f"{source.stem}_part{index:03d}{source.suffix.lower()}"
+        await _run_ffmpeg(
+            "-ss", f"{start:.3f}",
+            "-i", str(source),
+            "-t", f"{length:.3f}",
+            "-map", "0:a:0",
+            "-c", "copy",
+            "-reset_timestamps", "1",
+            str(output),
+        )
+        _validate_result(output)
+        return output
+
+    remaining = duration
+    start = 0.0
+    index = 1
+    while remaining > 0.1:
+        # Leave headroom for container overhead and VBR/seek variance.
+        target = min(
+            remaining,
+            duration * (MAX_RESULT_BYTES * 0.90) / source_size,
+        )
+        if target <= 0.1:
+            raise RuntimeError("media_studio_audio_split_failed")
+        output = await create_part(start, target, index)
+        if output.stat().st_size > MAX_RESULT_BYTES:
+            output.unlink(missing_ok=True)
+            target *= 0.5
+            if target <= 0.1:
+                raise RuntimeError("media_studio_audio_split_failed")
+            output = await create_part(start, target, index)
+        parts.append(output)
+        actual_duration = target
+        start += actual_duration
+        remaining = max(0.0, duration - start)
+        index += 1
+
+    if not parts:
+        raise RuntimeError("media_studio_audio_split_failed")
+    return parts
 
 
 def _video_encode_args(output: Path) -> tuple[str, ...]:
@@ -478,41 +559,52 @@ async def _send_result(
     chat_id = update.effective_chat.id
     bot_module = __import__("bot")
     language = normalize_language(bot_module.get_language(update.effective_user.id) if update.effective_user else None)
-    delivery_policy.validate_telegram_upload(
-        output,
-        media_type={"photo": "image"}.get(media_type, media_type),
-    )
     if media_type == "audio":
-        with output.open("rb") as handle:
-            sent = await context.bot.send_audio(
-                chat_id=chat_id,
-                audio=handle,
-                caption=t("studio", "done_audio", language),
-                read_timeout=600,
-                write_timeout=600,
-                connect_timeout=60,
-                pool_timeout=60,
+        audio_parts = await _split_audio_for_telegram(output)
+        for part_index, audio_part in enumerate(audio_parts, start=1):
+            delivery_policy.validate_telegram_upload(
+                audio_part,
+                media_type="audio",
             )
-        try:
-            studio_token = cache_media_for_user(update.effective_user.id, str(output))
-            studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
-            studio_messages[studio_token] = {
-                "chat_id": sent.chat_id,
-                "message_id": sent.message_id,
-            }
-            await sent.edit_reply_markup(
-                reply_markup=studio_keyboard(
-                    studio_token,
-                    language,
-                    media_type="audio",
-                ),
-            )
-        except (FileNotFoundError, OSError, ValueError) as exc:
-            logger.debug("media_studio_audio_result_cache_unavailable", exc_info=True)
-            raise RuntimeError(
-                f"media_studio_cache_unavailable:{type(exc).__name__}"
-            ) from exc
-    elif media_type == "photo":
+            caption = t("studio", "done_audio", language)
+            if len(audio_parts) > 1:
+                caption = f"{caption}\\n\\n🎵 الجزء {part_index} من {len(audio_parts)}"
+            with audio_part.open("rb") as handle:
+                sent = await context.bot.send_audio(
+                    chat_id=chat_id,
+                    audio=handle,
+                    caption=caption,
+                    read_timeout=600,
+                    write_timeout=600,
+                    connect_timeout=60,
+                    pool_timeout=60,
+                )
+            try:
+                studio_token = cache_media_for_user(update.effective_user.id, str(audio_part))
+                studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
+                studio_messages[studio_token] = {
+                    "chat_id": sent.chat_id,
+                    "message_id": sent.message_id,
+                }
+                await sent.edit_reply_markup(
+                    reply_markup=studio_keyboard(
+                        studio_token,
+                        language,
+                        media_type="audio",
+                    ),
+                )
+            except (FileNotFoundError, OSError, ValueError) as exc:
+                logger.debug("media_studio_audio_result_cache_unavailable", exc_info=True)
+                raise RuntimeError(
+                    f"media_studio_cache_unavailable:{type(exc).__name__}"
+                ) from exc
+        return
+
+    if media_type == "photo":
+        delivery_policy.validate_telegram_upload(
+            output,
+            media_type="image",
+        )
         with output.open("rb") as handle:
             await context.bot.send_photo(
                 chat_id=chat_id,
@@ -540,6 +632,10 @@ async def _send_result(
                 )
             delivery_path = Path(optimized)
 
+        delivery_policy.validate_telegram_upload(
+            delivery_path,
+            media_type="video",
+        )
         try:
             _validate_result(delivery_path)
             with delivery_path.open("rb") as handle:
@@ -723,7 +819,11 @@ async def _run_action(
 
         output, media_type = await _create_result(source, action, value)
         generated_media_type = media_type
-        _validate_result(output, allow_video_optimization=media_type == "video")
+        _validate_result(
+            output,
+            allow_video_optimization=media_type == "video",
+            allow_audio_split=media_type == "audio",
+        )
         await _send_result(update, context, output, media_type, token)
         try:
             await status_message.delete()

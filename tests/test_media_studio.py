@@ -306,3 +306,13 @@ def test_ffmpeg_failure_preserves_return_code_and_stderr():
     error.ffmpeg_stderr_tail = "codec error"
     assert error.ffmpeg_return_code == 1
     assert error.ffmpeg_stderr_tail == "codec error"
+
+
+def test_validate_result_allows_oversized_audio_only_for_split_path(tmp_path):
+    output = tmp_path / "long.mp3"
+    output.write_bytes(b"x" * (studio.MAX_RESULT_BYTES + 1))
+
+    studio._validate_result(output, allow_audio_split=True)
+
+    with pytest.raises(RuntimeError, match="media_studio_result_too_large"):
+        studio._validate_result(output)
