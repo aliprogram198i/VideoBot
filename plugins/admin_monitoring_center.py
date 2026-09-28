@@ -120,7 +120,7 @@ def _latest_studio_error_row(get_db) -> Any | None:
         return conn.execute(
             "SELECT * FROM error_logs "
             "WHERE error_type = 'media_studio_failed' "
-            "AND details_json LIKE '%\"operation\": \"media_studio\"%' "
+            
             "ORDER BY created_at DESC, id DESC LIMIT 1"
         ).fetchone()
     except Exception:
@@ -154,10 +154,17 @@ def _latest_error_row(get_db) -> Any | None:
         if "error_type" in columns:
             where = "WHERE error_type IN ('all_methods_failed', 'download_failed')"
 
-        return conn.execute(
+        row = conn.execute(
             "SELECT * FROM error_logs "
             f"{where} ORDER BY created_at DESC, id DESC LIMIT 1",
             params,
+        ).fetchone()
+        if row is not None:
+            return row
+
+        # Preserve legacy diagnostic behavior when no terminal incident exists.
+        return conn.execute(
+            "SELECT * FROM error_logs ORDER BY created_at DESC, id DESC LIMIT 1"
         ).fetchone()
     except Exception:
         return None
