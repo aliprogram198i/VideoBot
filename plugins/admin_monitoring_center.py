@@ -208,16 +208,53 @@ def _fingerprint(platform: str, resolver: str, error_type: str, message: str) ->
 
 
 def _refresh_alerts(get_db) -> int:
+    """Refresh alerts from terminal download outcomes, not intermediate failures.
+
+    A single attempt can emit several error_logs rows while the fallback chain
+    is still running. Those rows remain valuable telemetry, but they are not
+    independent admin incidents. An alert is therefore created only when the
+    attempt reaches the terminal ``all_methods_failed`` outcome.
+    """
     rows = _error_rows(get_db, 24, 1000)
     if not rows:
         return 0
 
-    grouped: dict[str, dict[str, Any]] = {}
+    attempts: dict[str, list[Any]] = {}
+    legacy_terminal_rows: list[Any] = []
+
     for row in rows:
+        attempt_id = (
+            str(row["attempt_id"] or "").strip()
+            if "attempt_id" in row.keys()
+            else ""
+        )
+        if attempt_id:
+            attempts.setdefault(attempt_id, []).append(row)
+        else:
+            error_type = (
+                str(row["error_type"] or "UnknownError")
+                if "error_type" in row.keys()
+                else "UnknownError"
+            )
+            if error_type == "all_methods_failed":
+                legacy_terminal_rows.append(row)
+
+    grouped: dict[str, dict[str, Any]] = {}
+
+    def add_terminal(row: Any, failed_stages: list[str] | None = None) -> None:
         platform = _platform(row)
-        resolver = _resolver(row)
-        error_type = str(row["error_type"] or "UnknownError") if "error_type" in row.keys() else "UnknownError"
+        resolver = "download"
+        error_type = "all_methods_failed"
         message = _message(row)
+        if failed_stages:
+            unique_stages = list(dict.fromkeys(failed_stages))
+            details = (
+                f"{message} "
+                f"Stages failed before terminal outcome: {", ".join(unique_stages[:8])}."
+            )
+        else:
+            details = message
+
         fp = _fingerprint(platform, resolver, error_type, message)
         item = grouped.setdefault(
             fp,
@@ -225,19 +262,63 @@ def _refresh_alerts(get_db) -> int:
                 "platform": platform,
                 "resolver": resolver,
                 "error_type": error_type,
-                "message": message,
+                "message": details,
                 "count": 0,
                 "first_seen": str(row["created_at"] or _now()),
                 "last_seen": str(row["created_at"] or _now()),
             },
         )
         item["count"] += 1
-        item["first_seen"] = min(item["first_seen"], str(row["created_at"] or item["first_seen"]))
-        item["last_seen"] = max(item["last_seen"], str(row["created_at"] or item["last_seen"]))
+        item["first_seen"] = min(
+            item["first_seen"],
+            str(row["created_at"] or item["first_seen"]),
+        )
+        item["last_seen"] = max(
+            item["last_seen"],
+            str(row["created_at"] or item["last_seen"]),
+        )
+
+    for rows_for_attempt in attempts.values():
+        terminal_rows = [
+            row
+            for row in rows_for_attempt
+            if (
+                str(row["error_type"] or "UnknownError")
+                if "error_type" in row.keys()
+                else "UnknownError"
+            ) == "all_methods_failed"
+        ]
+        if not terminal_rows:
+            continue
+
+        terminal_row = max(
+            terminal_rows,
+            key=lambda row: str(row["created_at"] or ""),
+        )
+        failed_stages = [
+            str(row["stage"] or "").strip()
+            for row in rows_for_attempt
+            if "stage" in row.keys() and str(row["stage"] or "").strip()
+        ]
+        add_terminal(terminal_row, failed_stages)
+
+    for row in legacy_terminal_rows:
+        add_terminal(row)
 
     conn = get_db()
     changed = 0
     try:
+        conn.execute(
+            """
+            UPDATE admin_alerts
+            SET status='resolved',
+                resolved_at=COALESCE(resolved_at, ?)
+            WHERE status IN ('open', 'acknowledged')
+              AND title NOT LIKE '% — all_methods_failed'
+            """,
+            (_now(),),
+        )
+
         for fp, item in grouped.items():
             severity = _severity(item["error_type"], item["count"])
             title = f"{item['platform']} / {item['resolver']} — {item['error_type']}"
@@ -272,7 +353,6 @@ def _refresh_alerts(get_db) -> int:
     finally:
         conn.close()
     return changed
-
 
 def _alert_rows(get_db, status: str | None = "open", limit: int = 12) -> list[Any]:
     conn = get_db()
