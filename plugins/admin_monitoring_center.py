@@ -29,6 +29,7 @@ _HOME = "admin_monitoring"
 _INCIDENTS = "admin_incidents"
 _RESOLVERS = "admin_resolver_monitor"
 _ALERTS = "admin_alerts"
+_LAST_ERROR = "admin_last_error"
 _ACK_PREFIX = "admin_alert_ack_"
 _RESOLVE_PREFIX = "admin_alert_resolve_"
 
@@ -105,6 +106,96 @@ def _table_columns(conn, table: str) -> set[str]:
         return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     except Exception:
         return set()
+
+
+def _latest_error_row(get_db) -> Any | None:
+    """Return the newest raw error telemetry row for the admin diagnostic snapshot."""
+    conn = get_db()
+    try:
+        tables = {str(row[0]) for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        if "error_logs" not in tables:
+            return None
+        columns = _table_columns(conn, "error_logs")
+        if "created_at" not in columns:
+            return None
+        return conn.execute(
+            "SELECT * FROM error_logs ORDER BY created_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+_SENSITIVE_KEY_RE = re.compile(
+    r"(?:token|password|passwd|secret|api[_-]?key|authorization|cookie|session|access[_-]?token|refresh[_-]?token)",
+    re.I,
+)
+_SENSITIVE_QUERY_RE = re.compile(
+    r"([?&](?:token|password|passwd|secret|api[_-]?key|authorization|cookie|session|access[_-]?token|refresh[_-]?token)=)[^&#\s]+",
+    re.I,
+)
+
+
+def _sanitize_diagnostic_value(value: Any, key: str = "") -> Any:
+    """Keep diagnostics useful while preventing credentials from entering a copyable snapshot."""
+    if _SENSITIVE_KEY_RE.search(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(k): _sanitize_diagnostic_value(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_diagnostic_value(item, key) for item in value]
+    if isinstance(value, str):
+        return _SENSITIVE_QUERY_RE.sub(r"\1[REDACTED]", value)
+    return value
+
+
+def _render_last_error(get_db) -> list[str]:
+    """Build copy-friendly, bounded Telegram messages containing the newest error in full available detail."""
+    row = _latest_error_row(get_db)
+    if row is None:
+        return [
+            "🧾 <b>آخر خطأ بالتفصيل</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🟢 لا يوجد أي خطأ مسجل في <code>error_logs</code>."
+        ]
+
+    data: dict[str, Any] = {}
+    for key in row.keys():
+        value = row[key]
+        if key == "details_json" and value:
+            parsed = _json(value)
+            data[key] = _sanitize_diagnostic_value(parsed if parsed is not None else value, key)
+        else:
+            data[key] = _sanitize_diagnostic_value(value, key)
+
+    lines = [
+        "🧾 <b>آخر خطأ بالتفصيل</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "انسخ هذه الرسالة كاملة وأرسلها لي لتحليل الخطأ مباشرة.",
+        "<b>ملاحظة:</b> تم إخفاء أي قيم تبدو كرموز وصول/كلمات مرور/جلسات حفاظًا على أمان البوت.",
+        "",
+    ]
+    for key, value in data.items():
+        if key == "details_json" and isinstance(value, (dict, list)):
+            rendered = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+        else:
+            rendered = "null" if value is None else str(value)
+        lines.append(f"{key}: {rendered}")
+
+    raw = "\n".join(lines)
+    chunks: list[str] = []
+    current = ""
+    for line in raw.splitlines(True):
+        if len(current) + len(line) > 3700 and current:
+            chunks.append(current.rstrip())
+            current = ""
+        current += line
+    if current:
+        chunks.append(current.rstrip())
+    return [f"<pre>{html.escape(chunk)}</pre>" for chunk in chunks] or ["<pre>لا توجد تفاصيل.</pre>"]
 
 
 def _error_rows(get_db, hours: int = 24, limit: int = 1000) -> list[Any]:
@@ -421,7 +512,9 @@ def _resolver_keyboard() -> InlineKeyboardMarkup:
 
 
 def _alerts_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
-    buttons: list[list[InlineKeyboardButton]] = []
+    buttons: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton("🧾 آخر خطأ بالتفصيل", callback_data=_LAST_ERROR)],
+    ]
     for row in rows[:8]:
         alert_id = int(row["id"])
         if row["status"] == "open":
@@ -435,6 +528,15 @@ def _alerts_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
          InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def _last_error_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧾 تحديث آخر خطأ", callback_data=_LAST_ERROR)],
+        [InlineKeyboardButton("🚨 الحوادث والتنبيهات", callback_data=_ALERTS)],
+        [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS),
+         InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
+    ])
 
 
 def _render_home(get_db) -> str:
@@ -569,6 +671,24 @@ async def alerts_callback(update: Update, context, get_db, owner_id: int) -> Non
     raise ApplicationHandlerStop
 
 
+async def last_error_callback(update: Update, context, get_db, owner_id: int) -> None:
+    """Show a copy-friendly snapshot of the newest raw error telemetry."""
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id):
+        return
+    _audit(get_db, owner_id, "view_last_error_diagnostic")
+    chunks = _render_last_error(get_db)
+    await query.edit_message_text(
+        chunks[0],
+        parse_mode="HTML",
+        reply_markup=_last_error_keyboard(),
+    )
+    for chunk in chunks[1:]:
+        await query.message.reply_text(chunk, parse_mode="HTML")
+    raise ApplicationHandlerStop
+
+
 async def alert_action_callback(update: Update, context, get_db, owner_id: int) -> None:
     query = update.callback_query
     await query.answer()
@@ -634,6 +754,13 @@ def register_admin_monitoring(app: Any, get_db, owner_id: int) -> None:
         CallbackQueryHandler(
             lambda u, c: alerts_callback(u, c, get_db, owner_id),
             pattern=rf"^{_ALERTS}$",
+        ),
+        group=-210,
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            lambda u, c: last_error_callback(u, c, get_db, owner_id),
+            pattern=rf"^{_LAST_ERROR}$",
         ),
         group=-210,
     )
