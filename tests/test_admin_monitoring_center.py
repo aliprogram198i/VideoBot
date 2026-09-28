@@ -346,6 +346,76 @@ def test_last_error_snapshot_contains_all_available_fields_and_redacts_secrets(t
     assert "[REDACTED]" in snapshot
     assert "SUPER_SECRET" not in snapshot
 
+    assert "=== INCIDENT SUMMARY ===" in snapshot
+    assert "record_source" in snapshot
+    assert "phase" in snapshot
+    assert "=== ERROR_LOG ROW ===" in snapshot
+
+
+def test_last_error_snapshot_preserves_nested_diagnostic_evidence(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    conn = get_db()
+    details = {
+        "pipeline_phase": "candidate_download",
+        "resolver": "yt-dlp",
+        "candidate_count": 8,
+        "candidates": [
+            {
+                "candidate_index": 1,
+                "format_id": "720p",
+                "status": "failed",
+                "return_code": 1,
+                "duration_ms": 512,
+                "error_message": "generic download failure",
+            }
+        ],
+        "fallback": {
+            "provider": "yoinku",
+            "status": "failed",
+            "http_status": 422,
+            "internal_attempts": 3,
+        },
+    }
+    conn.execute(
+        """INSERT INTO error_logs
+           (url,website,media_type,stage,error_type,error_message,
+            attempt_id,attempt_number,http_status,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "https://example.com/reel/abc",
+            "example",
+            "video",
+            "download",
+            "all_methods_failed",
+            "all methods failed",
+            "attempt-evidence",
+            1,
+            422,
+            json.dumps(details),
+            "2026-09-28T04:30:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = "\n".join(_render_last_error(get_db))
+    for value in (
+        "candidate_download",
+        "candidate_count",
+        "720p",
+        "return_code",
+        "generic download failure",
+        "yoinku",
+        "http_status",
+        "422",
+        "internal_attempts",
+    ):
+        assert value in snapshot
+
+
 
 def test_last_error_keyboard_exposes_refresh_and_navigation():
     callbacks = _callback_values(_last_error_keyboard())

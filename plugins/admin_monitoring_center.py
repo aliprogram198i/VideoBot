@@ -152,8 +152,41 @@ def _sanitize_diagnostic_value(value: Any, key: str = "") -> Any:
     return value
 
 
+def _diagnostic_phase(details: Any, row: Any) -> str:
+    """Derive a concise phase label without inventing telemetry."""
+    if isinstance(details, dict):
+        phase_values = _find_values(
+            details,
+            {"phase", "pipeline_phase", "current_phase", "operation", "operation_stage"},
+        )
+        for value in phase_values:
+            value = value.strip()
+            if value:
+                return value[:120]
+    stage = str(row["stage"] or "").strip() if "stage" in row.keys() else ""
+    return stage[:120] or "unknown"
+
+
+def _diagnostic_summary(row: Any, details: Any) -> dict[str, Any]:
+    """Build deterministic facts from the existing error row and details_json."""
+    summary: dict[str, Any] = {
+        "record_source": "error_logs",
+        "terminal_error": str(row["error_type"] or "") if "error_type" in row.keys() else "",
+        "phase": _diagnostic_phase(details, row),
+    }
+    if "attempt_id" in row.keys():
+        summary["attempt_id"] = row["attempt_id"]
+    if "attempt_number" in row.keys():
+        summary["attempt_number"] = row["attempt_number"]
+    if "created_at" in row.keys():
+        summary["created_at"] = row["created_at"]
+    if "url" in row.keys():
+        summary["url"] = row["url"]
+    return _sanitize_diagnostic_value(summary)
+
+
 def _render_last_error(get_db) -> list[str]:
-    """Build copy-friendly, bounded Telegram messages containing the newest error in full available detail."""
+    """Build a bounded, copy-friendly diagnostic snapshot from existing telemetry only."""
     row = _latest_error_row(get_db)
     if row is None:
         return [
@@ -162,22 +195,34 @@ def _render_last_error(get_db) -> list[str]:
             "🟢 لا يوجد أي خطأ مسجل في <code>error_logs</code>."
         ]
 
+    details_raw = row["details_json"] if "details_json" in row.keys() else None
+    details = _json(details_raw)
+    sanitized_details = _sanitize_diagnostic_value(
+        details if details is not None else details_raw,
+        "details_json",
+    )
+
     data: dict[str, Any] = {}
     for key in row.keys():
         value = row[key]
-        if key == "details_json" and value:
-            parsed = _json(value)
-            data[key] = _sanitize_diagnostic_value(parsed if parsed is not None else value, key)
+        if key == "details_json":
+            data[key] = sanitized_details
         else:
             data[key] = _sanitize_diagnostic_value(value, key)
 
     lines = [
-        "🧾 <b>آخر خطأ بالتفصيل</b>",
+        "🧾 <b>آخر خطأ بالتفصيل — Diagnostic Snapshot</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        "انسخ هذه الرسالة كاملة وأرسلها لي لتحليل الخطأ مباشرة.",
-        "<b>ملاحظة:</b> تم إخفاء أي قيم تبدو كرموز وصول/كلمات مرور/جلسات حفاظًا على أمان البوت.",
+        "انسخ <b>كل الأجزاء</b> من هذه الرسالة وأرسلها للتحليل.",
+        "<b>مصدر البيانات:</b> telemetry الحالية فقط؛ لا يتم اختراع معلومات غير مسجلة.",
+        "<b>الأمان:</b> تم إخفاء credentials وcookies وtokens وsession values وsigned query values.",
         "",
+        "<b>=== INCIDENT SUMMARY ===</b>",
+        json.dumps(_diagnostic_summary(row, details), ensure_ascii=False, indent=2, sort_keys=True),
+        "",
+        "<b>=== ERROR_LOG ROW ===</b>",
     ]
+
     for key, value in data.items():
         if key == "details_json" and isinstance(value, (dict, list)):
             rendered = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
@@ -189,7 +234,7 @@ def _render_last_error(get_db) -> list[str]:
     chunks: list[str] = []
     current = ""
     for line in raw.splitlines(True):
-        if len(current) + len(line) > 3700 and current:
+        if len(current) + len(line) > 3600 and current:
             chunks.append(current.rstrip())
             current = ""
         current += line
