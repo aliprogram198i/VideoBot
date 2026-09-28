@@ -545,5 +545,5 @@ def test_last_error_compact_snapshot_is_copy_ready_and_sanitized(tmp_path):
 
 def test_last_error_keyboard_exposes_compact_copy_action():
     callbacks = _callback_values(_last_error_keyboard())
-    assert callbacks[0] == "admin_last_error_compact"
-    assert callbacks[1] == "admin_last_error"
+    assert callbacks[0] == "admin_last_error"
+    assert callbacks[1] == "admin_last_error_compact"
