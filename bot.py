@@ -863,6 +863,38 @@ def log_download_error(
         )
 
 
+
+def log_media_studio_error(
+    *,
+    user=None, user_id=None, username=None,
+    studio_attempt_id=None, source_token=None, studio_token=None,
+    studio_action=None, media_type=None, error_message=None,
+    exception_type=None, return_code=None, duration_ms=None,
+    output_size=None, details=None,
+):
+    """Persist Smart Studio failures in the canonical error telemetry."""
+    studio_details = dict(details or {})
+    studio_details.update({
+        "operation": "media_studio",
+        "studio_attempt_id": studio_attempt_id,
+        "source_token": source_token,
+        "studio_token": studio_token,
+        "studio_action": studio_action,
+        "media_type": media_type,
+        "output_size": output_size,
+    })
+    log_download_error(
+        user=user, user_id=user_id, username=username,
+        url=None, website="AliBot Studio",
+        media_type=media_type or "unknown",
+        stage="media_studio",
+        error_type="media_studio_failed",
+        error_message=error_message or "Smart Studio operation failed.",
+        attempt_id=studio_attempt_id, duration_ms=duration_ms,
+        return_code=return_code, exception_type=exception_type,
+        bytes_downloaded=output_size, details=studio_details,
+    )
+
 def get_ai_errors_data(days=30):
     """Return aggregated error information for Gemini.
 
