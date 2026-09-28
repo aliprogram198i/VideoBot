@@ -185,6 +185,58 @@ def _diagnostic_summary(row: Any, details: Any) -> dict[str, Any]:
     return _sanitize_diagnostic_value(summary)
 
 
+def _attempt_error_rows(get_db, attempt_id: str) -> list[Any]:
+    """Return all error telemetry rows belonging to the same download attempt."""
+    if not attempt_id:
+        return []
+    conn = get_db()
+    try:
+        tables = {str(row[0]) for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        if "error_logs" not in tables:
+            return []
+        columns = _table_columns(conn, "error_logs")
+        if "attempt_id" not in columns:
+            return []
+        selected = [name for name in (
+            "id", "website", "media_type", "stage", "error_type",
+            "error_message", "attempt_id", "attempt_number", "http_status",
+            "details_json", "created_at", "duration_ms", "return_code",
+            "exception_type", "response_type", "bytes_downloaded",
+            "candidate_index", "candidate_count", "yoinku_used",
+        ) if name in columns]
+        order = "created_at ASC"
+        if "id" in columns:
+            order += ", id ASC"
+        return conn.execute(
+            f"SELECT {', '.join(selected)} FROM error_logs "
+            "WHERE attempt_id = ? ORDER BY " + order,
+            (attempt_id,),
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _render_attempt_timeline(rows: list[Any]) -> list[dict[str, Any]]:
+    """Render correlated attempt evidence without changing downloader telemetry."""
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        details_raw = row["details_json"] if "details_json" in row.keys() else None
+        details = _json(details_raw)
+        event = {
+            key: _sanitize_diagnostic_value(row[key], key)
+            for key in row.keys()
+            if key != "details_json"
+        }
+        if details is not None:
+            event["details"] = _sanitize_diagnostic_value(details, "details_json")
+        events.append(event)
+    return events
+
+
 def _render_last_error(get_db) -> list[str]:
     """Build a bounded, copy-friendly diagnostic snapshot from existing telemetry only."""
     row = _latest_error_row(get_db)
@@ -210,6 +262,10 @@ def _render_last_error(get_db) -> list[str]:
         else:
             data[key] = _sanitize_diagnostic_value(value, key)
 
+    attempt_id = str(row["attempt_id"] or "").strip() if "attempt_id" in row.keys() else ""
+    correlated_rows = _attempt_error_rows(get_db, attempt_id)
+    timeline = _render_attempt_timeline(correlated_rows)
+
     lines = [
         "🧾 <b>آخر خطأ بالتفصيل — Diagnostic Snapshot</b>",
         "━━━━━━━━━━━━━━━━━━━━",
@@ -222,6 +278,13 @@ def _render_last_error(get_db) -> list[str]:
         "",
         "<b>=== ERROR_LOG ROW ===</b>",
     ]
+    if attempt_id:
+        lines.extend([
+            "",
+            "<b>=== ATTEMPT TIMELINE / CORRELATED EVIDENCE ===</b>",
+            f"events_in_same_attempt: {len(timeline)}",
+            json.dumps(timeline, ensure_ascii=False, indent=2, sort_keys=True),
+        ])
 
     for key, value in data.items():
         if key == "details_json" and isinstance(value, (dict, list)):
