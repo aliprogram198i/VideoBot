@@ -40,19 +40,26 @@ def _callbacks(markup):
     ]
 
 
-def test_smart_media_center_exposes_studio_for_video_and_audio():
+def test_smart_media_center_keeps_primary_actions_focused():
     from plugins.smart_download_control import _keyboard
 
-    for media_type in ("video", "audio"):
-        callbacks = _callbacks(_keyboard("https://example.com/media", "ar", media_type))
-        assert "sdc_studio" in callbacks
+    video = _callbacks(_keyboard("https://example.com/media", "ar", "video"))
+    assert video[:5] == ["video_menu", "audio_menu", "post_download", "sdc_more", "sdc_cancel"]
+
+    audio = _callbacks(_keyboard("https://example.com/media", "ar", "audio"))
+    assert audio[:4] == ["audio_menu", "post_download", "sdc_more", "sdc_cancel"]
+
+    image = _callbacks(_keyboard("https://example.com/media", "ar", "image"))
+    assert image[:3] == ["post_download", "sdc_more", "sdc_cancel"]
 
 
-def test_smart_media_center_keeps_primary_actions():
-    from plugins.smart_download_control import _keyboard
+def test_smart_studio_is_available_from_more_options():
+    from plugins.smart_download_control import _keyboard, _more_keyboard
 
     callbacks = _callbacks(_keyboard("https://example.com/media", "ar", "video"))
-    assert {"video_menu", "audio_menu", "sdc_studio", "post_download", "sdc_more", "sdc_cancel"} <= set(callbacks)
+    assert "sdc_studio" not in callbacks
+    more_callbacks = _callbacks(_more_keyboard("https://example.com/media", "ar"))
+    assert more_callbacks[0] == "sdc_studio"
 
 
 def test_smart_media_center_title_is_localized():
@@ -71,3 +78,11 @@ def test_studio_callback_routes_through_existing_download_pipeline():
     source = inspect.getsource(callback)
     assert 'studio_choice = "audio_best" if media_type == "audio" else "video_best"' in source
     assert "_UpdateProxy(update, proxy_query)" in source
+
+
+def test_smart_studio_callback_is_registered():
+    import inspect
+    from plugins.smart_download_control import register_smart_download_control
+
+    source = inspect.getsource(register_smart_download_control)
+    assert "sdc_studio" in source
