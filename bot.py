@@ -2669,6 +2669,7 @@ async def download_with_yoinku(
         + urllib.parse.urlencode({"url": url})
     )
     selected_format = "a-mp3" if is_audio else "v-720"
+    format_candidates = [selected_format]
     info_diagnostics = {}
 
     # One bounded deadline covers both /info negotiation and /download.
@@ -2726,14 +2727,23 @@ async def download_with_yoinku(
         ]
 
         if is_audio:
+            available_audio = [
+                item.get("id")
+                for item in valid_formats
+                if str(item.get("kind", "")).lower() == "audio"
+            ]
             for preferred in ("a-mp3", "a-m4a"):
-                if any(item.get("id") == preferred for item in valid_formats):
+                if preferred in available_audio:
                     selected_format = preferred
                     break
+            format_candidates = [
+                selected_format,
+                *[item for item in available_audio if item != selected_format],
+            ]
         else:
             video_formats = []
             for item in valid_formats:
-                if item.get("kind") != "video":
+                if str(item.get("kind", "")).lower() != "video":
                     continue
                 try:
                     height = int(item.get("height") or 0)
@@ -2748,8 +2758,24 @@ async def download_with_yoinku(
                 ]
                 pool = under_or_equal_720 or video_formats
                 selected_format = max(pool, key=lambda item: item[0])[1]
+                format_candidates = [
+                    selected_format,
+                    *[
+                        item[1]
+                        for item in sorted(
+                            video_formats,
+                            key=lambda item: item[0],
+                            reverse=True,
+                        )
+                        if item[1] != selected_format
+                    ],
+                ]
 
+        format_candidates = list(dict.fromkeys(
+            item for item in format_candidates if item
+        ))
         info_diagnostics["selected_format"] = selected_format
+        info_diagnostics["format_candidates"] = format_candidates[:10]
         info_diagnostics["available_formats"] = [
             item.get("id") for item in valid_formats[:20]
         ]
@@ -2777,21 +2803,21 @@ async def download_with_yoinku(
 
     diagnostics["yoinku_info"] = info_diagnostics
 
-    api_url = (
-        "https://yoinku.com/api/v1/download?"
-        + urllib.parse.urlencode({
-            "url": url,
-            "format": selected_format,
-        })
-    )
-
     output_file = os.path.join(
         temp_dir,
         "yoinku_download"
         + (".mp3" if is_audio else ".mp4"),
     )
 
-    def fetch():
+    def fetch(format_id):
+
+        api_url = (
+            "https://yoinku.com/api/v1/download?"
+            + urllib.parse.urlencode({
+                "url": url,
+                "format": format_id,
+            })
+        )
 
         request = Request(
             api_url,
@@ -2938,11 +2964,14 @@ async def download_with_yoinku(
 
         return output_file
 
-    for attempt in range(3):
+    max_attempts = min(3, max(1, len(format_candidates)))
+    for attempt in range(max_attempts):
+        format_id = format_candidates[attempt]
         diagnostics["internal_attempts"] = attempt + 1
+        diagnostics["format_id"] = format_id
 
         try:
-            result = await asyncio.to_thread(fetch)
+            result = await asyncio.to_thread(fetch, format_id)
 
             diagnostics.update({
                 "status": "success",
@@ -2995,8 +3024,10 @@ async def download_with_yoinku(
             )
 
             logger.warning(
-                "Yoinku HTTP failure on attempt %d: %s (HTTP status: %s, Retry-After: %s)",
+                "Yoinku HTTP failure on attempt %d/%d: format=%s; %s (HTTP status: %s, Retry-After: %s)",
                 attempt + 1,
+                max_attempts,
+                format_id,
                 type(exc).__name__,
                 diagnostics.get("http_status"),
                 retry_after,
@@ -3008,7 +3039,7 @@ async def download_with_yoinku(
             if time.monotonic() >= fetch_deadline:
                 break
 
-            if attempt < 2:
+            if attempt < max_attempts - 1:
                 remaining_time = (
                     fetch_deadline - time.monotonic()
                 )
