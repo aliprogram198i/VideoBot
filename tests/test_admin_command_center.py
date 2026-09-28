@@ -1,5 +1,6 @@
 import sqlite3
 
+import plugins.admin_command_center as command_center
 from plugins.admin_command_center import command_center_keyboard
 from plugins.admin_event_model import recent_events, summary
 
@@ -42,7 +43,7 @@ def _db(path):
     return get_db
 
 
-def test_command_center_has_all_current_domains_and_more():
+def test_command_center_has_all_current_domains_without_dead_more_entry():
     rows = command_center_keyboard().inline_keyboard
     callbacks = [button.callback_data for row in rows for button in row]
     assert callbacks == [
