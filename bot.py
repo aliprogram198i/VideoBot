@@ -7590,16 +7590,22 @@ async def process_user_message(
                 chat_id=target_id,
                 text=message.text,
             )
-        elif (
-            message.photo
-            or message.video
-            or message.document
-            or message.audio
-            or message.voice
-        ):
+        elif message.voice:
+            await context.bot.send_voice(
+                chat_id=target_id,
+                voice=message.voice.file_id,
+                caption=message.caption,
+            )
+        elif message.audio:
+            await context.bot.send_audio(
+                chat_id=target_id,
+                audio=message.audio.file_id,
+                caption=message.caption,
+            )
+        elif message.photo or message.video or message.document:
             await context.bot.copy_message(
                 chat_id=target_id,
-                from_chat_id=ADMIN_ID,
+                from_chat_id=message.chat_id,
                 message_id=message.message_id,
             )
         else:
