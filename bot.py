@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import asyncio
+import base64
 import tempfile
 import shutil
 import html
@@ -48,6 +49,7 @@ from downloader.instagram_failure import (
 from downloader.resolver_admission import admit_local_media, admit_media_artifact
 from downloader.url_security import redact_url, validate_public_http_url, safe_urlopen, read_limited
 from downloader.process_utils import final_output_from_yt_dlp, communicate_with_cleanup
+from downloader.facebook_reel_variants import facebook_reel_variants
 from downloader.error_sanitizer import (
     sanitize_error_for_storage,
     sanitize_error_value as _sanitize_error_value,
@@ -100,6 +102,50 @@ MAX_TELEGRAM_AUDIO_BYTES = (
 MAX_YOINKU_RESPONSE_BYTES = 1 * 1024 * 1024
 MIN_FREE_SPACE_BYTES = 256 * 1024 * 1024
 MAX_BROADCAST_LENGTH = 4000
+
+FACEBOOK_COOKIES_B64_ENV = "FACEBOOK_COOKIES_B64"
+
+
+def _prepare_facebook_cookie_file(source_url: str, temp_dir: str) -> str | None:
+    """Materialize an optional Facebook Netscape cookie jar without logging it."""
+    host = (urlparse(source_url).hostname or "").lower().rstrip(".")
+    if host not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+        return None
+
+    encoded = os.getenv(FACEBOOK_COOKIES_B64_ENV, "").strip()
+    if not encoded:
+        return None
+
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        logger.warning("Facebook cookie session ignored: invalid base64")
+        return None
+
+    if not raw or len(raw) > 2 * 1024 * 1024:
+        logger.warning("Facebook cookie session ignored: invalid size")
+        return None
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("Facebook cookie session ignored: non-UTF8 data")
+        return None
+
+    if "# Netscape HTTP Cookie File" not in text[:512]:
+        logger.warning("Facebook cookie session ignored: unsupported cookie format")
+        return None
+
+    cookie_file = os.path.join(temp_dir, ".facebook_cookies.txt")
+    try:
+        with open(cookie_file, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(cookie_file, 0o600)
+    except OSError as exc:
+        logger.warning("Facebook cookie session could not be materialized: %s", type(exc).__name__)
+        return None
+
+    return cookie_file
 
 logger = logging.getLogger(__name__)
 
@@ -4232,6 +4278,11 @@ async def download_media(
     # Resolve the platform before building the yt-dlp command. The YouTube
     # client/PO-token policy below is evaluated before process execution.
     hostname = (urlparse(url).hostname or "").lower()
+    is_facebook = hostname in {
+        "facebook.com",
+        "www.facebook.com",
+        "m.facebook.com",
+    }
     is_youtube = hostname in {
         "youtube.com",
         "www.youtube.com",
@@ -4454,6 +4505,22 @@ async def download_media(
                     flush=True,
                 )
 
+        facebook_cookie_file = _prepare_facebook_cookie_file(url, temp_dir)
+        if facebook_cookie_file:
+            command.extend([
+                "--cookies",
+                facebook_cookie_file,
+                "--impersonate",
+                "chrome-99",
+            ])
+            print("🛡️ Facebook authenticated session: cookies + HTTP impersonation enabled", flush=True)
+        elif is_facebook:
+            command.extend([
+                "--impersonate",
+                "chrome-99",
+            ])
+            print("🛡️ Facebook HTTP impersonation enabled", flush=True)
+
         command.append(telegram_download_url)
 
         # Both Telegram and Instagram primary yt-dlp paths are discovery-only.
@@ -4504,6 +4571,108 @@ async def download_media(
             if is_audio else (".mp4", ".mkv", ".webm", ".mov")
         )
         media_file = final_output_from_yt_dlp(stdout_text, temp_dir, allowed_extensions)
+
+        # Facebook Reel recovery: some /reel/<id> URLs fail inside the
+        # native extractor while the same exact id is exposed through a
+        # legacy /facebook/videos/<id>/ URL. Try only this deterministic
+        # same-id variant, with the same cookie/impersonation policy.
+        if (
+            is_facebook
+            and not media_file
+            and any(
+                marker in (stderr_text or "").lower()
+                for marker in (
+                    "no video formats found",
+                    "cannot parse data",
+                )
+            )
+        ):
+            for facebook_variant in facebook_reel_variants(url):
+                variant_command = list(command)
+                variant_command[-1] = facebook_variant
+                print(
+                    "🛡️ Facebook Reel recovery: trying same-id canonical video URL",
+                    flush=True,
+                )
+                variant_process = await asyncio.create_subprocess_exec(
+                    *variant_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                variant_stdout, variant_stderr = await communicate_with_cleanup(
+                    variant_process,
+                    DOWNLOAD_TIMEOUT,
+                )
+                variant_stdout_text = variant_stdout.decode(errors="ignore")
+                variant_stderr_text = variant_stderr.decode(errors="ignore")
+                variant_media_file = final_output_from_yt_dlp(
+                    variant_stdout_text,
+                    temp_dir,
+                    allowed_extensions,
+                )
+                if variant_media_file:
+                    process = variant_process
+                    stdout_text = variant_stdout_text
+                    stderr_text = variant_stderr_text
+                    media_file = variant_media_file
+                    print(
+                        "✅ Facebook Reel recovery: same-id canonical video URL succeeded",
+                        flush=True,
+                    )
+                    break
+
+        # Facebook may expose public media without cookies while a supplied
+        # authenticated session can suppress the media payload. Retry once
+        # without the cookie jar, but keep HTTP impersonation. This is bounded
+        # and only runs after a Facebook extraction failure.
+        if (
+            is_facebook
+            and facebook_cookie_file
+            and (process.returncode != 0 or not media_file)
+            and any(
+                marker in (stderr_text or "").lower()
+                for marker in (
+                    "no video formats found",
+                    "cannot parse data",
+                )
+            )
+        ):
+            retry_command = list(command)
+            try:
+                cookies_index = retry_command.index("--cookies")
+                del retry_command[cookies_index:cookies_index + 2]
+            except ValueError:
+                pass
+
+            if "--impersonate" not in retry_command:
+                retry_command.extend(["--impersonate", "chrome-99"])
+
+            print(
+                "🛡️ Facebook retry: authenticated cookie session rejected "
+                "media; retrying once without cookies",
+                flush=True,
+            )
+            retry_process = await asyncio.create_subprocess_exec(
+                *retry_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            retry_stdout, retry_stderr = await communicate_with_cleanup(
+                retry_process,
+                DOWNLOAD_TIMEOUT,
+            )
+            retry_stdout_text = retry_stdout.decode(errors="ignore")
+            retry_stderr_text = retry_stderr.decode(errors="ignore")
+            retry_media_file = final_output_from_yt_dlp(
+                retry_stdout_text,
+                temp_dir,
+                allowed_extensions,
+            )
+
+            process = retry_process
+            stdout_text = retry_stdout_text
+            stderr_text = retry_stderr_text
+            media_file = retry_media_file
 
         # YouTube bot-check recovery is a bounded second yt-dlp attempt.
         # Do not broaden the fallback chain or bypass source/media admission.
