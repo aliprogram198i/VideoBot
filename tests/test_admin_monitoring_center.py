@@ -7,6 +7,8 @@ from plugins.admin_monitoring_center import (
     _refresh_alerts,
     _render_alerts,
     _render_incidents,
+    _home_keyboard,
+    _incident_keyboard,
     _render_resolvers,
     _resolver,
     ensure_schema,
@@ -268,3 +270,30 @@ def test_previous_intermediate_alerts_are_converged_to_resolved(tmp_path):
     ).fetchone()
     conn.close()
     assert row["status"] == "resolved"
+
+
+def _callback_values(keyboard):
+    return [
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+    ]
+
+
+def test_monitoring_home_compacts_duplicate_alert_navigation():
+    callbacks = _callback_values(_home_keyboard())
+    assert callbacks.count("admin_alerts") == 1
+    assert "admin_incidents" not in callbacks
+    assert "admin_ops_resolvers" not in callbacks
+    assert "admin_ops_timeline" not in callbacks
+    assert "admin_observability" in callbacks
+    assert "admin_resolver_monitor" in callbacks
+    assert len(callbacks) == 5
+
+
+def test_legacy_incident_keyboard_no_longer_duplicates_alert_entry():
+    callbacks = _callback_values(_incident_keyboard())
+    assert "admin_alerts" not in callbacks
+    assert "admin_incidents" in callbacks
+    assert "admin_resolver_monitor" in callbacks
+    assert "admin_home" in callbacks
