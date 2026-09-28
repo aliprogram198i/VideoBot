@@ -547,3 +547,43 @@ def test_last_error_keyboard_exposes_copy_action_before_refresh():
     callbacks = _callback_values(_last_error_keyboard())
     assert callbacks[0] == "admin_last_error_copy"
     assert callbacks[1] == "admin_last_error"
+
+
+def test_studio_error_snapshot_is_operation_scoped(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO error_logs
+           (url,website,media_type,stage,error_type,error_message,attempt_id,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("", "YouTube", "video", "download", "all_methods_failed",
+         "old youtube failure", "download-attempt",
+         json.dumps({"resolver":"yt-dlp"}), "2026-09-28T06:00:00"),
+    )
+    conn.execute(
+        """INSERT INTO error_logs
+           (url,website,media_type,stage,error_type,error_message,attempt_id,details_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("", "AliBot Studio", "audio", "media_studio", "media_studio_failed",
+         "studio failure", "studio-attempt",
+         json.dumps({
+             "operation":"media_studio",
+             "studio_attempt_id":"studio-attempt",
+             "source_token":"source-token",
+             "studio_token":"studio-token",
+             "studio_action":"audio",
+             "media_type":"audio",
+             "ffmpeg_stderr_tail":"codec error",
+         }), "2026-09-28T07:00:00"),
+    )
+    conn.commit()
+    conn.close()
+    from plugins.admin_monitoring_center import _render_studio_error
+    snapshot = "\n".join(_render_studio_error(get_db))
+    assert "media_studio_failed" in snapshot
+    assert "studio-attempt" in snapshot
+    assert "audio" in snapshot
+    assert "codec error" in snapshot
+    assert "old youtube failure" not in snapshot
