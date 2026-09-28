@@ -392,25 +392,22 @@ def _severity_icon(value: str) -> str:
 
 
 def _home_keyboard() -> InlineKeyboardMarkup:
+    """Compact navigation for the canonical monitoring center."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚨 الحوادث", callback_data=_INCIDENTS),
-         InlineKeyboardButton("🔔 التنبيهات", callback_data=_ALERTS)],
-        [InlineKeyboardButton("🌐 Resolver Drill-down", callback_data="admin_ops_resolvers"),
-         InlineKeyboardButton("🧭 Operations Timeline", callback_data="admin_ops_timeline")],
+        [InlineKeyboardButton("🚨 الحوادث والتنبيهات", callback_data=_ALERTS)],
+        [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS)],
         [InlineKeyboardButton("📡 المراقبة الذكية", callback_data="admin_observability")],
         [InlineKeyboardButton("🔄 تحديث", callback_data=_HOME),
-         InlineKeyboardButton("📊 مركز العمليات", callback_data="admin_ops_dashboard")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
+         InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ])
 
 
 def _incident_keyboard() -> InlineKeyboardMarkup:
+    """Compatibility keyboard for legacy incident callbacks."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔔 التنبيهات", callback_data=_ALERTS),
-         InlineKeyboardButton("🌐 المنصات/Resolvers", callback_data=_RESOLVERS)],
-        [InlineKeyboardButton("🔄 تحديث", callback_data=_INCIDENTS),
-         InlineKeyboardButton("📡 المراقبة الذكية", callback_data="admin_observability")],
-        [InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
+        [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS)],
+        [InlineKeyboardButton("🔄 تحديث", callback_data=_ALERTS),
+         InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ])
 
 
@@ -542,12 +539,14 @@ async def monitoring_callback(update: Update, context, get_db, owner_id: int) ->
 
 
 async def incidents_callback(update: Update, context, get_db, owner_id: int) -> None:
+    """Legacy incident callback routed to the canonical alerts view."""
     query = update.callback_query
     await query.answer()
     if not _authorized(update, get_db, owner_id):
         return
     _audit(get_db, owner_id, "view_error_incident_center")
-    await query.edit_message_text(_render_incidents(get_db), parse_mode="HTML", reply_markup=_incident_keyboard())
+    text, keyboard = _render_alerts(get_db)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
     raise ApplicationHandlerStop
 
 
