@@ -469,7 +469,6 @@ def _keyboard(url: str, language: str = "ar", media_type: str | None = None) -> 
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
     elif media_type == "audio":
         rows.append([InlineKeyboardButton(labels["audio"], callback_data="audio_menu")])
-        rows.append([InlineKeyboardButton(labels["studio"], callback_data="sdc_studio")])
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
     elif media_type == "image":
         rows.append([InlineKeyboardButton(labels["post"], callback_data="post_download")])
