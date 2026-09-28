@@ -588,3 +588,56 @@ def test_studio_error_snapshot_is_operation_scoped(tmp_path):
     assert "audio" in snapshot
     assert "codec error" in snapshot
     assert "old youtube failure" not in snapshot
+
+
+def test_last_error_snapshot_marks_newer_failure_telemetry_as_stale_context(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    conn = get_db()
+    rows = [
+        ("download", "all_methods_failed", "terminal failure", "old-attempt", "2026-09-28T06:00:00"),
+        ("yt-dlp", "yt_dlp_failed", "newer failure telemetry", "new-attempt", "2026-09-28T07:00:00"),
+    ]
+    for stage, error_type, message, attempt_id, created_at in rows:
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            ("https://example.com/video", "YouTube", "video", stage, error_type,
+             message, attempt_id, 1, "{}", created_at),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = "\n".join(_render_last_error(get_db))
+    assert "توجد telemetry فشل أحدث من الحادث المعروض" in snapshot
+    assert "2026-09-28T07:00:00" in snapshot
+    assert "newer telemetry" not in snapshot
+
+
+def test_last_error_snapshot_marks_same_attempt_as_current_context(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    conn = get_db()
+    rows = [
+        ("yt-dlp", "yt_dlp_failed", "intermediate failure", "same-attempt", "2026-09-28T06:00:00"),
+        ("download", "all_methods_failed", "terminal failure", "same-attempt", "2026-09-28T06:01:00"),
+    ]
+    for stage, error_type, message, attempt_id, created_at in rows:
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            ("https://example.com/video", "YouTube", "video", stage, error_type,
+             message, attempt_id, 1, "{}", created_at),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = "\n".join(_render_last_error(get_db))
+    assert "نفس محاولة الحادث" in snapshot
+    assert "2026-09-28T06:01:00" in snapshot
