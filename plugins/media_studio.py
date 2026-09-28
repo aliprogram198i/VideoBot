@@ -616,10 +616,6 @@ async def _send_result(
                 pool_timeout=60,
             )
     else:
-        delivery_policy.validate_telegram_upload(
-            output,
-            media_type="video",
-        ) if output.stat().st_size <= MAX_RESULT_BYTES else None
         delivery_path = output
         temp_dir = None
         if output.stat().st_size > MAX_RESULT_BYTES:
@@ -636,6 +632,10 @@ async def _send_result(
                 )
             delivery_path = Path(optimized)
 
+        delivery_policy.validate_telegram_upload(
+            delivery_path,
+            media_type="video",
+        )
         try:
             _validate_result(delivery_path)
             with delivery_path.open("rb") as handle:
