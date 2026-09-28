@@ -55,6 +55,7 @@ from downloader.error_sanitizer import (
     details_to_json as _details_to_json,
 )
 from downloader.source_detection import detect_website
+from downloader.content_policy import is_adult_content_url, safe_replacement_url
 from downloader.user_experience import (
     RETRY_CALLBACK,
     link_preview_text,
@@ -4120,6 +4121,17 @@ async def download_media(
         if not url or not choice:
             await query.edit_message_text(TEXTS[language]["expired"])
             return
+    # Apply the adult-content replacement at the canonical delivery boundary.
+    # This keeps all existing downloader/resolver/delivery stages unchanged.
+    moderation_metadata = context.user_data.get("sdc_info")
+    if is_adult_content_url(url, moderation_metadata):
+        url = safe_replacement_url()
+        context.user_data["video_url"] = url
+        context.user_data["last_download_request"] = {
+            "url": url,
+            "choice": choice,
+        }
+
     else:
         context.user_data["last_download_request"] = {
             "url": url,
