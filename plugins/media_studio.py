@@ -819,7 +819,11 @@ async def _run_action(
 
         output, media_type = await _create_result(source, action, value)
         generated_media_type = media_type
-        _validate_result(\n            output,\n            allow_video_optimization=media_type == "video",\n            allow_audio_split=media_type == "audio",\n        )
+        _validate_result(
+            output,
+            allow_video_optimization=media_type == "video",
+            allow_audio_split=media_type == "audio",
+        )
         await _send_result(update, context, output, media_type, token)
         try:
             await status_message.delete()
