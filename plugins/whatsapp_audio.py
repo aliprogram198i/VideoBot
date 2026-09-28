@@ -116,6 +116,17 @@ async def whatsapp_audio_handler(update: Update, context: ContextTypes.DEFAULT_T
     if media is None:
         return
 
+    # Admin -> Users media delivery must take precedence over the generic
+    # WhatsApp audio conversion layer. The admin workflow already has its own
+    # exact delivery path; delegate to it and stop propagation so the audio is
+    # copied as-is instead of being converted to MP3.
+    if (
+        user.id == bot_module.ADMIN_ID
+        and context.user_data.get("waiting_user_message")
+    ):
+        await bot_module.process_user_message(update, context)
+        raise ApplicationHandlerStop
+
     bot_module.register_user(user)
 
     if bot_module.is_banned(user.id):
