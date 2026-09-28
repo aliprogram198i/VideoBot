@@ -110,7 +110,13 @@ def _table_columns(conn, table: str) -> set[str]:
 
 
 def _latest_error_row(get_db) -> Any | None:
-    """Return the newest raw error telemetry row for the admin diagnostic snapshot."""
+    """Return the newest terminal error incident for the diagnostic snapshot.
+
+    Intermediate resolver/fallback failures are correlated telemetry, not
+    standalone incidents. Selecting only terminal outcomes prevents the
+    diagnostic view from pointing at an older intermediate row when the
+    attempt has already reached a later terminal state.
+    """
     conn = get_db()
     try:
         tables = {str(row[0]) for row in conn.execute(
@@ -121,8 +127,16 @@ def _latest_error_row(get_db) -> Any | None:
         columns = _table_columns(conn, "error_logs")
         if "created_at" not in columns:
             return None
+
+        where = ""
+        params: tuple[Any, ...] = ()
+        if "error_type" in columns:
+            where = "WHERE error_type IN ('all_methods_failed', 'download_failed')"
+
         return conn.execute(
-            "SELECT * FROM error_logs ORDER BY created_at DESC, id DESC LIMIT 1"
+            "SELECT * FROM error_logs "
+            f"{where} ORDER BY created_at DESC, id DESC LIMIT 1",
+            params,
         ).fetchone()
     except Exception:
         return None
@@ -268,8 +282,9 @@ def _render_last_error(get_db) -> list[str]:
     timeline = _render_attempt_timeline(correlated_rows)
 
     lines = [
-        "🧾 <b>آخر خطأ بالتفصيل — Diagnostic Snapshot</b>",
+        "🧾 <b>آخر حادث فشل نهائي — Diagnostic Snapshot</b>",
         "━━━━━━━━━━━━━━━━━━━━",
+        "هذه الشاشة تعرض <b>آخر حادث فشل نهائي مسجل</b>، وليس آخر خطوة وسيطة داخل سلسلة fallback.",
         "انسخ <b>كل الأجزاء</b> من هذه الرسالة وأرسلها للتحليل.",
         "<b>مصدر البيانات:</b> telemetry الحالية فقط؛ لا يتم اختراع معلومات غير مسجلة.",
         "<b>الأمان:</b> تم إخفاء credentials وcookies وtokens وsession values وsigned query values.",
