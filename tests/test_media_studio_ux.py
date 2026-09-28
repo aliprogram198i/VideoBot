@@ -27,6 +27,13 @@ def test_primary_ytdlp_download_explicitly_disables_simulation():
     assert '"--no-simulate"' in bot
 
 
+def test_youtube_artifact_recovery_uses_progressive_format_without_download_cap():
+    """A no-artifact YouTube result gets one bounded progressive retry."""
+    bot = Path("bot.py").read_text(encoding="utf-8")
+    assert "YouTube artifact recovery: progressive format retry" in bot
+    assert 'recovery_command[format_index] = "best[ext=mp4]/best"' in bot
+    assert "if is_youtube and not media_file:" in bot
+
 def test_transient_status_message_is_removed_after_success():
     """Progress text is cleaned up after the result is delivered."""
     assert "status_message = await message.reply_text(status)" in STUDIO
