@@ -807,10 +807,12 @@ async def last_error_copy_callback(update: Update, context, get_db, owner_id: in
         return
     _audit(get_db, owner_id, "copy_last_error_diagnostic")
     chunks = _render_last_error(get_db)
-    plain_chunks = [
-        re.sub(r"</?(?:pre|b|code)>", "", html.unescape(chunk))
-        for chunk in chunks
-    ]
+    plain_chunks = []
+    for chunk in chunks:
+        plain = html.unescape(chunk)
+        for tag in ("<pre>", "</pre>", "<b>", "</b>", "<code>", "</code>"):
+            plain = plain.replace(tag, "")
+        plain_chunks.append(plain)
     if plain_chunks:
         await query.message.reply_text(
             "📋 <b>نسخة نصية للنسخ</b> — تم تنظيف التنسيق مع الحفاظ على إخفاء البيانات الحساسة.",
