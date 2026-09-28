@@ -250,7 +250,7 @@ def _refresh_alerts(get_db) -> int:
             unique_stages = list(dict.fromkeys(failed_stages))
             details = (
                 f"{message} "
-                f"Stages failed before terminal outcome: {", ".join(unique_stages[:8])}."
+                "Stages failed before terminal outcome: " + ", ".join(unique_stages[:8]) + "."
             )
         else:
             details = message
