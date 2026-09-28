@@ -1026,10 +1026,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if media_type not in {"video", "audio"}:
             await query.answer("Smart Studio غير متاح لهذا النوع من المحتوى.", show_alert=True)
             raise ApplicationHandlerStop
-        studio_choice = "audio_best" if media_type == "audio" else "video_best"
-        proxy_query = _CallbackQueryProxy(query, studio_choice)
-        proxy_update = _UpdateProxy(update, proxy_query)
-        await bot_module.download_media(proxy_update, context)
+        from plugins.media_studio import STUDIO_MESSAGES_BY_TOKEN_KEY, _cached_path, studio_keyboard
+        media_context = context.user_data.get("media_context")
+        studio_token = media_context.get("studio_token") if isinstance(media_context, dict) else None
+        if not studio_token or _cached_path(user.id, studio_token) is None:
+            await query.answer("Smart Studio غير متاح للملف الحالي. يرجى إعادة التحميل.", show_alert=True)
+            raise ApplicationHandlerStop
+        studio_messages = context.user_data.setdefault(STUDIO_MESSAGES_BY_TOKEN_KEY, {})
+        studio_messages[studio_token] = {"chat_id": query.message.chat_id, "message_id": query.message.message_id}
+        context.user_data["media_studio_message"] = studio_messages[studio_token]
+        context.user_data["media_studio_result_message"] = studio_messages[studio_token]
+        await query.answer()
+        await query.message.edit_reply_markup(
+            reply_markup=studio_keyboard(studio_token, language, media_type=media_type)
+        )
         raise ApplicationHandlerStop
 
     if data == "sdc_cancel":
