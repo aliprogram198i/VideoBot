@@ -58,6 +58,7 @@ _CARD_TEXTS = {
         "post": "📌 تحميل المنشور",
         "audio": "🎵 تحميل الصوت",
         "studio": "🎨 Smart Studio",
+        "fast_download": "⚡ تحميل ذكي",
         "favorite": "⭐ حفظ",
         "library": "📚 مكتبتي",
         "settings": "⚙️ الإعدادات",
@@ -101,6 +102,7 @@ _CARD_TEXTS = {
         "post": "📌 Download post",
         "audio": "🎵 MP3",
         "studio": "🎨 Smart Studio",
+        "fast_download": "⚡ Smart Download",
         "favorite": "⭐ Save",
         "library": "📚 Library",
         "settings": "⚙️ Settings",
@@ -144,6 +146,7 @@ _CARD_TEXTS = {
         "video": "🎥 Videoyu indir",
         "audio": "🎵 Sesi indir",
         "studio": "🎨 Smart Studio",
+        "fast_download": "⚡ Akıllı İndirme",
         "post": "📌 Gönderiyi indir",
         "favorite": "⭐ Kaydet",
         "library": "📚 Kitaplığım",
@@ -489,9 +492,49 @@ def _keyboard(url: str, language: str = "ar", media_type: str | None = None) -> 
     return InlineKeyboardMarkup(rows)
 
 
+def _smart_video_choice(data: dict) -> str:
+    """Choose the highest practical video tier with a conservative Telegram budget."""
+    safe_bytes = 47 * 1024 * 1024
+    formats = data.get("formats") if isinstance(data.get("formats"), list) else []
+    candidates = []
+    for item in formats:
+        if not isinstance(item, dict):
+            continue
+        try:
+            height = int(item.get("height") or 0)
+        except (TypeError, ValueError):
+            continue
+        if height <= 0 or str(item.get("vcodec") or "none").lower() == "none":
+            continue
+        size = item.get("filesize") or item.get("filesize_approx")
+        try:
+            size = float(size) if size is not None else None
+        except (TypeError, ValueError):
+            size = None
+        if size is not None and size <= safe_bytes:
+            candidates.append(height)
+
+    if candidates:
+        max_height = max(candidates)
+        for threshold, choice in ((1080, "video_1080"), (720, "video_720"), (480, "video_480"), (360, "video_360")):
+            if max_height >= threshold:
+                return choice
+
+    try:
+        duration = float(data.get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    if duration <= 180:
+        return "video_720"
+    if duration <= 600:
+        return "video_480"
+    return "video_360"
+
+
 def _more_keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
     labels = _labels(language)
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton(labels["fast_download"], callback_data="sdc_fast_download")],
         [InlineKeyboardButton(labels["studio"], callback_data="sdc_studio")],
         [
             InlineKeyboardButton(labels["favorite"], callback_data="ux_favorite_current"),
@@ -504,7 +547,6 @@ def _more_keyboard(url: str, language: str = "ar") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(labels["settings"], callback_data="ux_settings")],
         [InlineKeyboardButton(labels["back"], callback_data="main_menu")],
     ])
-
 
 def _detect_media_type(data: dict) -> str | None:
     formats = data.get("formats")
@@ -1007,7 +1049,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             raise ApplicationHandlerStop
         return
 
-    if data not in {"sdc_thumbnail", "sdc_studio"}:
+    if data not in {"sdc_thumbnail", "sdc_studio", "sdc_fast_download"}:
         await query.answer()
 
     if data == "post_download":
@@ -1020,6 +1062,23 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await bot_module.download_media(update, context)
             raise ApplicationHandlerStop
         return
+
+    if data == "sdc_fast_download":
+        media_info = context.user_data.get("sdc_info") or {}
+        media_type = media_info.get("media_type")
+        if media_type == "image":
+            fast_choice = "post_download"
+        elif media_type == "audio":
+            fast_choice = "audio_best"
+        elif media_type == "video":
+            fast_choice = _smart_video_choice(media_info)
+        else:
+            await query.answer("⚡ لا يمكن تحديد نوع الوسائط لهذا الرابط.", show_alert=True)
+            raise ApplicationHandlerStop
+        proxy_query = _CallbackQueryProxy(query, fast_choice)
+        proxy_update = _UpdateProxy(update, proxy_query)
+        await bot_module.download_media(proxy_update, context)
+        raise ApplicationHandlerStop
 
     if data == "sdc_studio":
         media_type = (context.user_data.get("sdc_info") or {}).get("media_type")
