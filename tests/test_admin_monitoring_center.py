@@ -547,3 +547,15 @@ def test_last_error_keyboard_exposes_compact_copy_action():
     callbacks = _callback_values(_last_error_keyboard())
     assert callbacks[0] == "admin_last_error"
     assert callbacks[1] == "admin_last_error_compact"
+
+
+
+def test_last_error_compact_snapshot_handles_empty_telemetry(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+
+    snapshot = _render_last_error_compact(get_db)
+
+    assert "التشخيص المختصر" in snapshot
+    assert "لا يوجد خطأ مسجل" in snapshot
