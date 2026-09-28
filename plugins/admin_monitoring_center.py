@@ -30,6 +30,7 @@ _INCIDENTS = "admin_incidents"
 _RESOLVERS = "admin_resolver_monitor"
 _ALERTS = "admin_alerts"
 _LAST_ERROR = "admin_last_error"
+_LAST_ERROR_COPY = "admin_last_error_copy"
 _ACK_PREFIX = "admin_alert_ack_"
 _RESOLVE_PREFIX = "admin_alert_resolve_"
 
@@ -640,6 +641,7 @@ def _alerts_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
 
 def _last_error_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 نسخة نصية للنسخ", callback_data=_LAST_ERROR_COPY)],
         [InlineKeyboardButton("🧾 تحديث آخر خطأ", callback_data=_LAST_ERROR)],
         [InlineKeyboardButton("🚨 الحوادث والتنبيهات", callback_data=_ALERTS)],
         [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS),
@@ -797,6 +799,28 @@ async def last_error_callback(update: Update, context, get_db, owner_id: int) ->
     raise ApplicationHandlerStop
 
 
+async def last_error_copy_callback(update: Update, context, get_db, owner_id: int) -> None:
+    """Send the sanitized snapshot as plain text for reliable manual copying."""
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id):
+        return
+    _audit(get_db, owner_id, "copy_last_error_diagnostic")
+    chunks = _render_last_error(get_db)
+    plain_chunks = [
+        re.sub(r"</?(?:pre|b|code)>", "", html.unescape(chunk))
+        for chunk in chunks
+    ]
+    if plain_chunks:
+        await query.message.reply_text(
+            "📋 <b>نسخة نصية للنسخ</b> — تم تنظيف التنسيق مع الحفاظ على إخفاء البيانات الحساسة.",
+            parse_mode="HTML",
+        )
+        for chunk in plain_chunks:
+            await query.message.reply_text(chunk)
+    raise ApplicationHandlerStop
+
+
 async def alert_action_callback(update: Update, context, get_db, owner_id: int) -> None:
     query = update.callback_query
     await query.answer()
@@ -869,6 +893,13 @@ def register_admin_monitoring(app: Any, get_db, owner_id: int) -> None:
         CallbackQueryHandler(
             lambda u, c: last_error_callback(u, c, get_db, owner_id),
             pattern=rf"^{_LAST_ERROR}$",
+        ),
+        group=-210,
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            lambda u, c: last_error_copy_callback(u, c, get_db, owner_id),
+            pattern=rf"^{_LAST_ERROR_COPY}$",
         ),
         group=-210,
     )
