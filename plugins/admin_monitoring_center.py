@@ -406,7 +406,7 @@ def _incident_keyboard() -> InlineKeyboardMarkup:
     """Compatibility keyboard for legacy incident callbacks."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS)],
-        [InlineKeyboardButton("🔄 تحديث", callback_data=_ALERTS),
+        [InlineKeyboardButton("🔄 تحديث", callback_data=_INCIDENTS),
          InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ])
 
