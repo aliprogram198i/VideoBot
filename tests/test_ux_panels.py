@@ -72,15 +72,16 @@ def test_studio_labels_exist_in_all_languages():
 
 def test_link_panel_is_context_aware_for_media_type():
     video = _button_data(_keyboard("https://example.com/video", "ar", "video"))
-    assert video[:3] == ["video_menu", "audio_menu", "post_download"]
+    assert video[:4] == ["video_menu", "audio_menu", "sdc_studio", "post_download"]
 
     image = _button_data(_keyboard("https://example.com/image.jpg", "ar", "image"))
     assert image[:1] == ["post_download"]
     assert "video_menu" not in image
     assert "audio_menu" not in image
+    assert "sdc_studio" not in image
 
     audio = _button_data(_keyboard("https://example.com/audio.mp3", "ar", "audio"))
-    assert audio[:2] == ["audio_menu", "post_download"]
+    assert audio[:3] == ["audio_menu", "sdc_studio", "post_download"]
     assert "video_menu" not in audio
 
 
