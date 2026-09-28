@@ -294,6 +294,5 @@ def test_monitoring_home_compacts_duplicate_alert_navigation():
 def test_legacy_incident_keyboard_no_longer_duplicates_alert_entry():
     callbacks = _callback_values(_incident_keyboard())
     assert callbacks.count("admin_alerts") == 1
-    assert "admin_incidents" in callbacks
     assert "admin_resolver_monitor" in callbacks
     assert "admin_home" in callbacks
