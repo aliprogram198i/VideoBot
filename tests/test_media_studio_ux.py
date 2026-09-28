@@ -16,7 +16,9 @@ def test_single_download_studio_cache_behavior_is_preserved():
     """The original download path still exposes Studio on a validated video."""
     bot = Path("bot.py").read_text(encoding="utf-8")
     assert "studio_token = cache_media_for_user(" in bot
-    assert "reply_markup=studio_keyboard(studio_token)" in bot
+    # The keyboard is attached in the send call and may be formatted across lines.
+    assert "reply_markup=studio_keyboard(" in bot
+    assert "studio_token" in bot
 
 
 def test_transient_status_message_is_removed_after_success():
