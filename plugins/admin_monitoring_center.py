@@ -431,8 +431,7 @@ def _alerts_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(f"حل #{alert_id}", callback_data=f"{_RESOLVE_PREFIX}{alert_id}"),
             ])
     buttons += [
-        [InlineKeyboardButton("🚨 مركز الحوادث", callback_data=_INCIDENTS),
-         InlineKeyboardButton("🌐 المراقبة", callback_data=_RESOLVERS)],
+        [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS)],
         [InlineKeyboardButton("🔄 تحديث", callback_data=_ALERTS),
          InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
     ]
