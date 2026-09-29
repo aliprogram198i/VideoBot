@@ -343,6 +343,73 @@ def _render_studio_error(get_db) -> list[str]:
 
 
 
+def _render_last_error_compact(get_db) -> str:
+    """Build a cyber-incident-style, copy-friendly diagnostic from existing telemetry only."""
+    row = _latest_error_row(get_db)
+    if row is None:
+        return (
+            "🛡️ <b>CYBER INCIDENT SNAPSHOT</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🟢 <b>STATUS:</b> CLEAR\n"
+            "لا يوجد خطأ مسجل في <code>error_logs</code>."
+        )
+
+    details = _json(row["details_json"]) if "details_json" in row.keys() else None
+    summary = _diagnostic_summary(row, details)
+    attempt_id = str(row["attempt_id"] or "").strip() if "attempt_id" in row.keys() else ""
+    timeline = _render_attempt_timeline(_attempt_error_rows(get_db, attempt_id)) if attempt_id else []
+    error_type = str(row["error_type"] or "unknown").strip() if "error_type" in row.keys() else "unknown"
+    severity = _severity(error_type, len(timeline) or 1)
+    created_at = str(row["created_at"] or "").strip() if "created_at" in row.keys() else ""
+    platform = _platform(row)
+    stage = str(row["stage"] or "unknown").strip() if "stage" in row.keys() else "unknown"
+
+    compact: dict[str, Any] = {
+        "incident": {
+            "incident_id": attempt_id or str(row["id"] if "id" in row.keys() else "unknown"),
+            "classification": "DOWNLOAD_PIPELINE_FAILURE",
+            "severity": severity.upper(),
+            "status": "OPEN / TERMINAL_FAILURE",
+            "detected_at": created_at or "unknown",
+            "affected_platform": platform,
+            "execution_phase": stage,
+        },
+        "evidence": {
+            "terminal_error_type": error_type,
+            "error": str(row["error_message"] or "") if "error_message" in row.keys() else "",
+            "http_status": row["http_status"] if "http_status" in row.keys() else None,
+            "exception_type": str(row["exception_type"] or "") if "exception_type" in row.keys() else "",
+            "duration_ms": row["duration_ms"] if "duration_ms" in row.keys() else None,
+            "events_in_same_attempt": len(timeline),
+        },
+        "security_controls": {
+            "credentials_redacted": True,
+            "cookies_redacted": True,
+            "tokens_redacted": True,
+            "query_secrets_redacted": True,
+            "source": "existing_error_logs_telemetry",
+        },
+    }
+    if timeline:
+        compact["correlated_evidence"] = [
+            {
+                key: event[key]
+                for key in ("created_at", "stage", "error_type", "error_message", "http_status", "exception_type", "duration_ms")
+                if key in event and event[key] not in (None, "")
+            }
+            for event in timeline
+        ]
+
+    sanitized = _sanitize_diagnostic_value(compact)
+    payload = json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True)
+    return "<pre>" + html.escape(
+        "╔══════════════════════════════════╗\n"
+        "║      CYBER INCIDENT SNAPSHOT     ║\n"
+        "╚══════════════════════════════════╝\n"
+        + payload
+    ) + "</pre>"
+
+
 def _render_last_error(get_db) -> list[str]:
     """Build a bounded, copy-friendly diagnostic snapshot from existing telemetry only."""
     row = _latest_error_row(get_db)
@@ -750,8 +817,8 @@ def _alerts_keyboard(rows: list[Any]) -> InlineKeyboardMarkup:
 
 def _last_error_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 نسخة نصية للنسخ", callback_data=_LAST_ERROR_COPY)],
         [InlineKeyboardButton("🧾 تحديث آخر خطأ", callback_data=_LAST_ERROR)],
+        [InlineKeyboardButton("📋 نسخة نصية للنسخ", callback_data="admin_last_error_compact")],
         [InlineKeyboardButton("🚨 الحوادث والتنبيهات", callback_data=_ALERTS)],
         [InlineKeyboardButton("📋 السجلات / المنصات", callback_data=_RESOLVERS),
          InlineKeyboardButton("🎛️ مركز التحكم", callback_data="admin_home")],
@@ -945,6 +1012,21 @@ async def last_error_copy_callback(update: Update, context, get_db, owner_id: in
     raise ApplicationHandlerStop
 
 
+async def last_error_compact_callback(update: Update, context, get_db, owner_id: int) -> None:
+    """Show a cyber-incident-style copy-ready diagnostic without changing telemetry."""
+    query = update.callback_query
+    await query.answer()
+    if not _authorized(update, get_db, owner_id):
+        return
+    _audit(get_db, owner_id, "view_last_error_compact_diagnostic")
+    await query.edit_message_text(
+        _render_last_error_compact(get_db),
+        parse_mode="HTML",
+        reply_markup=_last_error_keyboard(),
+    )
+    raise ApplicationHandlerStop
+
+
 async def alert_action_callback(update: Update, context, get_db, owner_id: int) -> None:
     query = update.callback_query
     await query.answer()
@@ -1031,6 +1113,13 @@ def register_admin_monitoring(app: Any, get_db, owner_id: int) -> None:
         CallbackQueryHandler(
             lambda u, c: last_error_copy_callback(u, c, get_db, owner_id),
             pattern=rf"^{_LAST_ERROR_COPY}$",
+        ),
+        group=-210,
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            lambda u, c: last_error_compact_callback(u, c, get_db, owner_id),
+            pattern=r"^admin_last_error_compact$",
         ),
         group=-210,
     )
