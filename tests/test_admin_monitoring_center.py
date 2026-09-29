@@ -7,6 +7,7 @@ from plugins.admin_monitoring_center import (
     _refresh_alerts,
     _render_alerts,
     _render_last_error,
+    _render_last_error_compact,
     _last_error_keyboard,
     _render_incidents,
     _home_keyboard,
@@ -538,17 +539,61 @@ def test_last_error_snapshot_ignores_newer_intermediate_failure_after_terminal_i
 
 def test_last_error_keyboard_exposes_refresh_and_navigation():
     callbacks = _callback_values(_last_error_keyboard())
-    assert callbacks[0] == "admin_last_error_copy"
-    assert "admin_last_error" in callbacks
+    assert callbacks[0] == "admin_last_error"
+    assert "admin_last_error_copy" in callbacks
+    assert "admin_last_error_compact" in callbacks
     assert "admin_alerts" in callbacks
     assert "admin_resolver_monitor" in callbacks
 
 
 def test_last_error_keyboard_exposes_copy_action_before_refresh():
     callbacks = _callback_values(_last_error_keyboard())
-    assert callbacks[0] == "admin_last_error_copy"
-    assert callbacks[1] == "admin_last_error"
+    assert callbacks[0] == "admin_last_error"
+    assert callbacks[1] == "admin_last_error_copy"
+    assert callbacks[2] == "admin_last_error_compact"
 
+
+
+def test_last_error_compact_snapshot_has_cyber_incident_structure_and_redaction(tmp_path):
+    path = tmp_path / "bot.db"
+    _setup(path)
+    get_db = _db_factory(path)
+    conn = get_db()
+    rows = [
+        ("yt-dlp", "yt_dlp_failed", "bot check", None,
+         json.dumps({"authorization": "Bearer SECRET", "resolver": "yt-dlp"})),
+        ("yoinku", "yoinku_failed", "HTTP Error 422: Unprocessable Entity", 422,
+         json.dumps({"format_id": "v-720"})),
+        ("download", "all_methods_failed", "All available download methods failed.", None,
+         json.dumps({"fallback": {"skipped": "youtube_direct_fallback_not_applicable"}})),
+    ]
+    for index, (stage, error_type, message, status, details) in enumerate(rows, start=1):
+        conn.execute(
+            """INSERT INTO error_logs
+               (url,website,media_type,stage,error_type,error_message,
+                attempt_id,attempt_number,http_status,details_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            ("https://www.youtube.com/watch?v=example", "YouTube", "video",
+             stage, error_type, message, "cyber-attempt", 1, status, details,
+             f"2026-09-29T08:0{index}:00"),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = _render_last_error_compact(get_db)
+    assert "CYBER INCIDENT SNAPSHOT" in snapshot
+    assert "DOWNLOAD_PIPELINE_FAILURE" in snapshot
+    assert "TERMINAL_FAILURE" in snapshot
+    assert "affected_platform" in snapshot
+    assert "security_controls" in snapshot
+    assert "credentials_redacted" in snapshot
+    assert "correlated_evidence" in snapshot
+    assert "yt_dlp_failed" in snapshot
+    assert "yoinku_failed" in snapshot
+    assert "422" in snapshot
+    assert "all_methods_failed" in snapshot
+    assert "[REDACTED]" in snapshot
+    assert "Bearer SECRET" not in snapshot
 
 def test_studio_error_snapshot_is_operation_scoped(tmp_path):
     path = tmp_path / "bot.db"
