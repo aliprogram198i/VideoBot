@@ -238,26 +238,54 @@ def _render_attempt_timeline(rows: list[Any]) -> list[dict[str, Any]]:
 
 
 def _render_last_error_compact(get_db) -> str:
-    """Build a short, copy-friendly diagnostic summary from existing telemetry only."""
+    """Build a cyber-incident-style, copy-friendly diagnostic from existing telemetry only."""
     row = _latest_error_row(get_db)
     if row is None:
-        return "🧾 <b>التشخيص المختصر</b>\\n━━━━━━━━━━━━━━━━━━━━\\n🟢 لا يوجد خطأ مسجل في <code>error_logs</code>."
+        return (
+            "🛡️ <b>CYBER INCIDENT SNAPSHOT</b>\\n"
+            "━━━━━━━━━━━━━━━━━━━━\\n"
+            "🟢 <b>STATUS:</b> CLEAR\\n"
+            "لا يوجد خطأ مسجل في <code>error_logs</code>."
+        )
 
     details = _json(row["details_json"]) if "details_json" in row.keys() else None
     summary = _diagnostic_summary(row, details)
     attempt_id = str(row["attempt_id"] or "").strip() if "attempt_id" in row.keys() else ""
     timeline = _render_attempt_timeline(_attempt_error_rows(get_db, attempt_id)) if attempt_id else []
+    error_type = str(row["error_type"] or "unknown").strip() if "error_type" in row.keys() else "unknown"
+    severity = _severity(error_type, len(timeline) or 1)
+    created_at = str(row["created_at"] or "").strip() if "created_at" in row.keys() else ""
+    platform = _platform(row)
+    stage = str(row["stage"] or "unknown").strip() if "stage" in row.keys() else "unknown"
+
     compact: dict[str, Any] = {
-        "incident": summary,
-        "error": str(row["error_message"] or "") if "error_message" in row.keys() else "",
-        "stage": str(row["stage"] or "") if "stage" in row.keys() else "",
-        "http_status": row["http_status"] if "http_status" in row.keys() else None,
-        "exception_type": str(row["exception_type"] or "") if "exception_type" in row.keys() else "",
-        "duration_ms": row["duration_ms"] if "duration_ms" in row.keys() else None,
-        "events_in_same_attempt": len(timeline),
+        "incident": {
+            "incident_id": attempt_id or str(row["id"] if "id" in row.keys() else "unknown"),
+            "classification": "DOWNLOAD_PIPELINE_FAILURE",
+            "severity": severity.upper(),
+            "status": "OPEN / TERMINAL_FAILURE",
+            "detected_at": created_at or "unknown",
+            "affected_platform": platform,
+            "execution_phase": stage,
+        },
+        "evidence": {
+            "terminal_error_type": error_type,
+            "error": str(row["error_message"] or "") if "error_message" in row.keys() else "",
+            "http_status": row["http_status"] if "http_status" in row.keys() else None,
+            "exception_type": str(row["exception_type"] or "") if "exception_type" in row.keys() else "",
+            "duration_ms": row["duration_ms"] if "duration_ms" in row.keys() else None,
+            "events_in_same_attempt": len(timeline),
+        },
+        "security_controls": {
+            "credentials_redacted": True,
+            "cookies_redacted": True,
+            "tokens_redacted": True,
+            "query_secrets_redacted": True,
+            "source": "existing_error_logs_telemetry",
+        },
     }
     if timeline:
-        compact["timeline"] = [
+        compact["correlated_evidence"] = [
             {
                 key: event[key]
                 for key in ("created_at", "stage", "error_type", "error_message", "http_status", "exception_type", "duration_ms")
@@ -265,8 +293,15 @@ def _render_last_error_compact(get_db) -> str:
             }
             for event in timeline
         ]
+
     sanitized = _sanitize_diagnostic_value(compact)
-    return "<pre>" + html.escape(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True)) + "</pre>"
+    payload = json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True)
+    return "<pre>" + html.escape(
+        "╔══════════════════════════════════╗\\n"
+        "║      CYBER INCIDENT SNAPSHOT     ║\\n"
+        "╚══════════════════════════════════╝\\n"
+        + payload
+    ) + "</pre>"
 
 
 def _render_last_error(get_db) -> list[str]:
