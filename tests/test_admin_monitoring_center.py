@@ -532,7 +532,15 @@ def test_last_error_compact_snapshot_is_copy_ready_and_sanitized(tmp_path):
     conn.close()
 
     snapshot = _render_last_error_compact(get_db)
-    assert "incident" in snapshot
+    assert "CYBER INCIDENT SNAPSHOT" in snapshot
+    assert "DOWNLOAD_PIPELINE_FAILURE" in snapshot
+    assert "severity" in snapshot
+    assert "TERMINAL_FAILURE" in snapshot
+    assert "affected_platform" in snapshot
+    assert "execution_phase" in snapshot
+    assert "credentials_redacted" in snapshot
+    assert "tokens_redacted" in snapshot
+    assert "correlated_evidence" in snapshot
     assert "events_in_same_attempt" in snapshot
     assert "yt_dlp_failed" in snapshot
     assert "yoinku_failed" in snapshot
